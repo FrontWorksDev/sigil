@@ -98,10 +98,38 @@ func TestAsk(t *testing.T) {
 			t.Errorf("Ask(%q) = %v, want %v", in, got, want)
 		}
 		s := out.String()
-		for _, must := range []string{"/p/.sigil", "/p/.env", "DATABASE_URL", "op://dev/db/url", "LITERAL", "127.0.0.1:8080:80", "全体設定", "[y/N]"} {
+		for _, must := range []string{"/p/.sigil", "/p/.env", "DATABASE_URL", "op://dev/db/url", "LITERAL", "127.0.0.1:8080:80", "全体設定", "[y/N]",
+			// 用語には、必ず実際の意味を添える
+			"契約", "持ち込むもの（ホストの環境変数）", "門（ポート）", "禁書庫", "1Password"} {
 			if !strings.Contains(s, must) {
 				t.Errorf("表示に %q がない:\n%s", must, s)
 			}
 		}
+	}
+}
+
+// 環境変数とポートの値の列がそろっていること（読みやすさのため。全角は 2 桁と数える）
+func TestAskColumnsAligned(t *testing.T) {
+	c := config.Config{Envs: []string{"DATABASE_URL"}, Ports: []config.Port{{Host: "8080", Container: "80"}}}
+	var out bytes.Buffer
+	Ask(strings.NewReader("n\n"), &out, []string{"/p/.sigil"}, c, nil)
+	col := map[string]int{}
+	for _, l := range strings.Split(out.String(), "\n") {
+		for _, v := range []string{"DATABASE_URL", "127.0.0.1:8080:80"} {
+			if i := strings.Index(l, v); i >= 0 {
+				w := 0
+				for _, r := range l[:i] {
+					if r >= 0x2E80 {
+						w += 2
+					} else {
+						w++
+					}
+				}
+				col[v] = w
+			}
+		}
+	}
+	if col["DATABASE_URL"] == 0 || col["DATABASE_URL"] != col["127.0.0.1:8080:80"] {
+		t.Errorf("列がそろっていない: %v\n%s", col, out.String())
 	}
 }

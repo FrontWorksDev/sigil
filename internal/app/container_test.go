@@ -281,7 +281,7 @@ func TestConfigErrorStopsBeforeDocker(t *testing.T) {
 	if code := e.run(); code != 1 {
 		t.Fatalf("code = %d", code)
 	}
-	want := "sigil: " + filepath.Join(e.proj, ".sigil") + ":1: 環境変数名が不正です: $(id)\n"
+	want := "sigil: 契約の書を読み解けません\n       " + filepath.Join(e.proj, ".sigil") + ":1: 環境変数名が不正です: $(id)\n"
 	if e.stderr.String() != want {
 		t.Errorf("stderr = %q\nwant     %q", e.stderr.String(), want)
 	}

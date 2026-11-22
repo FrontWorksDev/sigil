@@ -3,6 +3,7 @@ package docker
 
 import (
 	"strconv"
+	"strings"
 
 	"sigil/internal/config"
 )
@@ -82,7 +83,10 @@ func RunArgs(s RunSpec) []string {
 }
 
 // ExecArgs は docker exec の引数を返す。
-func ExecArgs(name, workdir string, tty bool, cmd []string) []string {
+//
+// env は追加で渡す "NAME=VALUE"（sigil check の NO_COLOR=1 など）。秘密の値は決して入れないこと
+// （コマンドラインは ps で見える）。
+func ExecArgs(name, workdir string, tty bool, env []string, cmd []string) []string {
 	flag := "-i"
 	if tty {
 		flag = "-it"
@@ -92,9 +96,11 @@ func ExecArgs(name, workdir string, tty bool, cmd []string) []string {
 		// cmux（Ghostty 系）の独自の端末情報はコンテナ内にないので、どこにでもある値に固定する
 		"-e", "TERM=xterm-256color",
 		"-e", "COLORTERM=truecolor",
-		"-w", workdir,
-		name,
 	}
+	for _, e := range env {
+		args = append(args, "-e", e)
+	}
+	args = append(args, "-w", workdir, name)
 	return append(args, cmd...)
 }
 
@@ -109,6 +115,30 @@ func BuildArgs(image string, uid, gid int, extra []string, contextDir string) []
 	}
 	args = append(args, extra...)
 	return append(args, contextDir)
+}
+
+// LsRowsArgs は、sigil ls を飾って出すときの docker ps の引数を返す（タブ区切りで読む）。
+func LsRowsArgs() []string {
+	return []string{"ps", "-a", "--filter", "label=" + ProjectLabel,
+		"--format", "{{.Names}}\t{{.State}}\t{{.Status}}\t{{.Label \"" + ProjectLabel + "\"}}"}
+}
+
+// LsRow は sigil ls の 1 行。
+type LsRow struct {
+	Name, State, Status, Project string
+}
+
+// ParseLs は LsRowsArgs の出力を読む。形の合わない行は飛ばす。
+func ParseLs(out string) []LsRow {
+	var rows []LsRow
+	for _, l := range strings.Split(out, "\n") {
+		f := strings.Split(l, "\t")
+		if len(f) != 4 {
+			continue
+		}
+		rows = append(rows, LsRow{Name: f[0], State: f[1], Status: f[2], Project: f[3]})
+	}
+	return rows
 }
 
 // LsArgs は sigil ls の docker ps の引数を返す。

@@ -3,13 +3,26 @@
 # 使い方（ホストから）:  sigil check
 set -u
 
+# 色は、標準出力が端末で、NO_COLOR がないときだけ付ける（パイプやリダイレクトでは素のテキスト）。
+# ホストで色を止めているときは、sigil check が NO_COLOR=1 を渡してくる。
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  c_ok=$'\e[38;5;114m' c_ng=$'\e[38;5;203m' c_warn=$'\e[38;5;221m' c_head=$'\e[38;5;141m'
+  c_dim=$'\e[2m' c_bold=$'\e[1m' c_off=$'\e[0m'
+else
+  c_ok='' c_ng='' c_warn='' c_head='' c_dim='' c_bold='' c_off=''
+fi
+
 pass=0
 fail=0
-ok()   { printf '  \e[32m✓\e[0m %s\n' "$1"; pass=$((pass + 1)); }
-ng()   { printf '  \e[31m✗\e[0m %s\n' "$1"; fail=$((fail + 1)); }
+ok()   { printf '  %s✓%s %s\n' "$c_ok" "$c_off" "$1"; pass=$((pass + 1)); }
+ng()   { printf '  %s✗%s %s\n' "$c_ng" "$c_off" "$1"; fail=$((fail + 1)); }
+# 見出し: 世界観の言葉に、普通の言葉での意味を添える
+section() { printf '\n%s■ %s%s %s── %s%s\n' "$c_head" "$1" "$c_off" "$c_dim" "$2" "$c_off"; }
 expect_absent() { if [ -e "$1" ]; then ng "$2 が見えている ($1)"; else ok "$2 は見えない"; fi; }
 
-echo "■ ホストの秘密情報が見えないこと"
+printf '\n  %s⟡ 結界の点検%s %s（コンテナの隔離が効いているかの確認）%s\n' "$c_bold" "$c_off" "$c_dim" "$c_off"
+
+section "禁忌の扉" "ホストの秘密情報が見えないこと"
 expect_absent "$HOME/.ssh"          "SSH 鍵 (~/.ssh)"
 expect_absent "$HOME/.aws"          "AWS 設定 (~/.aws)"
 expect_absent "$HOME/.config/op"    "1Password CLI 設定"
@@ -20,7 +33,7 @@ expect_absent /var/run/docker.sock  "Docker ソケット"
 if [ -n "${SSH_AUTH_SOCK:-}" ]; then ng "SSH エージェントが転送されている"; else ok "SSH エージェントは転送されていない"; fi
 if command -v ssh >/dev/null 2>&1; then ng "ssh コマンドが入っている"; else ok "ssh コマンドは入っていない"; fi
 
-echo "■ ホストで実行されるファイルを書き換えられないこと"
+section "結界" "ホストで実行されるファイルを書き換えられないこと"
 proj="${SIGIL_PROJECT_DIR:-/workspace}"
 if [ -e "$proj/.git" ]; then
   if touch "$proj/.git/.sigil-write-test" 2>/dev/null; then
@@ -39,31 +52,31 @@ if [ -d "$HOME/.config/nvim" ]; then
   fi
 fi
 
-echo "■ 権限"
+section "権能の剥奪" "権限"
 if [ "$(id -u)" = "0" ]; then ng "root で動いている"; else ok "一般ユーザー ($(id -un)) で動いている"; fi
 capeff="$(awk '/^CapEff/ {print $2}' /proc/self/status)"
 if [ "$capeff" = "0000000000000000" ]; then ok "Linux capabilities はすべて外れている"; else ng "capabilities が残っている ($capeff)"; fi
 if grep -q '^NoNewPrivs:[[:space:]]*1' /proc/self/status; then ok "no-new-privileges が有効"; else ng "no-new-privileges が無効"; fi
 
-echo "■ 渡されている環境変数（名前のみ）"
+section "持ち込むもの" "渡されている環境変数（名前のみ）"
 extra="$(env | cut -d= -f1 | grep -vE '^(PATH|HOME|HOSTNAME|TERM|COLORTERM|LANG|LC_ALL|PWD|OLDPWD|SHLVL|_|USER|LOGNAME|SHELL|GOPATH|CARGO_HOME|RUSTUP_HOME|NPM_CONFIG_PREFIX|npm_config_cache|CLAUDE_CONFIG_DIR|DISABLE_AUTOUPDATER|EDITOR|SIGIL|SIGIL_PROJECT_DIR|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_0|GIT_CONFIG_VALUE_0|DEBIAN_FRONTEND|PS1|LS_COLORS|MAIL|NO_COLOR|BASH_.*|COLUMNS|LINES|.*_PROXY|.*_proxy|PHPIZE_DEPS|PHP_INI_DIR|PHP_CFLAGS|PHP_CPPFLAGS|PHP_LDFLAGS|GPG_KEYS|PHP_VERSION|PHP_URL|PHP_ASC_URL|PHP_SHA256)$' | sort || true)"
 if [ -n "$extra" ]; then printf '    %s\n' $extra; else echo "    （なし）"; fi
 
-echo "■ ツール"
+section "ツール" "コンテナ内のコマンドと版"
 for c in nvim node npm go cargo php composer claude tree-sitter rg fd; do
   if command -v "$c" >/dev/null 2>&1; then
     # go だけは --version ではなく version サブコマンドでバージョンを出す
     if [ "$c" = go ]; then v="$(go version 2>/dev/null)"; else v="$("$c" --version 2>/dev/null | head -1)"; fi
     printf '    %-12s %s\n' "$c" "$v"
   else
-    printf '    %-12s \e[33m見つからない\e[0m\n' "$c"
+    printf '    %-12s %s見つからない%s\n' "$c" "$c_warn" "$c_off"
   fi
 done
 
 echo
 if [ "$fail" -eq 0 ]; then
-  printf '\e[32m結果: すべて OK (%d 項目)\e[0m\n' "$pass"
+  printf '%s✔ 結界は完全です%s %s── すべて OK (%d 項目)%s\n' "$c_ok" "$c_off" "$c_dim" "$pass" "$c_off"
 else
-  printf '\e[31m結果: %d 項目に問題あり\e[0m（OK: %d）\n' "$fail" "$pass"
+  printf '%s✗ 結界に綻びがあります%s ── %d 項目に問題あり（OK: %d）\n' "$c_ng" "$c_off" "$fail" "$pass"
   exit 1
 fi

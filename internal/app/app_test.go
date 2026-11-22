@@ -32,7 +32,8 @@ func TestDockerNotFound(t *testing.T) {
 	if code := e.run(); code != 1 {
 		t.Errorf("code = %d", code)
 	}
-	if got := e.stderr.String(); got != "sigil: docker が見つかりません\n" {
+	// 1 行目は世界観の言葉、2 行目は普通の言葉での対処（"sigil: " の幅だけ字下げ）
+	if got := e.stderr.String(); got != "sigil: 領域を開く術がありません\n       docker が見つかりません。Docker Desktop をインストールしてください\n" {
 		t.Errorf("stderr = %q", got)
 	}
 }

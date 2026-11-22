@@ -77,20 +77,23 @@ func (s Store) Record(key, sum string) error {
 //
 // files は対象のファイル（.sigil / .env）、c は .sigil の内容、refs は .env の内容。
 // .env については、名前ごとに 1Password のどの項目から値を取るか（参照）を見せる。値は見せない。
+//
+// セキュリティ上の判断をしてもらう画面なので、演出より読みやすさを優先する。
+// 色や動きは付けず、用語（契約、持ち込むもの、門、禁書庫）には必ず実際の意味を添える。
 func Ask(tty io.Reader, out io.Writer, files []string, c config.Config, refs []opwrap.Entry) bool {
-	fmt.Fprintf(out, "sigil: %s の内容が新しいか、前回の承認から変わっています。\n", strings.Join(files, " と "))
-	fmt.Fprintln(out, "     このプロジェクトのコンテナに次のものを渡します:")
+	fmt.Fprintf(out, "sigil: 契約の確認 ── %s の内容が新しいか、前回の承認から変わっています。\n", strings.Join(files, " と "))
+	fmt.Fprintln(out, "     このプロジェクトの領域（コンテナ）に、次のものを渡します:")
 	for _, e := range c.Envs {
-		fmt.Fprintf(out, "       環境変数  %s\n", e)
+		fmt.Fprintf(out, "       持ち込むもの（ホストの環境変数）  %s\n", e)
 	}
 	for _, p := range c.Ports {
-		fmt.Fprintf(out, "       ポート    %s\n", p.Publish())
+		fmt.Fprintf(out, "       門（ポート）                      %s\n", p.Publish())
 	}
 	if len(c.Envs) == 0 && len(c.Ports) == 0 {
 		fmt.Fprintln(out, "       （なし）")
 	}
 	if len(refs) > 0 {
-		fmt.Fprintln(out, "     .env で、次の名前に値を設定します（1Password の参照先）:")
+		fmt.Fprintln(out, "     禁書庫から召喚するもの（.env で、1Password から値を読み込む名前と参照先）:")
 		for _, r := range refs {
 			ref := r.Ref
 			if ref == "" {
@@ -100,7 +103,7 @@ func Ask(tty io.Reader, out io.Writer, files []string, c config.Config, refs []o
 		}
 	}
 	fmt.Fprintln(out, "     このほか、全体設定（~/.config/sigil/config）の分も渡されます。")
-	fmt.Fprint(out, "sigil: この設定でよければ y を入力してください [y/N] ")
+	fmt.Fprint(out, "sigil: この契約を結ぶ（この設定で承認する）なら y を入力してください [y/N] ")
 
 	line, _ := bufio.NewReader(tty).ReadString('\n')
 	switch strings.TrimRight(line, "\r\n") {

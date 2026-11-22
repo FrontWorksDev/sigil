@@ -59,6 +59,8 @@ var deniedEnvs = map[string]bool{
 	"SIGIL_CONTEXT":     true,
 	"SIGIL_PROJECT_DIR": true,
 	"SIGIL_OP_TMP":      true,
+	"SIGIL_PLAIN":       true, // 演出を止める（internal/ui）
+	"SIGIL_GLYPHS":      true, // 魔法陣の外周の文字（internal/ui）
 }
 
 // docker / git / 1Password / 動的リンカ / XDG のフォルダの動作を変えられる名前の接頭辞。

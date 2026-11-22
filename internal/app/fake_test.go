@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"sigil/internal/project"
 )
@@ -22,6 +23,7 @@ func (c call) String() string { return c.name + " " + strings.Join(c.args, " ") 
 type handler struct {
 	prefix string
 	stdout string
+	stderr string // 標準エラーに書く内容（docker build の進み具合など）
 	err    error
 	fn     func() (string, error) // あれば stdout / err の代わりに呼ぶ（呼ばれた時点の状態で応答を変えるため）
 }
@@ -35,6 +37,10 @@ type fakeRunner struct {
 
 func (f *fakeRunner) on(prefix, stdout string, err error) {
 	f.handlers = append(f.handlers, handler{prefix: prefix, stdout: stdout, err: err})
+}
+
+func (f *fakeRunner) onStderr(prefix, stderr string, err error) {
+	f.handlers = append(f.handlers, handler{prefix: prefix, stderr: stderr, err: err})
 }
 
 func (f *fakeRunner) onFunc(prefix string, fn func() (string, error)) {
@@ -54,6 +60,9 @@ func (f *fakeRunner) Run(name string, args []string, stdout, stderr io.Writer) e
 			}
 			if stdout != nil {
 				io.WriteString(stdout, out)
+			}
+			if stderr != nil && h.stderr != "" {
+				io.WriteString(stderr, h.stderr)
 			}
 			return err
 		}
@@ -96,6 +105,12 @@ type testEnv struct {
 	dockerErr error  // LookPath("docker") のエラー
 	isTTY     bool
 
+	// 演出（internal/ui）
+	stderrTTY    bool
+	stdoutTTY    bool
+	cols, rows   int
+	stderrAtExec []string // Exec が呼ばれた時点の標準エラー（端末を戻してから置き換えたかを見る）
+
 	order []string // 承認と Exec の呼び出し順
 }
 
@@ -133,6 +148,7 @@ func newEnv(t *testing.T) *testEnv {
 		Runner: e.runner,
 		Exec: func(argv0 string, argv, env []string) error {
 			e.order = append(e.order, "exec")
+			e.stderrAtExec = append(e.stderrAtExec, e.stderr.String())
 			e.execs = append(e.execs, execCall{argv0, argv, env})
 			// 本物なら起動し直した側が消す一時フォルダを、テストの終わりに消す
 			for _, kv := range env {
@@ -169,7 +185,17 @@ func newEnv(t *testing.T) *testEnv {
 			}
 			return io.NopCloser(strings.NewReader(e.tty)), nil
 		},
-		IsTerminal:        func() bool { return e.isTTY },
+		IsTerminal:       func() bool { return e.isTTY },
+		StderrIsTerminal: func() bool { return e.stderrTTY },
+		StdoutIsTerminal: func() bool { return e.stdoutTTY },
+		TermSize:         func() (int, int) { return e.cols, e.rows },
+		StdoutTermSize:   func() (int, int) { return e.cols, e.rows },
+		// 演出の待ちは、待たずにすぐ進める
+		After: func(time.Duration) <-chan time.Time {
+			c := make(chan time.Time, 1)
+			c <- time.Time{}
+			return c
+		},
 		Executable:        func() (string, error) { return "/abs/dev", nil },
 		Getuid:            func() int { return 501 },
 		Getgid:            func() int { return 20 },

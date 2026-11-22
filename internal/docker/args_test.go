@@ -144,13 +144,13 @@ func TestRunArgsEndsWithWorkdirAndImage(t *testing.T) {
 }
 
 func TestExecArgs(t *testing.T) {
-	got := ExecArgs("c", "/workspace/p/web", false, []string{"nvim", "."})
+	got := ExecArgs("c", "/workspace/p/web", false, nil, []string{"nvim", "."})
 	want := []string{"exec", "-i", "-e", "TERM=xterm-256color", "-e", "COLORTERM=truecolor",
 		"-w", "/workspace/p/web", "c", "nvim", "."}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("tty なし = %v", got)
 	}
-	if got := ExecArgs("c", "/w", true, []string{"bash", "-l"}); got[1] != "-it" {
+	if got := ExecArgs("c", "/w", true, nil, []string{"bash", "-l"}); got[1] != "-it" {
 		t.Errorf("tty あり = %v", got)
 	}
 }
@@ -169,5 +169,22 @@ func TestLsArgs(t *testing.T) {
 		"--format", "table {{.Names}}\t{{.Status}}\t{{.Label \"sigil.project\"}}"}
 	if got := LsArgs(); !reflect.DeepEqual(got, want) {
 		t.Errorf("LsArgs = %v", got)
+	}
+}
+
+func TestExecArgsExtraEnv(t *testing.T) {
+	got := ExecArgs("c", "/w", false, []string{"NO_COLOR=1"}, []string{"sigil-check"})
+	want := []string{"exec", "-i", "-e", "TERM=xterm-256color", "-e", "COLORTERM=truecolor",
+		"-e", "NO_COLOR=1", "-w", "/w", "c", "sigil-check"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("got %v", got)
+	}
+}
+
+func TestParseLs(t *testing.T) {
+	out := "sigil-a-1\trunning\tUp 2 hours\t/src/a\nbroken line\nsigil-b-2\texited\tExited (0) 3 days ago\t/src/b\n"
+	rows := ParseLs(out)
+	if len(rows) != 2 || rows[0] != (LsRow{"sigil-a-1", "running", "Up 2 hours", "/src/a"}) || rows[1].State != "exited" {
+		t.Errorf("rows = %v", rows)
 	}
 }

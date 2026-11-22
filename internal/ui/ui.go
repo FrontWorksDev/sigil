@@ -216,6 +216,8 @@ const (
 	cyan   = 87
 	green  = 114
 	red    = 203
+	yellow = 221
+	gray   = 245
 	white  = 231
 	edge   = 61
 )

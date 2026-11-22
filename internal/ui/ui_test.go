@@ -295,3 +295,30 @@ func TestSpinWithProgressOnNarrow(t *testing.T) {
 		t.Errorf("狭い端末では、回っている段階と添え書きを 1 行で出すこと: %q", buf.String())
 	}
 }
+
+func TestRealms(t *testing.T) {
+	u, buf := newTest(Mono, 120, 40)
+	u.Realms([]Realm{
+		{Name: "sigil-a-1", State: "running", Status: "Up 2 hours", Project: "/src/a"},
+		{Name: "sigil-bb-2", State: "exited", Status: "Exited (0) 3 days ago", Project: "/src/b\x1b[31m"},
+	})
+	out := buf.String()
+	for _, want := range []string{
+		"  ● sigil-a-1   展開中  Up 2 hours             /src/a\n",
+		"  ○ sigil-bb-2  停止中  Exited (0) 3 days ago  /src/b[31m\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("%q がない: %q", want, out)
+		}
+	}
+	u2, buf2 := newTest(Mono, 120, 40)
+	u2.Realms(nil)
+	if !strings.Contains(buf2.String(), "展開中の領域はありません") {
+		t.Errorf("空のとき = %q", buf2.String())
+	}
+	u3, buf3 := newTest(Plain, 120, 40)
+	u3.Realms([]Realm{{Name: "x"}})
+	if buf3.Len() != 0 {
+		t.Errorf("Plain で書いている")
+	}
+}

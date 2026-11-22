@@ -107,6 +107,7 @@ type testEnv struct {
 
 	// 演出（internal/ui）
 	stderrTTY    bool
+	stdoutTTY    bool
 	cols, rows   int
 	stderrAtExec []string // Exec が呼ばれた時点の標準エラー（端末を戻してから置き換えたかを見る）
 
@@ -186,6 +187,7 @@ func newEnv(t *testing.T) *testEnv {
 		},
 		IsTerminal:       func() bool { return e.isTTY },
 		StderrIsTerminal: func() bool { return e.stderrTTY },
+		StdoutIsTerminal: func() bool { return e.stdoutTTY },
 		TermSize:         func() (int, int) { return e.cols, e.rows },
 		// 演出の待ちは、待たずにすぐ進める
 		After: func(time.Duration) <-chan time.Time {

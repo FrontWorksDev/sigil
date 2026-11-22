@@ -34,6 +34,8 @@ type Deps struct {
 	IsTerminal func() bool
 	// StderrIsTerminal は、標準エラーが端末かを返す。演出は標準エラーが端末のときだけ行う。
 	StderrIsTerminal func() bool
+	// StdoutIsTerminal は、標準出力が端末かを返す。sigil ls / help を飾るのは、このときだけ。
+	StdoutIsTerminal func() bool
 	// TermSize は、標準エラーの端末の幅と高さを返す。分からなければ 0, 0。
 	TermSize func() (cols, rows int)
 	// After は time.After。演出の待ちを、テストでは待たずに進めるため。
@@ -66,6 +68,7 @@ func DefaultDeps() Deps {
 			return isCharDevice(os.Stdin) && isCharDevice(os.Stdout)
 		},
 		StderrIsTerminal: func() bool { return isCharDevice(os.Stderr) },
+		StdoutIsTerminal: func() bool { return isCharDevice(os.Stdout) },
 		TermSize:         func() (int, int) { return termSize(os.Stderr) },
 		After:            time.After,
 		Executable: func() (string, error) {

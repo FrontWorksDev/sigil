@@ -258,6 +258,7 @@ docker exec <-it または -i> -e TERM=xterm-256color -e COLORTERM=truecolor -w 
 ```
 
 - 標準入力と標準出力がどちらも端末なら `-it`、そうでなければ `-i`。
+- `sigil check` で、ホストが色を止めているときだけ `-e NO_COLOR=1` を足す（16 章）。
 - `TERM` を固定するのは、cmux（Ghostty 系）の独自の端末情報がコンテナ内にないため。
 - `syscall.Exec` で docker に置き換える（Neovim や Claude Code に端末をそのまま渡すため）。docker は `exec.LookPath` で絶対パスにしてから渡す。
 
@@ -380,7 +381,10 @@ issue #3。待ち時間のある処理で何が起きているかを見せ、使
   - `--progress=plain` を足して出力を読む（`docker.BuildWatcher`）。Dockerfile の中身には依存せず、手順の数がいちばん多いステージを最終ステージとみなし、その済んだ手順（`DONE` / `CACHED`）の数で進み具合を出す。
   - docker のログはすべてためておき、成功したら捨て、失敗したらそのまま全部見せる。
   - 利用者が `--progress` / `-q` を指定したとき、`DOCKER_BUILDKIT=0` のときは、演出せず今までどおりそのまま流す。
-- `ls` / `check` / `help` と、用語への書き換えは、後の段階で行う。
+- **`sigil ls`**: 標準出力が端末のときだけ、`docker ps` をタブ区切りで読み、状態ごとに印と色を付けて出す（● 展開中 / ○ 停止中 / ◐ 休止中）。パイプやリダイレクトでは、今までどおり `docker ps` の表をそのまま出す。
+- **`sigil help`**: 標準出力が端末のときだけ、説明の前にバナーを付ける。
+- **`sigil check`**: 整形は `sigil-check` の側で行う。見出しは世界観の言葉に普通の言葉を添え（例: `■ 禁忌の扉 ── ホストの秘密情報が見えないこと`）、最後に「結界は完全です」/「結界に綻びがあります」と、項目の数を出す。色は、標準出力が端末で `NO_COLOR` がないときだけ付ける。ホストが Color でないとき（`NO_COLOR`、`SIGIL_PLAIN`、パイプ）は、`sigil check` に限って `docker exec -e NO_COLOR=1` を渡す（値は秘密ではないので、コマンドラインに載せてよい）。
+- 用語への書き換え（メッセージ、承認の画面、`--help`）は、後の段階で行う。
 
 ## 決定事項
 

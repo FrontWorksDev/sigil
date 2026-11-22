@@ -273,3 +273,88 @@ func TestBuildKeepsUserProgressAndLegacyBuilder(t *testing.T) {
 		})
 	}
 }
+
+// ---- sigil ls / help / check ----
+
+func TestLsDecoratedOnTerminal(t *testing.T) {
+	e := newEnv(t)
+	e.cwd = "/"
+	e.stdoutTTY = true
+	e.cols, e.rows = 120, 40
+	e.runner.on("docker ps -a --filter label=sigil.project --format {{.Names}}",
+		"sigil-a-1\trunning\tUp 2 hours\t/src/a\nsigil-b-2\texited\tExited (0) 1 day ago\t/src/b\n", nil)
+	if code := e.run("ls"); code != 0 {
+		t.Fatal(e.stderr.String())
+	}
+	out := e.stdout.String()
+	for _, want := range []string{"展開中の領域", "●", "sigil-a-1", "展開中", "○", "停止中", "/src/b"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("%q がない: %q", want, out)
+		}
+	}
+}
+
+func TestLsPlainWhenPiped(t *testing.T) {
+	e := newEnv(t)
+	e.cwd = "/"
+	e.stderrTTY = true // 標準エラーが端末でも、標準出力がパイプなら飾らない
+	e.runner.on("docker ps -a --filter label=sigil.project --format table", "NAMES\tSTATUS\n", nil)
+	if code := e.run("ls"); code != 0 {
+		t.Fatal(e.stderr.String())
+	}
+	if e.stdout.String() != "NAMES\tSTATUS\n" {
+		t.Errorf("パイプでは docker ps の表をそのまま出すこと: %q", e.stdout.String())
+	}
+}
+
+func TestHelpBannerOnlyOnTerminal(t *testing.T) {
+	e := newEnv(t)
+	if e.run("help"); strings.Contains(e.stdout.String(), "seal your code") || strings.Contains(e.stdout.String(), "\x1b") {
+		t.Errorf("パイプの help にバナーやエスケープが入っている")
+	}
+	e2 := newEnv(t)
+	e2.stdoutTTY = true
+	e2.cols, e2.rows = 80, 24
+	if e2.run("help"); !strings.Contains(e2.stdout.String(), "seal your code") || !strings.Contains(e2.stdout.String(), "使い方:") {
+		t.Errorf("端末の help にバナーがない: %q", e2.stdout.String())
+	}
+}
+
+func TestCheckPassesNoColorWhenHostDisablesColor(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		tty    bool
+		vars   map[string]string
+		expect bool
+	}{
+		{"端末で色あり", true, nil, false},
+		{"NO_COLOR", true, map[string]string{"NO_COLOR": "1"}, true},
+		{"SIGIL_PLAIN", true, map[string]string{"SIGIL_PLAIN": "1"}, true},
+		{"パイプ", false, nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.container("running", "2")
+			e.stdoutTTY = tc.tty
+			maps.Copy(e.vars, tc.vars)
+			if code := e.run("check"); code != 0 {
+				t.Fatal(e.stderr.String())
+			}
+			argv := strings.Join(e.lastExec().argv, " ")
+			if got := strings.Contains(argv, "-e NO_COLOR=1"); got != tc.expect {
+				t.Errorf("NO_COLOR=1 を渡す = %v, want %v: %s", got, tc.expect, argv)
+			}
+			if !strings.HasSuffix(argv, e.name()+" sigil-check") {
+				t.Errorf("argv = %s", argv)
+			}
+		})
+	}
+	// check 以外のコマンドには渡さない
+	e := newEnv(t)
+	e.container("running", "2")
+	e.vars["NO_COLOR"] = "1"
+	e.run("nvim", ".")
+	if strings.Contains(strings.Join(e.lastExec().argv, " "), "NO_COLOR") {
+		t.Errorf("check 以外で NO_COLOR を渡している")
+	}
+}

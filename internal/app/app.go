@@ -66,6 +66,8 @@ func first(args []string) string {
 func run(args []string, d Deps) error {
 	switch first(args) {
 	case "help", "-h", "--help":
+		// 標準出力が端末のときだけバナーを付ける（パイプでは説明だけにする）
+		newStdoutUI(d).Banner()
 		fmt.Fprint(d.Stdout, usage)
 		return nil
 	}
@@ -92,7 +94,7 @@ func run(args []string, d Deps) error {
 	case "build":
 		return build(d, u, args[1:])
 	case "ls":
-		return d.Runner.Run("docker", docker.LsArgs(), d.Stdout, d.Stderr)
+		return ls(d)
 	}
 
 	// ここから先はプロジェクトを特定してから動く。危険な場所なら、docker を呼ぶ前に止める。
@@ -145,8 +147,15 @@ func run(args []string, d Deps) error {
 	if err != nil {
 		realCwd = cwd
 	}
+	// sigil check の色は、コンテナ内の sigil-check が決める（標準出力が端末なら色を付ける）。
+	// ホストで NO_COLOR / SIGIL_PLAIN などにより色を止めているときは、それを伝える。
+	// 値は秘密ではないので、コマンドラインに載せてよい。
+	var env []string
+	if first(args) == "check" && ui.DetectMode(d.StdoutIsTerminal(), d.LookupEnv) != ui.Color {
+		env = []string{"NO_COLOR=1"}
+	}
 	argv := append([]string{"docker"},
-		docker.ExecArgs(p.ContainerName, p.Workdir(realCwd), d.IsTerminal(), cmd)...)
+		docker.ExecArgs(p.ContainerName, p.Workdir(realCwd), d.IsTerminal(), env, cmd)...)
 	// docker に置き換え、Neovim や Claude Code に端末をそのまま渡す。
 	// 置き換える前に、演出で変えた端末の状態（カーソルの非表示、色、描いていた行）を必ず戻す。
 	// 戻さないと、Neovim や Claude Code の画面が壊れる。
@@ -493,6 +502,36 @@ func useExisting(u *ui.UI, client docker.Client, p project.Project, st docker.St
 		}
 	}
 	u.Enter(filepath.Base(p.Root))
+	return nil
+}
+
+// newStdoutUI は、標準出力に飾って書くための UI を返す（sigil ls / help）。
+// 標準出力がパイプやリダイレクトなら Plain になり、今までどおりの出力を保つ。
+func newStdoutUI(d Deps) *ui.UI {
+	mode := ui.DetectMode(d.StdoutIsTerminal(), d.LookupEnv)
+	var cols, rows int
+	if mode != ui.Plain {
+		cols, rows = d.TermSize()
+	}
+	return ui.New(d.Stdout, ui.Options{Mode: mode, Cols: cols, Rows: rows})
+}
+
+// ls は sigil のコンテナの一覧を出す。標準出力が端末なら、状態ごとに印と色を付ける。
+// パイプやリダイレクトでは、今までどおり docker ps の表をそのまま出す（スクリプトで読めるように）。
+func ls(d Deps) error {
+	out := newStdoutUI(d)
+	if !out.Fancy() {
+		return d.Runner.Run("docker", docker.LsArgs(), d.Stdout, d.Stderr)
+	}
+	var buf bytes.Buffer
+	if err := d.Runner.Run("docker", docker.LsRowsArgs(), &buf, d.Stderr); err != nil {
+		return err
+	}
+	var realms []ui.Realm
+	for _, r := range docker.ParseLs(buf.String()) {
+		realms = append(realms, ui.Realm{Name: r.Name, State: r.State, Status: r.Status, Project: r.Project})
+	}
+	out.Realms(realms)
 	return nil
 }
 

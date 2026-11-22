@@ -45,6 +45,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && ln -s /usr/bin/fdfind /usr/local/bin/fd \
  && rm -rf /var/lib/apt/lists/*
 
+# --- LazyVim が使うツール ------------------------------------------------
+# lua5.1 / luarocks: lazy.nvim が luarocks を使うプラグインを入れるためのもの。
+#   なければ lazy.nvim は hererocks で Lua と luarocks を ~/.local/share/nvim（全プロジェクト
+#   共通のボリューム）に自分でビルドする。apt で root 所有の場所に入れておけば、
+#   コンテナの中から書き換えられず、ビルドも走らない。
+# libsqlite3-dev: snacks.picker の履歴（frecency）を SQLite に保存するためのもの。
+#   LuaJIT の FFI で libsqlite3.so を読むので、-dev にしかない .so の名前のリンクが要る。
+# bat: fzf-lua のプレビューと lazygit で使う。Debian では batcat という名前なので、fd と同じくリンクを張る。
+# git-delta: git と lazygit の差分の表示（設定は下の /etc/gitconfig と /etc/xdg/lazygit）。
+# どれも apt の版で足りる（delta はリリースがまれで、apt の版が最新に近い）。
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      lua5.1 liblua5.1-0-dev luarocks \
+      libsqlite3-dev \
+      bat git-delta \
+ && ln -s /usr/bin/batcat /usr/local/bin/bat \
+ && rm -rf /var/lib/apt/lists/*
+
 # --- PHP 拡張 -----------------------------------------------------------
 # mbstring / xml / curl / sqlite3 は公式イメージに最初から入っている。足りないものだけビルドする
 RUN docker-php-ext-install -j"$(nproc)" zip intl bcmath
@@ -109,6 +126,44 @@ RUN case "${TARGETARCH}" in \
  && install -m 755 "wakatime-cli-linux-${arch}" /usr/local/bin/wakatime-cli \
  && cd / && rm -rf "$tmp" \
  && wakatime-cli --version
+
+# --- lazygit ------------------------------------------------------------
+# apt の版（trixie は 0.50.0）は古く、設定の書き方（git.paging）も今と違うので、
+# GitHub のリリースから最新を取る。ファイル名に版が入るので、releases/latest の
+# リダイレクト先から版を読む。チェックサムは wakatime-cli と同じく、壊れたダウンロードの検出用。
+RUN case "${TARGETARCH}" in \
+      amd64) arch=x86_64 ;; \
+      arm64) arch=arm64 ;; \
+      *) echo "unsupported arch: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+ && tag="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/jesseduffield/lazygit/releases/latest)" \
+ && ver="${tag##*/v}" \
+ && case "$ver" in [0-9]*.[0-9]*) ;; *) echo "unexpected lazygit tag: $tag" >&2; exit 1 ;; esac \
+ && tmp="$(mktemp -d)" && cd "$tmp" \
+ && base="https://github.com/jesseduffield/lazygit/releases/download/v${ver}" \
+ && file="lazygit_${ver}_linux_${arch}.tar.gz" \
+ && curl -fsSLO "${base}/${file}" \
+ && curl -fsSLO "${base}/checksums.txt" \
+ && grep " ${file}\$" checksums.txt | sha256sum -c - \
+ && tar -xzf "$file" lazygit \
+ && install -m 755 lazygit /usr/local/bin/lazygit \
+ && cd / && rm -rf "$tmp" \
+ && lazygit --version
+
+# --- 差分の表示（delta） --------------------------------------------------
+# ホストの ~/.gitconfig はコンテナに渡さないので、システム全体の設定に書く。
+# lazygit の設定は、XDG_CONFIG_DIRS（/etc/xdg）から読まれる場所に置く。どちらも root 所有なので、
+# コンテナの中からは書き換えられず、イメージを作るたびに同じ内容になる。
+# --{{colorScheme}} は、lazygit が端末の明暗に合わせて --dark / --light に置き換える。
+RUN git config --system core.pager delta \
+ && git config --system interactive.diffFilter 'delta --color-only' \
+ && git config --system delta.navigate true \
+ && mkdir -p /etc/xdg/lazygit \
+ && printf '%s\n' \
+      'git:' \
+      '  diffRenderers:' \
+      '    - command: delta --{{colorScheme}} --paging=never' \
+    > /etc/xdg/lazygit/config.yml
 
 # --- 一般ユーザー -------------------------------------------------------
 # Mac の GID 20 (staff) は Debian 側に既にあるので、存在すれば流用する

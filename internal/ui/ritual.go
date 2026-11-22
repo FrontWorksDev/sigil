@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -34,6 +36,32 @@ type Stage struct {
 // Plain のときは、本物の標準エラーがそのまま渡る。
 type Work func(stderr io.Writer) error
 
+// Progress は、裏の処理から段階の進み具合を伝えるためのもの（sigil build など）。
+// 裏の goroutine が書き、描画の goroutine が読むので、ロックで守る。
+type Progress struct {
+	mu     sync.Mutex
+	set    bool
+	active int     // 回っている段階の番号（これより前は済んだものとして描く）
+	note   string  // 回っている段階の添え書き（空なら Stage.Note）
+	ratio  float64 // 0〜1。負ならバーを出さない
+}
+
+// Set は、回っている段階と添え書き、進み具合（0〜1、負ならバーなし）を設定する。
+func (p *Progress) Set(active int, note string, ratio float64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.set, p.active, p.note, p.ratio = true, active, note, ratio
+}
+
+func (p *Progress) get() (set bool, active int, note string, ratio float64) {
+	if p == nil {
+		return false, 0, "", -1
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.set, p.active, p.note, p.ratio
+}
+
 // ErrInterrupted は、描画中に SIGINT / SIGTERM を受けたときのエラー。
 // 本物のシグナルなら、その前にプロセスが終わる。
 var ErrInterrupted = errors.New("中断しました")
@@ -52,26 +80,65 @@ func (u *UI) roomy() bool {
 	return u.cols >= minRitualCols && u.rows >= circleH+2
 }
 
+// view は、ある時点の段階の一覧（Progress を反映したもの）。
+type view struct {
+	stages []Stage
+	active int
+	ratio  float64
+}
+
+func current(stages []Stage, p *Progress) view {
+	v := view{stages: append([]Stage(nil), stages...), active: len(stages), ratio: -1}
+	for i, s := range v.stages {
+		if s.State == Pending {
+			v.active = i
+			break
+		}
+	}
+	if set, active, note, ratio := p.get(); set {
+		v.active, v.ratio = min(active, len(stages)), ratio
+		for i := 0; i < v.active; i++ {
+			if v.stages[i].State == Pending {
+				v.stages[i].State = Done
+			}
+		}
+		if v.active < len(stages) && note != "" {
+			v.stages[v.active].Note = note
+		}
+	}
+	return v
+}
+
+func (v view) label() string {
+	if v.active >= len(v.stages) {
+		return ""
+	}
+	s := v.stages[v.active]
+	if s.Note == "" {
+		return s.Label
+	}
+	return s.Label + "  " + s.Note
+}
+
 // Ritual は、work を裏で動かしながら、左に魔法陣、右に段階の一覧を描き続ける。
 // 待ち時間は足さない（work が終わるまでが儀式の長さ）。
 // 端末が狭ければ 1 行のスピナーに、Plain なら work を呼ぶだけにする。
 func (u *UI) Ritual(title, subtitle string, stages []Stage, work Work) error {
+	return u.RitualWithProgress(title, subtitle, stages, nil, work)
+}
+
+// RitualWithProgress は Ritual と同じだが、work が p で段階を進められる。
+func (u *UI) RitualWithProgress(title, subtitle string, stages []Stage, p *Progress, work Work) error {
 	if u.mode == Plain {
 		return work(u.w)
 	}
-	active := len(stages)
-	for i, s := range stages {
-		if s.State == Pending {
-			active = i
-			break
-		}
-	}
 	if !u.roomy() {
-		label := title
-		if active < len(stages) {
-			label = stages[active].Label + "  " + stages[active].Note
-		}
-		return u.Spin(label, work)
+		return u.spin(func() string {
+			if l := current(stages, p).label(); l != "" {
+				return l
+			}
+			return title
+		}, work)
 	}
 
 	var buf bytes.Buffer
@@ -87,7 +154,7 @@ func (u *UI) Ritual(title, subtitle string, stages []Stage, work Work) error {
 	frame := 0
 	first := true
 	draw := func(flash bool, failed bool) {
-		u.drawRitual(title, subtitle, stages, active, frame, u.now().Sub(start), flash, failed, first)
+		u.drawRitual(title, subtitle, current(stages, p), frame, u.now().Sub(start), flash, failed, first)
 		first = false
 	}
 
@@ -128,20 +195,21 @@ loop:
 }
 
 // drawRitual は魔法陣と段階の一覧を 1 フレーム描く。2 回目からは、カーソルを戻して上書きする。
-func (u *UI) drawRitual(title, subtitle string, stages []Stage, active, frame int, el time.Duration, flash, failed, first bool) {
+func (u *UI) drawRitual(title, subtitle string, v view, frame int, el time.Duration, flash, failed, first bool) {
 	grid := drawCircle(frame, u.glyphs, flash)
 	pw := u.cols - 2 - circleW - 3 - 1 // 一覧に使える幅
 	panel := make([]string, circleH)
 	t := u.fit(title, pw)
-	if sub := u.fit(subtitle, pw-Width(t)-5); sub != "" {
+	if sub := u.fit(Sanitize(subtitle), pw-Width(t)-5); sub != "" {
 		t = u.bold(t) + "  " + u.dim("── "+sub)
 	} else {
 		t = u.bold(t)
 	}
 	panel[2] = t
 	panel[3] = u.dim(strings.Repeat("─", min(34, pw)))
-	for i, s := range stages {
-		if 5+i >= circleH-2 {
+	row := 5
+	for i, s := range v.stages {
+		if row >= circleH-2 {
 			break
 		}
 		label := u.fit(Sanitize(s.Label), pw-2)
@@ -152,14 +220,25 @@ func (u *UI) drawRitual(title, subtitle string, stages []Stage, active, frame in
 			line = u.dim("－ " + label + " （なし）")
 		case s.State == Done || flash: // 明滅するのは、すべて済んだとき
 			line = u.fg(green, "✔ ") + label
-		case i == active && failed:
+		case i == v.active && failed:
 			line = u.fg(red, "✗ ") + u.bold(label) + " " + u.dim(note)
-		case i == active:
+		case i == v.active:
 			line = u.fg(purple, coreFrames[frame%len(coreFrames)]+" ") + u.bold(label) + " " + u.dim(note)
 		default:
 			line = u.dim("· " + label)
 		}
-		panel[5+i] = line
+		panel[row] = line
+		row++
+	}
+	if v.ratio >= 0 && row+1 < circleH-2 {
+		ratio := math.Min(v.ratio, 1)
+		if flash {
+			ratio = 1
+		}
+		w := min(26, pw-6)
+		filled := int(ratio * float64(w))
+		panel[row+1] = u.fg(violet, strings.Repeat("▰", filled)) + u.dim(strings.Repeat("▱", w-filled)) +
+			u.dim(fmt.Sprintf(" %3.0f%%", ratio*100))
 	}
 	panel[circleH-2] = u.dim(fmt.Sprintf("経過 %.1fs", el.Seconds()))
 
@@ -179,7 +258,12 @@ func (u *UI) Spin(label string, work Work) error {
 	if u.mode == Plain {
 		return work(u.w)
 	}
-	label = u.fit(Sanitize(label), u.cols-12)
+	return u.spin(func() string { return label }, work)
+}
+
+// spin は Spin の本体。label は描くたびに呼ぶ（Progress で添え書きが変わるため）。
+func (u *UI) spin(label func() string, work Work) error {
+	fitted := func() string { return u.fit(Sanitize(label()), u.cols-12) }
 
 	var buf bytes.Buffer
 	done := make(chan error, 1)
@@ -195,7 +279,7 @@ func (u *UI) Spin(label string, work Work) error {
 loop:
 	for i := 0; ; i++ {
 		g := string(u.glyphs[i%len(u.glyphs)])
-		fmt.Fprintf(u.w, "\r\x1b[2K  %s %s %s", u.fg(hues[i%len(hues)], g), label,
+		fmt.Fprintf(u.w, "\r\x1b[2K  %s %s %s", u.fg(hues[i%len(hues)], g), fitted(),
 			u.dim(fmt.Sprintf("%.1fs", u.now().Sub(start).Seconds())))
 		select {
 		case err = <-done:
@@ -211,7 +295,7 @@ loop:
 	if err != nil {
 		mark = u.fg(red, "✗")
 	}
-	fmt.Fprintf(u.w, "\r\x1b[2K  %s %s\n", mark, label)
+	fmt.Fprintf(u.w, "\r\x1b[2K  %s %s\n", mark, fitted())
 	u.Restore()
 	u.w.Write(buf.Bytes())
 	return err

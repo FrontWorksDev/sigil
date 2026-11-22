@@ -23,6 +23,7 @@ func (c call) String() string { return c.name + " " + strings.Join(c.args, " ") 
 type handler struct {
 	prefix string
 	stdout string
+	stderr string // 標準エラーに書く内容（docker build の進み具合など）
 	err    error
 	fn     func() (string, error) // あれば stdout / err の代わりに呼ぶ（呼ばれた時点の状態で応答を変えるため）
 }
@@ -36,6 +37,10 @@ type fakeRunner struct {
 
 func (f *fakeRunner) on(prefix, stdout string, err error) {
 	f.handlers = append(f.handlers, handler{prefix: prefix, stdout: stdout, err: err})
+}
+
+func (f *fakeRunner) onStderr(prefix, stderr string, err error) {
+	f.handlers = append(f.handlers, handler{prefix: prefix, stderr: stderr, err: err})
 }
 
 func (f *fakeRunner) onFunc(prefix string, fn func() (string, error)) {
@@ -55,6 +60,9 @@ func (f *fakeRunner) Run(name string, args []string, stdout, stderr io.Writer) e
 			}
 			if stdout != nil {
 				io.WriteString(stdout, out)
+			}
+			if stderr != nil && h.stderr != "" {
+				io.WriteString(stderr, h.stderr)
 			}
 			return err
 		}

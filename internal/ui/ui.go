@@ -138,6 +138,17 @@ func (u *UI) Enter(name string) {
 	u.line(u.fg(purple, "⟡") + " 領域 " + u.bold(u.fit(Sanitize(name), u.cols-16)) + " に入ります")
 }
 
+// Success は、済んだことを知らせる 1 行を出す。msg は Bold などで飾ってよいが、
+// 外から来た文字列は Sanitize してから渡すこと。
+func (u *UI) Success(msg string) {
+	if u.mode == Plain {
+		return
+	}
+	io.WriteString(u.w, "\n")
+	u.line(u.fg(green, "✔") + " " + msg)
+	io.WriteString(u.w, "\n")
+}
+
 // Entering は、作ったばかりのコンテナに入るときの 1 行を出す。
 func (u *UI) Entering() {
 	if u.mode == Plain {

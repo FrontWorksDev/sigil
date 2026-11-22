@@ -2,6 +2,8 @@ package app
 
 import (
 	"errors"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -190,4 +192,84 @@ func tail(s string) string {
 		return "…" + s[len(s)-300:]
 	}
 	return s
+}
+
+// ---- sigil build ----
+
+const buildLog = "#3 [stage-4  1/3] FROM docker.io/library/php:cli-trixie\n#3 DONE 0.2s\n" +
+	"#4 [stage-4  2/3] RUN apt-get update\n#4 0.1 Get:1 http://deb.debian.org\n#4 DONE 1.0s\n" +
+	"#5 [stage-4  3/3] COPY sigil-check /usr/local/bin/sigil-check\n#5 DONE 0.1s\n" +
+	"#6 exporting to image\n#6 DONE 0.3s\n"
+
+func TestBuildRitualReadsPlainProgress(t *testing.T) {
+	e := newEnv(t)
+	e.fancy()
+	e.cwd = "/"
+	e.runner.onStderr("docker build", buildLog, nil)
+	if code := e.run("build", "--no-cache"); code != 0 {
+		t.Fatal(e.stderr.String())
+	}
+	args := e.runner.find("docker build")[0].args
+	if !slices.Contains(args, "--progress=plain") || !slices.Contains(args, "--no-cache") {
+		t.Errorf("argv = %v", args)
+	}
+	out := e.stderr.String()
+	for _, want := range []string{"紋章の鋳造", "紋章を刻む", "の鋳造が完了しました", ui.RestoreSeq} {
+		if !strings.Contains(out, want) {
+			t.Errorf("%q が出ていない", want)
+		}
+	}
+	// 成功したときは、docker のログは見せない
+	if strings.Contains(out, "Get:1 http://deb.debian.org") {
+		t.Errorf("成功したのに docker のログを出している")
+	}
+	if e.stdout.Len() != 0 {
+		t.Errorf("標準出力 = %q", e.stdout.String())
+	}
+}
+
+func TestBuildRitualFailureShowsDockerLog(t *testing.T) {
+	e := newEnv(t)
+	e.fancy()
+	e.cwd = "/"
+	e.runner.onStderr("docker build", "#4 [stage-4  2/3] RUN false\n#4 ERROR: process did not complete successfully\n", errors.New("exit status 1"))
+	if code := e.run("build"); code != 1 {
+		t.Fatalf("code = %d", code)
+	}
+	out := e.stderr.String()
+	r := strings.LastIndex(out, ui.RestoreSeq)
+	l := strings.Index(out, "#4 ERROR: process did not complete successfully")
+	if r < 0 || l < r || !strings.Contains(out, "docker build に失敗しました") {
+		t.Errorf("端末を戻してから、docker のログをそのまま見せること: %q", tail(out))
+	}
+}
+
+func TestBuildKeepsUserProgressAndLegacyBuilder(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		extra []string
+		vars  map[string]string
+	}{
+		{"--progress の指定", []string{"--progress=tty"}, nil},
+		{"-q", []string{"-q"}, nil},
+		{"BuildKit を使わない", nil, map[string]string{"DOCKER_BUILDKIT": "0"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.fancy()
+			e.cwd = "/"
+			maps.Copy(e.vars, tc.vars)
+			e.runner.onStderr("docker build", "plain output\n", nil)
+			if code := e.run(append([]string{"build"}, tc.extra...)...); code != 0 {
+				t.Fatal(e.stderr.String())
+			}
+			args := e.runner.find("docker build")[0].args
+			if slices.Contains(args, "--progress=plain") {
+				t.Errorf("--progress=plain を足している: %v", args)
+			}
+			if e.stderr.String() != "plain output\n" {
+				t.Errorf("docker の出力をそのまま流すこと: %q", e.stderr.String())
+			}
+		})
+	}
 }

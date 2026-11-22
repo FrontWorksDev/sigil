@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"sigil/internal/approval"
 	"sigil/internal/config"
@@ -85,10 +86,11 @@ func run(args []string, d Deps) error {
 		return errors.New("docker が見つかりません")
 	}
 	client := docker.Client{R: d.Runner, Stderr: d.Stderr}
+	u := newUI(d)
 
 	switch first(args) {
 	case "build":
-		return build(d, args[1:])
+		return build(d, u, args[1:])
 	case "ls":
 		return d.Runner.Run("docker", docker.LsArgs(), d.Stdout, d.Stderr)
 	}
@@ -128,7 +130,6 @@ func run(args []string, d Deps) error {
 		cmd = []string{"bash", "-l"}
 	}
 
-	u := newUI(d)
 	replaced, err := ensureContainer(d, u, client, p, home, dirs, args)
 	if err != nil {
 		return err
@@ -572,7 +573,7 @@ func imageName(d Deps) string {
 }
 
 // build はイメージを作る。ビルドコンテキストは、バイナリに埋め込んだものを一時フォルダに書き出して使う。
-func build(d Deps, extra []string) error {
+func build(d Deps, u *ui.UI, extra []string) error {
 	ctxDir := lookup(d, "SIGIL_CONTEXT", "")
 	if ctxDir == "" {
 		tmp, err := os.MkdirTemp("", "sigil-build-")
@@ -585,10 +586,40 @@ func build(d Deps, extra []string) error {
 		}
 		ctxDir = tmp
 	}
-	args := docker.BuildArgs(imageName(d), d.Getuid(), d.Getgid(), extra, ctxDir)
-	if err := d.Runner.Run("docker", args, d.Stdout, d.Stderr); err != nil {
+	image := imageName(d)
+	// 演出は、出力の形を sigil が決められるときだけにする。利用者が --progress や -q を
+	// 指定したとき、BuildKit を使わないとき（--progress がない）は、今までどおりそのまま流す。
+	if !u.Fancy() || docker.HasProgressFlag(extra) || lookup(d, "DOCKER_BUILDKIT", "") == "0" {
+		args := docker.BuildArgs(image, d.Getuid(), d.Getgid(), extra, ctxDir)
+		if err := d.Runner.Run("docker", args, d.Stdout, d.Stderr); err != nil {
+			return fmt.Errorf("docker build に失敗しました: %w", err)
+		}
+		return nil
+	}
+
+	// 出力を --progress=plain にして読み、段階と進み具合を魔法陣の横に出す
+	args := docker.BuildArgs(image, d.Getuid(), d.Getgid(), append([]string{"--progress=plain"}, extra...), ctxDir)
+	stages := []ui.Stage{
+		{Label: "素材を集める", Note: "FROM / ビルドコンテキスト"},
+		{Label: "紋章を鋳造する"},
+		{Label: "紋章を刻む", Note: image},
+	}
+	p := &ui.Progress{}
+	w := &docker.BuildWatcher{OnProgress: func(phase int, note string, ratio float64) { p.Set(phase, note, ratio) }}
+	u.Banner()
+	start := time.Now()
+	err := u.RitualWithProgress("紋章の鋳造", image, stages, p, func(stderr io.Writer) error {
+		if err := d.Runner.Run("docker", args, d.Stdout, w); err != nil {
+			// 失敗したときは、docker のログをそのまま見せる（成功したときは捨てる。長いので）
+			stderr.Write(w.Log.Bytes())
+			return err
+		}
+		return nil
+	})
+	if err != nil {
 		return fmt.Errorf("docker build に失敗しました: %w", err)
 	}
+	u.Success("紋章 " + u.Bold(image) + " の鋳造が完了しました " + u.Dim(fmt.Sprintf("(%.1fs)", time.Since(start).Seconds())))
 	return nil
 }
 

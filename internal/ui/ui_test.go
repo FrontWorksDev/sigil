@@ -263,3 +263,35 @@ func TestEnterAndGreek(t *testing.T) {
 		t.Errorf("Greek のとき外周はギリシャ文字")
 	}
 }
+
+func TestRitualWithProgress(t *testing.T) {
+	u, buf := newTest(Mono, 120, 40)
+	st := []Stage{{Label: "素材を集める"}, {Label: "紋章を鋳造する"}, {Label: "紋章を刻む", Note: "sigil:latest"}}
+	p := &Progress{}
+	err := u.RitualWithProgress("紋章の鋳造", "sigil:latest", st, p, func(io.Writer) error {
+		p.Set(1, "[2/19] RUN apt-get update", 2.0/19)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{"✔ 素材を集める", "紋章を鋳造する [2/19] RUN apt-get update", "▰", "100%"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("%q が出ていない", want)
+		}
+	}
+}
+
+func TestSpinWithProgressOnNarrow(t *testing.T) {
+	u, buf := newTest(Mono, 60, 24)
+	st := []Stage{{Label: "素材を集める"}, {Label: "紋章を鋳造する"}}
+	p := &Progress{}
+	p.Set(1, "[3/19] COPY", 0.1)
+	if err := u.RitualWithProgress("紋章の鋳造", "", st, p, func(io.Writer) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "✔ 紋章を鋳造する  [3/19] COPY\n") {
+		t.Errorf("狭い端末では、回っている段階と添え書きを 1 行で出すこと: %q", buf.String())
+	}
+}

@@ -49,12 +49,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # lua5.1 / luarocks: lazy.nvim が luarocks を使うプラグインを入れるためのもの。
 #   なければ lazy.nvim は hererocks で Lua と luarocks を ~/.local/share/nvim（全プロジェクト
 #   共通のボリューム）に自分でビルドする。apt で root 所有の場所に入れておけば、
-#   コンテナの中から書き換えられず、ビルドも走らない。
+#   Lua と luarocks の本体はコンテナの中から書き換えられず、ビルドも走らない。
+#   ただし、luarocks で入れたパッケージ（ネイティブの .so を含む）は今までどおり
+#   ~/.local/share/nvim/lazy-rocks（共通のボリューム）に置かれる。プラグイン本体
+#   （~/.local/share/nvim/lazy）と同じく、プロジェクトをまたいで読み込まれる（issue #7）。
 # libsqlite3-dev: snacks.picker の履歴（frecency）を SQLite に保存するためのもの。
 #   LuaJIT の FFI で libsqlite3.so を読むので、-dev にしかない .so の名前のリンクが要る。
 # bat: fzf-lua のプレビューと lazygit で使う。Debian では batcat という名前なので、fd と同じくリンクを張る。
 # git-delta: git と lazygit の差分の表示（設定は下の /etc/gitconfig と /etc/xdg/lazygit）。
-# どれも apt の版で足りる（delta はリリースがまれで、apt の版が最新に近い）。
+# どれも apt の版で足りる（delta はリリースがまれで、この行を書いた時点では apt の版と最新が同じ）。
 RUN apt-get update && apt-get install -y --no-install-recommends \
       lua5.1 liblua5.1-0-dev luarocks \
       libsqlite3-dev \
@@ -155,9 +158,11 @@ RUN case "${TARGETARCH}" in \
 # lazygit の設定は、XDG_CONFIG_DIRS（/etc/xdg）から読まれる場所に置く。どちらも root 所有なので、
 # コンテナの中からは書き換えられず、イメージを作るたびに同じ内容になる。
 # --{{colorScheme}} は、lazygit が端末の明暗に合わせて --dark / --light に置き換える。
-RUN git config --system core.pager delta \
+# navigate（n / N でファイルを移動）は、[delta] の節ではなく core.pager の引数で付ける。
+# delta は lazygit から呼ばれたときも [delta] の節を読むが、lazygit の中では navigate が
+# 効かず、見出しの印だけが出てしまうため。
+RUN git config --system core.pager 'delta --navigate' \
  && git config --system interactive.diffFilter 'delta --color-only' \
- && git config --system delta.navigate true \
  && mkdir -p /etc/xdg/lazygit \
  && printf '%s\n' \
       'git:' \

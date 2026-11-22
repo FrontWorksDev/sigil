@@ -37,22 +37,13 @@ end
 
 ----------------------------------------------------------------------
 -- 3) （任意）lua/config/options.lua の末尾に追加
---    イメージには Neovim の Python プロバイダ（pynvim）を入れていないので、
---    :checkhealth provider で Python 3 の警告が出る。Python のプラグインを
---    使っていなければ、プロバイダを止めて警告を消せる。
+--    イメージには Neovim の Python / Ruby / Perl / Node のプロバイダ（pynvim、
+--    neovim gem など）を入れていないので、:checkhealth provider で警告が出る。
+--    それらを使うプラグインがなければ、プロバイダを止めて警告を消せる。
 --    （vim-wakatime は、イメージに入れた wakatime-cli を使うので Python は不要）
 ----------------------------------------------------------------------
 if vim.env.SIGIL then
   vim.g.loaded_python3_provider = 0
-end
-
-----------------------------------------------------------------------
--- 4) （任意）lua/config/options.lua の末尾に追加
---    イメージには Ruby / Perl / Node の Neovim プロバイダ（neovim gem など）を
---    入れていないので、:checkhealth provider で警告が出る。使うプラグインが
---    なければ、止めて警告を消せる。
-----------------------------------------------------------------------
-if vim.env.SIGIL then
   vim.g.loaded_ruby_provider = 0
   vim.g.loaded_perl_provider = 0
   vim.g.loaded_node_provider = 0

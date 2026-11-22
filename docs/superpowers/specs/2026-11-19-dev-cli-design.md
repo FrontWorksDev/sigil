@@ -277,7 +277,7 @@ docker build --build-arg USER_UID=<os.Getuid()> --build-arg USER_GID=<os.Getgid(
 - Neovim（公式リリース）、Claude Code（公式のネイティブインストーラー）、Node.js（最新の LTS）、Go、Rust、PHP（公式 `php:cli-trixie` が土台）、Composer、tree-sitter CLI
 - **Python**: uv で最新の安定版を `/opt/uv-python` に入れ、`/usr/local/bin/python3`（と `python`）から指す。pip は同梱されているが、EXTERNALLY-MANAGED の印があるので venv の外では使えない（`pip install --user` も拒否される）。パッケージは venv（`uv venv` / `python3 -m venv`）か `uvx` で入れる。root の `~/.local/bin` にリンクを作らないよう `--no-bin` を付ける。
 - Python のマイナー版は、イメージを作り直したときの最新に変わる。そのとき、前の版で作った venv（`python3 -m venv` は `/usr/local/bin/python3` を、`uv venv` は `/opt/uv-python/cpython-3.x-…` を指す）は動かなくなるので、作り直す（`uv sync` などは自動で作り直す）。
-- **uv / uvx**: 公式イメージ `ghcr.io/astral-sh/uv` からコピーする。MCP サーバーの多くは `uvx <package>` で起動する。`uvx` のキャッシュは `~/.cache/uv`（`sigil-cache` で永続化済み）。このキャッシュは全プロジェクトで共有していて、あるプロジェクトのコードがキャッシュの中の環境を書き換えると、ほかのプロジェクトの `uvx` で実行されてしまう（issue #14 で扱う）。
+- **uv / uvx**: 公式イメージ `ghcr.io/astral-sh/uv` からコピーする。MCP サーバーの多くは `uvx <package>` で起動する。`uvx` のキャッシュは `~/.cache/uv`（`sigil-cache` で永続化済み）。このキャッシュは全プロジェクトで共有していて、あるプロジェクトのコードがキャッシュの中の環境を書き換えると、ほかのプロジェクトの `uvx` で実行されてしまう（issue #7 で扱う）。
 - **wakatime-cli**: GitHub のリリースから取り、同じリリースの `checksums_sha256.txt` で照合して `/usr/local/bin/wakatime-cli` に置く。vim-wakatime は PATH の `wakatime-cli` を使い、Python による自動ダウンロードをしなくなる。
 - `~/.local` と `~/.wakatime` は永続化しない（`uv tool install` で入れたものや、プロジェクトの指定で uv がダウンロードした別の版の Python（`~/.local/share/uv/python`）は、コンテナを作り直すと消え、次に使うときにまたダウンロードされる）。Claude Code の本体はイメージの `~/.local/bin/claude` にあるので、永続化するとイメージの更新が反映されなくなる。
 - Neovim の Python プロバイダ（pynvim）は入れない。

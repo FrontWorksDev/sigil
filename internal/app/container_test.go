@@ -40,7 +40,7 @@ func TestCreateThenExecBash(t *testing.T) {
 		t.Errorf("argv0 = %q", x.argv0)
 	}
 	want := []string{"docker", "exec", "-i", "-e", "TERM=xterm-256color", "-e", "COLORTERM=truecolor",
-		"-w", "/workspace/proj", "devbox-proj-" + e.key(), "bash", "-l"}
+		"-w", "/workspace/proj", "sigil-proj-" + e.key(), "bash", "-l"}
 	if !reflect.DeepEqual(x.argv, want) {
 		t.Errorf("argv =\n%v\nwant\n%v", x.argv, want)
 	}
@@ -74,7 +74,7 @@ func TestCommandSelection(t *testing.T) {
 		{[]string{"nvim", "."}, []string{"nvim", "."}},
 		{[]string{"--", "stop"}, []string{"stop"}},
 		{[]string{"--", "build", "x"}, []string{"build", "x"}},
-		{[]string{"check"}, []string{"devbox-check"}},
+		{[]string{"check"}, []string{"sigil-check"}},
 		{[]string{"--"}, []string{"bash", "-l"}},
 	}
 	for _, tc := range cases {
@@ -110,7 +110,7 @@ func TestExistingStoppedIsStarted(t *testing.T) {
 	if code := e.run(); code != 0 {
 		t.Fatal(e.stderr.String())
 	}
-	if len(e.runner.find("docker start devbox-proj-")) != 1 || len(e.runner.find("docker run")) != 0 {
+	if len(e.runner.find("docker start sigil-proj-")) != 1 || len(e.runner.find("docker run")) != 0 {
 		t.Errorf("calls = %v", e.runner.calls)
 	}
 	e.lastExec()
@@ -122,7 +122,7 @@ func TestExistingOldLayoutIsError(t *testing.T) {
 	if code := e.run(); code != 1 {
 		t.Fatalf("code = %d", code)
 	}
-	if !strings.Contains(e.stderr.String(), "古い dev で作られています") || !strings.Contains(e.stderr.String(), "dev stop") {
+	if !strings.Contains(e.stderr.String(), "古い sigil で作られています") || !strings.Contains(e.stderr.String(), "sigil stop") {
 		t.Errorf("stderr = %q", e.stderr.String())
 	}
 	if len(e.execs) != 0 {
@@ -136,7 +136,7 @@ func TestMissingImage(t *testing.T) {
 	if code := e.run(); code != 1 {
 		t.Fatalf("code = %d", code)
 	}
-	if !strings.Contains(e.stderr.String(), "dev build") {
+	if !strings.Contains(e.stderr.String(), "sigil build") {
 		t.Errorf("stderr = %q", e.stderr.String())
 	}
 	if len(e.runner.find("docker run")) != 0 || len(e.execs) != 0 {
@@ -173,12 +173,12 @@ func TestNvimConfigMountedReadOnlyWhenPresent(t *testing.T) {
 // ---- 承認 ----
 
 func (e *testEnv) approvalFile() string {
-	return filepath.Join(e.home, ".local", "state", "devbox", "approved", e.key())
+	return filepath.Join(e.home, ".local", "state", "sigil", "approved", e.key())
 }
 
 func TestApprovalNoTTYAborts(t *testing.T) {
 	e := newEnv(t)
-	e.write(".devbox", "env FOO\n")
+	e.write(".sigil", "env FOO\n")
 	e.vars["FOO"] = "bar"
 	e.ttyErr = errors.New("device not configured")
 	if code := e.run(); code != 1 {
@@ -191,7 +191,7 @@ func TestApprovalNoTTYAborts(t *testing.T) {
 
 func TestApprovalNoAbortsWithoutDocker(t *testing.T) {
 	e := newEnv(t)
-	e.write(".devbox", "env FOO\n")
+	e.write(".sigil", "env FOO\n")
 	e.vars["FOO"] = "bar"
 	e.tty = "n\n"
 	if code := e.run(); code != 1 {
@@ -210,7 +210,7 @@ func TestApprovalNoAbortsWithoutDocker(t *testing.T) {
 
 func TestApprovalYesCreatesAndRecords(t *testing.T) {
 	e := newEnv(t)
-	e.write(".devbox", "env FOO\nport 5173\n")
+	e.write(".sigil", "env FOO\nport 5173\n")
 	e.vars["FOO"] = "bar"
 	e.tty = "y\n"
 	if code := e.run(); code != 0 {
@@ -243,7 +243,7 @@ func TestApprovalYesCreatesAndRecords(t *testing.T) {
 	}
 
 	// 内容が変わるとまた聞く
-	e.write(".devbox", "env FOO\nenv OTHER\n")
+	e.write(".sigil", "env FOO\nenv OTHER\n")
 	e3 := newEnvSharing(t, e)
 	e3.tty = "n\n"
 	if code := e3.run(); code != 1 || e3.ttyOpened != 1 {
@@ -262,7 +262,7 @@ func newEnvSharing(t *testing.T, prev *testEnv) *testEnv {
 
 func TestGlobalConfigOnlyDoesNotAsk(t *testing.T) {
 	e := newEnv(t)
-	e.write(filepath.Join(e.home, ".config", "devbox", "devbox"), "env GLOBAL_ONLY\n")
+	e.write(filepath.Join(e.home, ".config", "sigil", "config"), "env GLOBAL_ONLY\n")
 	e.vars["GLOBAL_ONLY"] = "x"
 	if code := e.run(); code != 0 {
 		t.Fatal(e.stderr.String())
@@ -277,11 +277,11 @@ func TestGlobalConfigOnlyDoesNotAsk(t *testing.T) {
 
 func TestConfigErrorStopsBeforeDocker(t *testing.T) {
 	e := newEnv(t)
-	e.write(".devbox", "env $(id)\n")
+	e.write(".sigil", "env $(id)\n")
 	if code := e.run(); code != 1 {
 		t.Fatalf("code = %d", code)
 	}
-	want := "dev: " + filepath.Join(e.proj, ".devbox") + ":1: 環境変数名が不正です: $(id)\n"
+	want := "sigil: " + filepath.Join(e.proj, ".sigil") + ":1: 環境変数名が不正です: $(id)\n"
 	if e.stderr.String() != want {
 		t.Errorf("stderr = %q\nwant     %q", e.stderr.String(), want)
 	}
@@ -294,7 +294,7 @@ func TestConfigErrorStopsBeforeDocker(t *testing.T) {
 
 func TestUnsetEnvIsNotPassedAndEmptyIs(t *testing.T) {
 	e := newEnv(t)
-	e.write(filepath.Join(e.home, ".config", "devbox", "devbox"), "env MISSING\nenv EMPTY\n")
+	e.write(filepath.Join(e.home, ".config", "sigil", "config"), "env MISSING\nenv EMPTY\n")
 	e.vars["EMPTY"] = ""
 	if code := e.run(); code != 0 {
 		t.Fatal(e.stderr.String())
@@ -319,12 +319,12 @@ func TestWakaTimeSetupOnlyWhenPassed(t *testing.T) {
 	}
 
 	e = newEnv(t)
-	e.write(filepath.Join(e.home, ".config", "devbox", "devbox"), "env WAKATIME_API_KEY\n")
+	e.write(filepath.Join(e.home, ".config", "sigil", "config"), "env WAKATIME_API_KEY\n")
 	e.vars["WAKATIME_API_KEY"] = "waka_secret"
 	if code := e.run(); code != 0 {
 		t.Fatal(e.stderr.String())
 	}
-	if got := e.runner.find("docker exec devbox-proj-"); len(got) != 2 {
+	if got := e.runner.find("docker exec sigil-proj-"); len(got) != 2 {
 		t.Errorf("wakatime の exec = %v", got)
 	}
 	for _, c := range e.runner.calls {
@@ -339,12 +339,12 @@ func TestWakaTimeSetupOnlyWhenPassed(t *testing.T) {
 func TestOpRunReexecs(t *testing.T) {
 	e := newEnv(t)
 	e.opPath = "/opt/bin/op"
-	e.write(".devbox", "env FOO\n")
+	e.write(".sigil", "env FOO\n")
 	e.vars["FOO"] = "bar"
 	e.tty = "y\n"
 	// アプリの設定の行と、コメントの行が混ざっていても、op run に渡すのは確かめた参照だけ
 	e.write(".env", "# app\nVITE_API_URL=http://localhost:3000\nFOO=op://vault/item/field\n")
-	global := e.write(filepath.Join(e.home, ".config", "devbox", "secrets.env"), "W=op://v/i/f\n")
+	global := e.write(filepath.Join(e.home, ".config", "sigil", "secrets.env"), "W=op://v/i/f\n")
 
 	if code := e.run("nvim", "."); code != 0 {
 		t.Fatal(e.stderr.String())
@@ -377,10 +377,10 @@ func TestOpRunReexecs(t *testing.T) {
 	if di, _ := os.Stat(filepath.Dir(tmpEnv)); di.Mode().Perm() != 0o700 {
 		t.Errorf("一時フォルダのモード = %o", di.Mode().Perm())
 	}
-	if !slices.Contains(x.env, "DEVBOX_INNER=1") {
-		t.Error("DEVBOX_INNER=1 がない")
+	if !slices.Contains(x.env, "SIGIL_INNER=1") {
+		t.Error("SIGIL_INNER=1 がない")
 	}
-	if !slices.Contains(x.env, "DEVBOX_OP_TMP="+filepath.Dir(tmpEnv)) {
+	if !slices.Contains(x.env, "SIGIL_OP_TMP="+filepath.Dir(tmpEnv)) {
 		t.Error("一時フォルダを起動し直した側に伝えていない")
 	}
 	// 置き換えたあとはコンテナを作らない
@@ -396,7 +396,7 @@ func TestOpRunReexecs(t *testing.T) {
 func TestOpRunOnlyGlobalFile(t *testing.T) {
 	e := newEnv(t)
 	e.opPath = "/opt/bin/op"
-	global := e.write(filepath.Join(e.home, ".config", "devbox", "secrets.env"), "W=op://v/i/f\n")
+	global := e.write(filepath.Join(e.home, ".config", "sigil", "secrets.env"), "W=op://v/i/f\n")
 	e.run()
 	if got := e.execs[0].argv[3]; got != "--env-file="+global || e.execs[0].argv[4] != "--" {
 		t.Errorf("argv = %v", e.execs[0].argv)
@@ -406,7 +406,7 @@ func TestOpRunOnlyGlobalFile(t *testing.T) {
 func TestOpNotUsedWithoutOpRefs(t *testing.T) {
 	e := newEnv(t)
 	e.opPath = "/opt/bin/op"
-	e.write(".devbox", "env PLAIN\n")
+	e.write(".sigil", "env PLAIN\n")
 	e.write(".env", "PLAIN=1\n")
 	e.vars["PLAIN"] = "1"
 	e.tty = "y\n"
@@ -419,7 +419,7 @@ func TestOpNotUsedWithoutOpRefs(t *testing.T) {
 
 func TestOpNotUsedWhenNotInstalled(t *testing.T) {
 	e := newEnv(t)
-	e.write(".devbox", "env X\n")
+	e.write(".sigil", "env X\n")
 	e.write(".env", "X=op://v/i/f\n")
 	e.tty = "y\n"
 	e.run()
@@ -432,11 +432,11 @@ func TestOpNotUsedWhenNotInstalled(t *testing.T) {
 	}
 }
 
-// ---- .env で dev 自身の環境を書き換えさせない（レビュー C1） ----
+// ---- .env で sigil 自身の環境を書き換えさせない（レビュー C1） ----
 
 func TestEnvFileControlVarNeverReachesOp(t *testing.T) {
 	for _, line := range []string{"DOCKER_HOST=tcp://attacker:2375", "PATH=/tmp/evil", "HOME=/tmp/x",
-		"XDG_CONFIG_HOME=/tmp/x", "DEVBOX_IMAGE=evil", "GIT_SSH_COMMAND=evil", "DYLD_INSERT_LIBRARIES=/x",
+		"XDG_CONFIG_HOME=/tmp/x", "SIGIL_IMAGE=evil", "GIT_SSH_COMMAND=evil", "DYLD_INSERT_LIBRARIES=/x",
 		"DOCKER_HOST=op://v/i/f"} {
 		e := newEnv(t)
 		e.opPath = "/opt/bin/op"
@@ -472,7 +472,7 @@ func TestEnvAppConfigIsIgnored(t *testing.T) {
 func TestEnvFileUnlistedRefIsSkipped(t *testing.T) {
 	e := newEnv(t)
 	e.opPath = "/opt/bin/op"
-	e.write(".devbox", "env FOO\n")
+	e.write(".sigil", "env FOO\n")
 	e.write(".env", "FOO=op://v/i/f\nSNEAKY=op://v/other/f\n")
 	e.tty = "y\n"
 	if code := e.run(); code != 0 {
@@ -494,7 +494,7 @@ func TestEnvFileUnlistedRefIsSkipped(t *testing.T) {
 func TestEnvUnsafeRefIsRejected(t *testing.T) {
 	e := newEnv(t)
 	e.opPath = "/opt/bin/op"
-	e.write(".devbox", "env FOO\n")
+	e.write(".sigil", "env FOO\n")
 	e.write(".env", "FOO=op://v/\x1b[2Jfake/f\n")
 	e.tty = "y\n"
 	if code := e.run(); code != 1 {
@@ -507,7 +507,7 @@ func TestEnvUnsafeRefIsRejected(t *testing.T) {
 
 func TestEditingAppConfigDoesNotAskAgain(t *testing.T) {
 	e := newEnv(t)
-	e.write(".devbox", "env FOO\n")
+	e.write(".sigil", "env FOO\n")
 	e.write(".env", "FOO=op://v/i/f\nVITE_API_URL=http://a\n")
 	e.tty = "y\n" // op は PATH にないので、承認だけが行われる
 	if code := e.run(); code != 0 {
@@ -521,14 +521,90 @@ func TestEditingAppConfigDoesNotAskAgain(t *testing.T) {
 	}
 }
 
+func TestLegacyDevboxFileStops(t *testing.T) {
+	// 改名前の .devbox だけがあると、黙って無視すれば渡すはずの環境変数が渡らず気づきにくいので、止めて知らせる
+	e := newEnv(t)
+	e.write(".devbox", "env FOO\n")
+	if code := e.run(); code != 1 {
+		t.Fatalf("code = %d", code)
+	}
+	if !strings.Contains(e.stderr.String(), ".devbox") || !strings.Contains(e.stderr.String(), ".sigil") {
+		t.Errorf("stderr = %q", e.stderr.String())
+	}
+	if len(e.runner.find("docker run")) != 0 || e.ttyOpened != 0 {
+		t.Error("作成か確認に進んだ")
+	}
+
+	// Jetify Devbox などが作る .devbox/ フォルダは、sigil の古い設定ではないので無視する
+	e = newEnv(t)
+	mustMkdir(t, filepath.Join(e.proj, ".devbox"))
+	if code := e.run(); code != 0 {
+		t.Fatalf(".devbox/ フォルダで止まった: code = %d, %s", code, e.stderr.String())
+	}
+
+	// .sigil があれば、残っている .devbox は気にしない
+	e = newEnv(t)
+	e.write(".devbox", "env FOO\n")
+	e.write(".sigil", "port 5173\n")
+	e.tty = "y\n"
+	if code := e.run(); code != 0 {
+		t.Fatalf("code = %d, %s", code, e.stderr.String())
+	}
+}
+
+func TestLegacyGlobalConfigStops(t *testing.T) {
+	// 改名前の全体設定だけがあると、WakaTime のキーなどが黙って渡らなくなるので、止めて知らせる
+	e := newEnv(t)
+	e.write(filepath.Join(e.home, ".config", "devbox", "devbox"), "env WAKATIME_API_KEY\n")
+	if code := e.run(); code != 1 {
+		t.Fatalf("code = %d", code)
+	}
+	if !strings.Contains(e.stderr.String(), filepath.Join(e.home, ".config", "devbox")) ||
+		!strings.Contains(e.stderr.String(), filepath.Join(e.home, ".config", "sigil")) {
+		t.Errorf("stderr = %q", e.stderr.String())
+	}
+	if len(e.runner.find("docker run")) != 0 {
+		t.Error("作成に進んだ")
+	}
+
+	// 新しい全体設定があれば、古いものが残っていても気にしない
+	e = newEnv(t)
+	e.write(filepath.Join(e.home, ".config", "devbox", "devbox"), "env OLD\n")
+	e.write(filepath.Join(e.home, ".config", "sigil", "config"), "env NEW\n")
+	if code := e.run(); code != 0 {
+		t.Fatalf("code = %d, %s", code, e.stderr.String())
+	}
+}
+
+func TestLegacyEnvVarsWarn(t *testing.T) {
+	// 改名前の環境変数は読まないので、設定されていれば注意を出す（止めはしない）
+	e := newEnv(t)
+	e.vars["DEVBOX_IMAGE"] = "devbox:custom"
+	if code := e.run(); code != 0 {
+		t.Fatalf("code = %d, %s", code, e.stderr.String())
+	}
+	if !strings.Contains(e.stderr.String(), "DEVBOX_IMAGE") || !strings.Contains(e.stderr.String(), "SIGIL_IMAGE") {
+		t.Errorf("注意が出ない: %q", e.stderr.String())
+	}
+
+	// 新しい名前も設定されていれば、注意は出さない
+	e = newEnv(t)
+	e.vars["DEVBOX_CONTEXT"] = "/old"
+	e.vars["SIGIL_CONTEXT"] = "/new"
+	e.run("build")
+	if strings.Contains(e.stderr.String(), "DEVBOX_CONTEXT") {
+		t.Errorf("新しい名前があるのに注意した: %q", e.stderr.String())
+	}
+}
+
 func TestInnerRemovesOpTempDir(t *testing.T) {
-	dir, err := os.MkdirTemp("", "devbox-op-")
+	dir, err := os.MkdirTemp("", "sigil-op-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	e := newEnv(t)
-	e.vars["DEVBOX_INNER"] = "1"
-	e.vars["DEVBOX_OP_TMP"] = dir
+	e.vars["SIGIL_INNER"] = "1"
+	e.vars["SIGIL_OP_TMP"] = dir
 	if code := e.run(); code != 0 {
 		t.Fatal(e.stderr.String())
 	}
@@ -537,11 +613,11 @@ func TestInnerRemovesOpTempDir(t *testing.T) {
 		t.Error("一時フォルダを消していない")
 	}
 
-	// devbox-op- の一時フォルダ以外は、指定されても消さない
+	// sigil-op- の一時フォルダ以外は、指定されても消さない
 	keep := t.TempDir()
 	e = newEnv(t)
-	e.vars["DEVBOX_INNER"] = "1"
-	e.vars["DEVBOX_OP_TMP"] = keep
+	e.vars["SIGIL_INNER"] = "1"
+	e.vars["SIGIL_OP_TMP"] = keep
 	e.run()
 	if _, err := os.Stat(keep); err != nil {
 		t.Error("関係のないフォルダを消した")
@@ -551,7 +627,7 @@ func TestInnerRemovesOpTempDir(t *testing.T) {
 func TestGlobalSecretsControlVarIsRejected(t *testing.T) {
 	e := newEnv(t)
 	e.opPath = "/opt/bin/op"
-	e.write(filepath.Join(e.home, ".config", "devbox", "secrets.env"), "W=op://v/i/f\nDOCKER_HOST=tcp://x\n")
+	e.write(filepath.Join(e.home, ".config", "sigil", "secrets.env"), "W=op://v/i/f\nDOCKER_HOST=tcp://x\n")
 	if code := e.run(); code != 1 || len(e.execs) != 0 {
 		t.Errorf("全体の secrets.env の制御用の変数を拒否しない: code=%d", code)
 	}
@@ -562,7 +638,7 @@ func TestGlobalSecretsControlVarIsRejected(t *testing.T) {
 func TestEnvFileAloneRequiresApprovalWithRefs(t *testing.T) {
 	e := newEnv(t)
 	e.opPath = "/opt/bin/op"
-	e.write(filepath.Join(e.home, ".config", "devbox", "devbox"), "env GITHUB_TOKEN\n")
+	e.write(filepath.Join(e.home, ".config", "sigil", "config"), "env GITHUB_TOKEN\n")
 	e.write(".env", "GITHUB_TOKEN=op://Private/AWS root/password\n")
 	e.tty = "n\n"
 	if code := e.run(); code != 1 {
@@ -582,7 +658,7 @@ func TestEnvFileAloneRequiresApprovalWithRefs(t *testing.T) {
 func TestChangingEnvRefAsksAgain(t *testing.T) {
 	e := newEnv(t)
 	e.opPath = "/opt/bin/op"
-	e.write(".devbox", "env FOO\n")
+	e.write(".sigil", "env FOO\n")
 	e.write(".env", "FOO=op://v/i/f\n")
 	e.tty = "y\n"
 	if code := e.run(); code != 0 {
@@ -599,10 +675,10 @@ func TestChangingEnvRefAsksAgain(t *testing.T) {
 
 // ---- シンボリックリンクの設定（レビュー I4） ----
 
-func TestSymlinkedDevboxIsRejected(t *testing.T) {
+func TestSymlinkedSigilFileIsRejected(t *testing.T) {
 	e := newEnv(t)
 	secret := e.write(filepath.Join(e.home, ".netrc"), "machine github.com login x password hunter2\n")
-	if err := os.Symlink(secret, filepath.Join(e.proj, ".devbox")); err != nil {
+	if err := os.Symlink(secret, filepath.Join(e.proj, ".sigil")); err != nil {
 		t.Fatal(err)
 	}
 	if code := e.run(); code != 1 {
@@ -669,14 +745,14 @@ func TestCreateFailureStillReported(t *testing.T) {
 	}
 }
 
-// ---- 起動し直した側（DEVBOX_INNER） ----
+// ---- 起動し直した側（SIGIL_INNER） ----
 
 func TestInnerRequiresApprovalRecord(t *testing.T) {
-	// DEVBOX_INNER を外から設定されても、承認を回避できない（レビュー M2）
+	// SIGIL_INNER を外から設定されても、承認を回避できない（レビュー M2）
 	e := newEnv(t)
-	e.vars["DEVBOX_INNER"] = "1"
+	e.vars["SIGIL_INNER"] = "1"
 	e.vars["FOO"] = "x"
-	e.write(".devbox", "env FOO\n")
+	e.write(".sigil", "env FOO\n")
 	if code := e.run(); code != 1 {
 		t.Fatalf("code = %d", code)
 	}
@@ -689,7 +765,7 @@ func TestInnerSkipsApprovalAndOp(t *testing.T) {
 	e := newEnv(t)
 	e.opPath = "/opt/bin/op"
 	e.vars["FOO"] = "from-op"
-	e.write(".devbox", "env FOO\n")
+	e.write(".sigil", "env FOO\n")
 	e.write(".env", "FOO=op://v/i/f\n")
 	// 外側で承認済み
 	e.tty = "y\n"
@@ -698,15 +774,15 @@ func TestInnerSkipsApprovalAndOp(t *testing.T) {
 	}
 	e = newEnvSharing(t, e)
 	e.opPath = "/opt/bin/op"
-	e.vars["DEVBOX_INNER"] = "1"
+	e.vars["SIGIL_INNER"] = "1"
 	if code := e.run(); code != 0 {
 		t.Fatal(e.stderr.String())
 	}
 	if e.ttyOpened != 0 {
-		t.Error("DEVBOX_INNER なのに確認した")
+		t.Error("SIGIL_INNER なのに確認した")
 	}
 	if e.lastExec().argv0 != "/usr/local/bin/docker" {
-		t.Error("DEVBOX_INNER なのに op を使った")
+		t.Error("SIGIL_INNER なのに op を使った")
 	}
 	if !slices.Contains(e.runArgs(), "FOO") {
 		t.Error("FOO を渡していない")
@@ -717,7 +793,7 @@ func TestExistingContainerSkipsConfigAndApproval(t *testing.T) {
 	e := newEnv(t)
 	e.container("running", "2")
 	e.opPath = "/opt/bin/op"
-	e.write(".devbox", "env FOO\n")
+	e.write(".sigil", "env FOO\n")
 	e.write(".env", "FOO=op://v/i/f\n")
 	if code := e.run(); code != 0 {
 		t.Fatal(e.stderr.String())

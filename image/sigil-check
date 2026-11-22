@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# devbox-check — コンテナの中から、隔離が効いているかを確認する
-# 使い方（ホストから）:  dev check
+# sigil-check — コンテナの中から、隔離が効いているかを確認する
+# 使い方（ホストから）:  sigil check
 set -u
 
 pass=0
@@ -21,19 +21,19 @@ if [ -n "${SSH_AUTH_SOCK:-}" ]; then ng "SSH エージェントが転送され�
 if command -v ssh >/dev/null 2>&1; then ng "ssh コマンドが入っている"; else ok "ssh コマンドは入っていない"; fi
 
 echo "■ ホストで実行されるファイルを書き換えられないこと"
-proj="${DEVBOX_PROJECT_DIR:-/workspace}"
+proj="${SIGIL_PROJECT_DIR:-/workspace}"
 if [ -e "$proj/.git" ]; then
-  if touch "$proj/.git/.devbox-write-test" 2>/dev/null; then
-    rm -f "$proj/.git/.devbox-write-test"; ng ".git に書き込める（hooks を仕込まれる恐れ）"
+  if touch "$proj/.git/.sigil-write-test" 2>/dev/null; then
+    rm -f "$proj/.git/.sigil-write-test"; ng ".git に書き込める（hooks を仕込まれる恐れ）"
   else
     ok ".git は読み取り専用"
   fi
 else
-  ng ".git がない（ホスト側で git init / clone してから dev を起動してください）"
+  ng ".git がない（ホスト側で git init / clone してから sigil を起動してください）"
 fi
 if [ -d "$HOME/.config/nvim" ]; then
-  if touch "$HOME/.config/nvim/.devbox-write-test" 2>/dev/null; then
-    rm -f "$HOME/.config/nvim/.devbox-write-test"; ng "Neovim 設定に書き込める"
+  if touch "$HOME/.config/nvim/.sigil-write-test" 2>/dev/null; then
+    rm -f "$HOME/.config/nvim/.sigil-write-test"; ng "Neovim 設定に書き込める"
   else
     ok "Neovim 設定は読み取り専用"
   fi
@@ -46,7 +46,7 @@ if [ "$capeff" = "0000000000000000" ]; then ok "Linux capabilities はすべて�
 if grep -q '^NoNewPrivs:[[:space:]]*1' /proc/self/status; then ok "no-new-privileges が有効"; else ng "no-new-privileges が無効"; fi
 
 echo "■ 渡されている環境変数（名前のみ）"
-extra="$(env | cut -d= -f1 | grep -vE '^(PATH|HOME|HOSTNAME|TERM|COLORTERM|LANG|LC_ALL|PWD|OLDPWD|SHLVL|_|USER|LOGNAME|SHELL|GOPATH|CARGO_HOME|RUSTUP_HOME|NPM_CONFIG_PREFIX|npm_config_cache|CLAUDE_CONFIG_DIR|DISABLE_AUTOUPDATER|EDITOR|DEVBOX|DEVBOX_PROJECT_DIR|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_0|GIT_CONFIG_VALUE_0|DEBIAN_FRONTEND|PS1|LS_COLORS|MAIL|NO_COLOR|BASH_.*|COLUMNS|LINES|.*_PROXY|.*_proxy|PHPIZE_DEPS|PHP_INI_DIR|PHP_CFLAGS|PHP_CPPFLAGS|PHP_LDFLAGS|GPG_KEYS|PHP_VERSION|PHP_URL|PHP_ASC_URL|PHP_SHA256)$' | sort || true)"
+extra="$(env | cut -d= -f1 | grep -vE '^(PATH|HOME|HOSTNAME|TERM|COLORTERM|LANG|LC_ALL|PWD|OLDPWD|SHLVL|_|USER|LOGNAME|SHELL|GOPATH|CARGO_HOME|RUSTUP_HOME|NPM_CONFIG_PREFIX|npm_config_cache|CLAUDE_CONFIG_DIR|DISABLE_AUTOUPDATER|EDITOR|SIGIL|SIGIL_PROJECT_DIR|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_0|GIT_CONFIG_VALUE_0|DEBIAN_FRONTEND|PS1|LS_COLORS|MAIL|NO_COLOR|BASH_.*|COLUMNS|LINES|.*_PROXY|.*_proxy|PHPIZE_DEPS|PHP_INI_DIR|PHP_CFLAGS|PHP_CPPFLAGS|PHP_LDFLAGS|GPG_KEYS|PHP_VERSION|PHP_URL|PHP_ASC_URL|PHP_SHA256)$' | sort || true)"
 if [ -n "$extra" ]; then printf '    %s\n' $extra; else echo "    （なし）"; fi
 
 echo "■ ツール"

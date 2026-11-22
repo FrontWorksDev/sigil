@@ -1,9 +1,9 @@
-// Package devboximage は、devbox イメージのビルドコンテキスト（Dockerfile と
-// devbox-check）を dev のバイナリに埋め込む。
+// Package sigilimage は、sigil イメージのビルドコンテキスト（Dockerfile と
+// sigil-check）を sigil のバイナリに埋め込む。
 //
 // embed は親フォルダを参照できないので、image/ 自体をパッケージにしている。
 // 書き出すのは埋め込んだ 2 ファイルだけなので、このファイルがビルドコンテキストに入ることはない。
-package devboximage
+package sigilimage
 
 import (
 	"embed"
@@ -11,14 +11,14 @@ import (
 	"path/filepath"
 )
 
-//go:embed Dockerfile devbox-check
+//go:embed Dockerfile sigil-check
 var files embed.FS
 
 // embed はファイルのモードを保存しないので、書き出すときに明示する。
-// devbox-check はイメージ内で実行されるので 0755 にする。
+// sigil-check はイメージ内で実行されるので 0755 にする。
 var modes = map[string]os.FileMode{
-	"Dockerfile":   0o644,
-	"devbox-check": 0o755,
+	"Dockerfile":  0o644,
+	"sigil-check": 0o755,
 }
 
 // WriteContext は dir にビルドコンテキストを書き出す。

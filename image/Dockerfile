@@ -1,11 +1,11 @@
 # syntax=docker/dockerfile:1
 #
-# devbox: 隔離された開発用コンテナ
+# sigil: 隔離された開発用コンテナ
 #   Neovim (LazyVim) / Claude Code / Node.js / Go / Rust / PHP
 #
-# ビルド:  dev build   （bin/dev が UID/GID を合わせて docker build します）
+# ビルド:  sigil build   （bin/sigil が UID/GID を合わせて docker build します）
 
-# 方針: 言語ランタイムとツールは、すべてその時点の最新版を使う（dev build のたびに更新される）。
+# 方針: 言語ランタイムとツールは、すべてその時点の最新版を使う（sigil build のたびに更新される）。
 # ただし Node.js は、npm パッケージの互換性を優先して最新の LTS にする。
 # ベースは Debian 13 (trixie)。bookworm の glibc 2.36 では、最新の tree-sitter CLI が動かない。
 ARG NODE_IMAGE=node:lts-trixie-slim
@@ -95,8 +95,8 @@ RUN mkdir -p \
       /workspace \
  && chown -R "${USER_UID}:${USER_GID}" /home/${USERNAME} /workspace
 
-COPY devbox-check /usr/local/bin/devbox-check
-RUN chmod 755 /usr/local/bin/devbox-check
+COPY sigil-check /usr/local/bin/sigil-check
+RUN chmod 755 /usr/local/bin/sigil-check
 
 USER ${USERNAME}
 
@@ -109,7 +109,7 @@ ENV PATH=/home/${USERNAME}/.local/bin:/home/${USERNAME}/.npm-global/bin:/home/${
     CLAUDE_CONFIG_DIR=/home/${USERNAME}/.claude \
     DISABLE_AUTOUPDATER=1 \
     EDITOR=nvim \
-    DEVBOX=1
+    SIGIL=1
 
 # --- Claude Code（公式のネイティブインストーラー） -----------------------
 # 更新はイメージの作り直しで行う（DISABLE_AUTOUPDATER=1）
@@ -117,7 +117,7 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 
 # コンテナ内だと一目で分かるプロンプト
 RUN printf '%s\n' \
-      'PS1="\[\e[1;35m\][devbox]\[\e[0m\] \w \$ "' \
+      'PS1="\[\e[1;35m\][sigil]\[\e[0m\] \w \$ "' \
       'alias vim=nvim' \
     >> /home/${USERNAME}/.bashrc
 

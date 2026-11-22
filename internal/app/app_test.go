@@ -17,7 +17,7 @@ func TestHelpWorksOutsideProjectWithoutDocker(t *testing.T) {
 		if code := e.run(arg); code != 0 {
 			t.Errorf("%s: code = %d, stderr = %s", arg, code, e.stderr.String())
 		}
-		if !strings.Contains(e.stdout.String(), "dev stop") {
+		if !strings.Contains(e.stdout.String(), "sigil stop") {
 			t.Errorf("%s: 使い方が出ない: %q", arg, e.stdout.String())
 		}
 		if len(e.runner.calls) != 0 {
@@ -32,7 +32,7 @@ func TestDockerNotFound(t *testing.T) {
 	if code := e.run(); code != 1 {
 		t.Errorf("code = %d", code)
 	}
-	if got := e.stderr.String(); got != "dev: docker が見つかりません\n" {
+	if got := e.stderr.String(); got != "sigil: docker が見つかりません\n" {
 		t.Errorf("stderr = %q", got)
 	}
 }
@@ -50,7 +50,7 @@ func TestBuildUsesEmbeddedContext(t *testing.T) {
 		t.Fatalf("build calls = %v", e.runner.calls)
 	}
 	want := []string{"build", "--build-arg", "USER_UID=501", "--build-arg", "USER_GID=20",
-		"-t", "devbox:latest", "--no-cache", ctxDir}
+		"-t", "sigil:latest", "--no-cache", ctxDir}
 	if ctxDir == "" || !reflect.DeepEqual(builds[0].args, want) {
 		t.Errorf("argv = %v (ctx %q)", builds[0].args, ctxDir)
 	}
@@ -61,18 +61,18 @@ func TestBuildUsesEmbeddedContext(t *testing.T) {
 
 func TestBuildWithContextAndImageEnv(t *testing.T) {
 	e := newEnv(t)
-	e.vars["DEVBOX_CONTEXT"] = "/ctx"
-	e.vars["DEVBOX_IMAGE"] = "devbox:dev-test"
+	e.vars["SIGIL_CONTEXT"] = "/ctx"
+	e.vars["SIGIL_IMAGE"] = "sigil:dev-test"
 	called := false
 	e.d.WriteBuildContext = func(string) error { called = true; return nil }
 	if code := e.run("build"); code != 0 {
 		t.Fatalf("code = %d", code)
 	}
 	if called {
-		t.Error("DEVBOX_CONTEXT があるのに埋め込みを書き出した")
+		t.Error("SIGIL_CONTEXT があるのに埋め込みを書き出した")
 	}
 	args := e.runner.find("docker build")[0].args
-	if args[len(args)-1] != "/ctx" || args[6] != "devbox:dev-test" {
+	if args[len(args)-1] != "/ctx" || args[6] != "sigil:dev-test" {
 		t.Errorf("argv = %v", args)
 	}
 }
@@ -84,8 +84,8 @@ func TestLs(t *testing.T) {
 		t.Fatalf("code = %d", code)
 	}
 	got := e.runner.find("docker ps")
-	want := []string{"ps", "-a", "--filter", "label=devbox.project",
-		"--format", "table {{.Names}}\t{{.Status}}\t{{.Label \"devbox.project\"}}"}
+	want := []string{"ps", "-a", "--filter", "label=sigil.project",
+		"--format", "table {{.Names}}\t{{.Status}}\t{{.Label \"sigil.project\"}}"}
 	if len(got) != 1 || !reflect.DeepEqual(got[0].args, want) {
 		t.Errorf("calls = %v", e.runner.calls)
 	}
@@ -97,7 +97,7 @@ func TestStopRemovesContainer(t *testing.T) {
 	if code := e.run("stop"); code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, e.stderr.String())
 	}
-	rms := e.runner.find("docker rm -f devbox-proj-")
+	rms := e.runner.find("docker rm -f sigil-proj-")
 	if len(rms) != 1 {
 		t.Errorf("rm calls = %v", e.runner.calls)
 	}
@@ -133,7 +133,7 @@ func TestDangerousPathNeverCallsDocker(t *testing.T) {
 		if len(e.execs) != 0 {
 			t.Errorf("%v: Exec を呼んだ", args)
 		}
-		if !strings.HasPrefix(e.stderr.String(), "dev: ") {
+		if !strings.HasPrefix(e.stderr.String(), "sigil: ") {
 			t.Errorf("stderr = %q", e.stderr.String())
 		}
 	}

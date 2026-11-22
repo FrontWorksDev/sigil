@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"syscall"
 
-	devboximage "devbox/image"
-	"devbox/internal/docker"
+	sigilimage "sigil/image"
+	"sigil/internal/docker"
 )
 
 // Deps は、外部とのやりとりをまとめたもの。
@@ -30,7 +30,7 @@ type Deps struct {
 	OpenTTY func() (io.ReadCloser, error)
 	// IsTerminal は、標準入力と標準出力がどちらも端末かを返す。
 	IsTerminal func() bool
-	// Executable は dev 自身の絶対パスを返す（op run から起動し直すため）。
+	// Executable は sigil 自身の絶対パスを返す（op run から起動し直すため）。
 	Executable func() (string, error)
 
 	Getuid, Getgid func() int
@@ -66,7 +66,7 @@ func DefaultDeps() Deps {
 		},
 		Getuid:            os.Getuid,
 		Getgid:            os.Getgid,
-		WriteBuildContext: devboximage.WriteContext,
+		WriteBuildContext: sigilimage.WriteContext,
 		Stdout:            os.Stdout,
 		Stderr:            os.Stderr,
 	}

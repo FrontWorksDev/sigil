@@ -1,53 +1,54 @@
-// Package app は dev のサブコマンドの振り分けと、全体の流れを受け持つ。
+// Package app は sigil のサブコマンドの振り分けと、全体の流れを受け持つ。
 package app
 
 import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"devbox/internal/approval"
-	"devbox/internal/config"
-	"devbox/internal/docker"
-	"devbox/internal/opwrap"
-	"devbox/internal/project"
+	"sigil/internal/approval"
+	"sigil/internal/config"
+	"sigil/internal/docker"
+	"sigil/internal/opwrap"
+	"sigil/internal/project"
 )
 
 const usage = `使い方:
-  dev                 プロジェクトのコンテナに入る（なければ作る）
-  dev <command...>    コンテナ内でコマンドを実行   例: dev nvim .   dev claude
-  dev -- <command...> stop / build などと同名のコマンドをコンテナ内で実行
-  dev stop            このプロジェクトのコンテナを削除（.devbox を変えたら一度これ）
-  dev ls              devbox のコンテナの一覧
-  dev check           隔離が効いているか、コンテナ内で確認
-  dev build [args...] イメージを作る（追加の引数は docker build へ）
-  dev help            この説明
+  sigil                   プロジェクトのコンテナに入る（なければ作る）
+  sigil <command...>      コンテナ内でコマンドを実行   例: sigil nvim .   sigil claude
+  sigil -- <command...>   stop / build などと同名のコマンドをコンテナ内で実行
+  sigil stop              このプロジェクトのコンテナを削除（.sigil を変えたら一度これ）
+  sigil ls                sigil のコンテナの一覧
+  sigil check             隔離が効いているか、コンテナ内で確認
+  sigil build [args...]   イメージを作る（追加の引数は docker build へ）
+  sigil help              この説明
 
 設定:
-  <project>/.devbox                 このプロジェクトに渡す環境変数名とポート（変わるたびに確認）
-  <project>/.env                    値（1Password の op:// 参照）
-  ~/.config/devbox/devbox           全プロジェクト共通の環境変数名とポート
-  ~/.config/devbox/secrets.env      全プロジェクト共通の値
+  <project>/.sigil                このプロジェクトに渡す環境変数名とポート（変わるたびに確認）
+  <project>/.env                  値（1Password の op:// 参照）
+  ~/.config/sigil/config          全プロジェクト共通の環境変数名とポート
+  ~/.config/sigil/secrets.env     全プロジェクト共通の値
 
 環境変数:
-  DEVBOX_IMAGE     イメージ名（既定 devbox:latest）
-  DEVBOX_CONTEXT   dev build で、埋め込みの代わりに使うビルドコンテキスト
+  SIGIL_IMAGE     イメージ名（既定 sigil:latest）
+  SIGIL_CONTEXT   sigil build で、埋め込みの代わりに使うビルドコンテキスト
 `
 
-// Run は dev を実行し、終了コードを返す。
+// Run は sigil を実行し、終了コードを返す。
 func Run(args []string, d Deps) int {
 	if err := run(args, d); err != nil {
-		fmt.Fprintf(d.Stderr, "dev: %s\n", err)
+		fmt.Fprintf(d.Stderr, "sigil: %s\n", err)
 		return 1
 	}
 	return 0
 }
 
 func info(d Deps, format string, a ...any) {
-	fmt.Fprintf(d.Stderr, "dev: "+format+"\n", a...)
+	fmt.Fprintf(d.Stderr, "sigil: "+format+"\n", a...)
 }
 
 func first(args []string) string {
@@ -66,10 +67,13 @@ func run(args []string, d Deps) error {
 
 	// op run から起動し直された側では、op run に渡した一時ファイルはもう読まれているので消す。
 	// 中身は参照（op://...）だけで秘密の値ではないが、残しておく理由もない。
-	if _, inner := d.LookupEnv(opwrap.InnerEnv); inner {
+	_, inner := d.LookupEnv(opwrap.InnerEnv)
+	if inner {
 		if dir, ok := d.LookupEnv(opTempEnv); ok && dir != "" {
 			removeOpTemp(dir)
 		}
+	} else {
+		warnLegacyEnv(d)
 	}
 
 	dockerPath, err := d.LookPath("docker")
@@ -95,7 +99,7 @@ func run(args []string, d Deps) error {
 		return err
 	}
 	dirs := newDirs(d, home)
-	// devbox の設定と承認記録もマウントさせない（コンテナから書き換えられると、承認を偽造できる）
+	// sigil の設定と承認記録もマウントさせない（コンテナから書き換えられると、承認を偽造できる）
 	p, err := project.Resolve(cwd, home, []string{dirs.config, dirs.state}, func(dir string) (string, error) {
 		var out bytes.Buffer
 		err := d.Runner.Run("git", []string{"-C", dir, "rev-parse", "--show-toplevel"}, &out, nil)
@@ -112,7 +116,7 @@ func run(args []string, d Deps) error {
 	cmd := args
 	switch first(args) {
 	case "check":
-		cmd = []string{"devbox-check"}
+		cmd = []string{"sigil-check"}
 	case "--":
 		cmd = args[1:]
 	}
@@ -145,25 +149,25 @@ func run(args []string, d Deps) error {
 	return nil
 }
 
-// dirs は devbox の設定と状態のフォルダ。
+// dirs は sigil の設定と状態のフォルダ。
 type dirs struct {
-	config string // $XDG_CONFIG_HOME/devbox
-	state  string // $XDG_STATE_HOME/devbox
+	config string // $XDG_CONFIG_HOME/sigil
+	state  string // $XDG_STATE_HOME/sigil
 }
 
 func newDirs(d Deps, home string) dirs {
 	return dirs{
-		config: filepath.Join(lookup(d, "XDG_CONFIG_HOME", filepath.Join(home, ".config")), "devbox"),
-		state:  filepath.Join(lookup(d, "XDG_STATE_HOME", filepath.Join(home, ".local", "state")), "devbox"),
+		config: filepath.Join(lookup(d, "XDG_CONFIG_HOME", filepath.Join(home, ".config")), "sigil"),
+		state:  filepath.Join(lookup(d, "XDG_STATE_HOME", filepath.Join(home, ".local", "state")), "sigil"),
 	}
 }
 
 // settings は、コンテナを作るときに読む設定一式。
 type settings struct {
-	devboxPath string
-	devbox     []byte // プロジェクトの .devbox（なければ nil）
-	projCfg    config.Config
-	globalCfg  config.Config
+	sigilPath string
+	sigil     []byte // プロジェクトの .sigil（なければ nil）
+	projCfg   config.Config
+	globalCfg config.Config
 
 	envPath   string
 	opEntries []opwrap.Entry // .env のうち、1Password から読み込む名前と参照（確かめたもの）
@@ -176,30 +180,47 @@ type settings struct {
 
 // loadSettings は設定を読み、.env から 1Password で読み込む名前と参照を選ぶ。
 //
-// op run は env ファイルの行をすべて、起動し直した dev 自身の環境変数にする。
-// 利用者の .env をそのまま渡すと、DOCKER_HOST や PATH を書かれたときに、dev が攻撃者の
+// op run は env ファイルの行をすべて、起動し直した sigil 自身の環境変数にする。
+// 利用者の .env をそのまま渡すと、DOCKER_HOST や PATH を書かれたときに、sigil が攻撃者の
 // docker に秘密を送ったり、偽の docker を実行したりしてしまう。そこで .env からは、
-// 設定（.devbox / devbox）で列挙した名前で、制御用ではなく、値が op:// 参照のものだけを選び、
+// 設定（.sigil / 全体設定）で列挙した名前で、制御用ではなく、値が op:// 参照のものだけを選び、
 // それだけで作り直した env ファイルを op run に渡す（RenderEnv）。
-// 参照ではない行（VITE_API_URL などのアプリの設定）は、アプリがコンテナ内で .env を直接読むので、dev は扱わない。
+// 参照ではない行（VITE_API_URL などのアプリの設定）は、アプリがコンテナ内で .env を直接読むので、sigil は扱わない。
 func loadSettings(p project.Project, dd dirs) (settings, error) {
 	s := settings{
-		devboxPath: filepath.Join(p.Root, ".devbox"),
+		sigilPath:  filepath.Join(p.Root, ".sigil"),
 		envPath:    filepath.Join(p.Root, ".env"),
 		secretsPth: filepath.Join(dd.config, "secrets.env"),
 	}
 	var err error
 	// プロジェクトの中のファイルは、リポジトリやコンテナが自由に作れるので、シンボリックリンクを拒否する
-	if s.devbox, _, err = config.ReadFile(s.devboxPath, true); err != nil {
+	if s.sigil, _, err = config.ReadFile(s.sigilPath, true); err != nil {
 		return s, err
 	}
-	if s.devbox != nil {
+	if s.sigil == nil {
+		// 改名前の .devbox だけがあると、黙って無視すれば渡すはずの環境変数やポートが渡らず、
+		// 気づきにくいので、止めて知らせる
+		// 通常のファイルのときだけにする。Jetify Devbox などは .devbox/ というフォルダを作るため
+		legacy := filepath.Join(p.Root, ".devbox")
+		if fi, err := os.Lstat(legacy); err == nil && fi.Mode().IsRegular() {
+			return s, fmt.Errorf("%s があります。dev は sigil に改名したので、.sigil に名前を変えてください（mv .devbox .sigil）", legacy)
+		}
+	}
+	// 改名前の全体設定だけがあると、WakaTime のキーなどが黙って渡らなくなるので、止めて知らせる
+	if _, err := os.Lstat(dd.config); errors.Is(err, fs.ErrNotExist) {
+		legacy := filepath.Join(filepath.Dir(dd.config), "devbox")
+		if _, err := os.Lstat(legacy); err == nil {
+			return s, fmt.Errorf("改名前の全体設定 %s があります。%s に移してください（mv %s %s、そのうえで中の devbox を config に名前を変える）",
+				legacy, dd.config, legacy, dd.config)
+		}
+	}
+	if s.sigil != nil {
 		// 承認の画面に出す内容と、記録するハッシュを、同じ読み込みから作る
-		if s.projCfg, err = config.Parse(s.devboxPath, bytes.NewReader(s.devbox)); err != nil {
+		if s.projCfg, err = config.Parse(s.sigilPath, bytes.NewReader(s.sigil)); err != nil {
 			return s, err
 		}
 	}
-	if s.globalCfg, _, err = config.Load(filepath.Join(dd.config, "devbox")); err != nil {
+	if s.globalCfg, _, err = config.Load(filepath.Join(dd.config, "config")); err != nil {
 		return s, err
 	}
 	env, _, err := config.ReadFile(s.envPath, true)
@@ -222,11 +243,11 @@ func loadSettings(p project.Project, dd dirs) (settings, error) {
 		for _, e := range entries {
 			switch {
 			case e.Ref == "":
-				// アプリの設定。dev は扱わない
+				// アプリの設定。sigil は扱わない
 			case config.Denied(e.Name):
 				s.warnings = append(s.warnings, fmt.Sprintf("注意: .env の %s は渡せない名前なので、1Password から読み込みません", e.Name))
 			case !listed[e.Name]:
-				s.warnings = append(s.warnings, fmt.Sprintf("注意: .env の %s は .devbox にも全体設定にも列挙されていないので、1Password から読み込みません", e.Name))
+				s.warnings = append(s.warnings, fmt.Sprintf("注意: .env の %s は .sigil にも全体設定にも列挙されていないので、1Password から読み込みません", e.Name))
 			default:
 				s.opEntries = append(s.opEntries, e)
 			}
@@ -241,7 +262,7 @@ func loadSettings(p project.Project, dd dirs) (settings, error) {
 		}
 		for _, e := range entries {
 			if config.Denied(e.Name) {
-				return s, fmt.Errorf("%s: %s は書けません（dev や docker の動作を変えられるため）", s.secretsPth, e.Name)
+				return s, fmt.Errorf("%s: %s は書けません（sigil や docker の動作を変えられるため）", s.secretsPth, e.Name)
 			}
 		}
 	}
@@ -250,10 +271,10 @@ func loadSettings(p project.Project, dd dirs) (settings, error) {
 
 const (
 	// opTempPrefix は、op run に渡す env ファイルを置く一時フォルダの名前の接頭辞。
-	opTempPrefix = "devbox-op-"
+	opTempPrefix = "sigil-op-"
 	// opTempEnv は、その一時フォルダの場所を、起動し直した側に伝える環境変数（消すため）。
-	// .devbox / .env では渡せない名前にしてある（config.Denied）。
-	opTempEnv = "DEVBOX_OP_TMP"
+	// .sigil / .env では渡せない名前にしてある（config.Denied）。
+	opTempEnv = "SIGIL_OP_TMP"
 )
 
 // needsOp は、op run で読み込むものがあるかを返す。
@@ -287,7 +308,7 @@ func (s settings) writeOpFiles() (files []string, tmpDir string, err error) {
 }
 
 // removeOpTemp は、op run に渡すために作った一時フォルダを消す。
-// 環境変数で渡された場所なので、自分が作る形（$TMPDIR/devbox-op-*）のときだけ消す。
+// 環境変数で渡された場所なので、自分が作る形（$TMPDIR/sigil-op-*）のときだけ消す。
 func removeOpTemp(dir string) {
 	dir = filepath.Clean(dir)
 	if filepath.Dir(dir) == filepath.Clean(os.TempDir()) && strings.HasPrefix(filepath.Base(dir), opTempPrefix) {
@@ -312,11 +333,11 @@ func ensureContainer(d Deps, client docker.Client, p project.Project, home strin
 	}
 
 	// op run から起動し直された側（inner）では、確認も op run もしない（無限ループ防止）。
-	// ただし承認記録の照合は inner でも行う。DEVBOX_INNER を外から設定されても、承認を回避できないように。
+	// ただし承認記録の照合は inner でも行う。SIGIL_INNER を外から設定されても、承認を回避できないように。
 	_, inner := d.LookupEnv(opwrap.InnerEnv)
 	if !inner {
 		for _, w := range s.warnings {
-			fmt.Fprintf(d.Stderr, "dev: %s\n", w)
+			fmt.Fprintf(d.Stderr, "sigil: %s\n", w)
 		}
 	}
 	// 確認は op run より前に行う。1Password のロックを解除する前に、何を渡すかを見せるため。
@@ -353,7 +374,7 @@ func ensureContainer(d Deps, client docker.Client, p project.Project, home strin
 
 	image := imageName(d)
 	if !client.ImageExists(image) {
-		return false, fmt.Errorf("イメージ %s がありません。先に dev build を実行してください", image)
+		return false, fmt.Errorf("イメージ %s がありません。先に sigil build を実行してください", image)
 	}
 	_, gitErr := os.Stat(filepath.Join(p.Root, ".git"))
 	if gitErr != nil {
@@ -408,7 +429,7 @@ func ensureContainer(d Deps, client docker.Client, p project.Project, home strin
 // useExisting は既存のコンテナを使えるようにする。古い layout ならエラー、停止中なら起動する。
 func useExisting(client docker.Client, p project.Project, st docker.State, layout string) error {
 	if layout != docker.LayoutVersion {
-		return fmt.Errorf("%s は古い dev で作られています。dev stop してから、もう一度実行してください", p.ContainerName)
+		return fmt.Errorf("%s は古い sigil で作られています。sigil stop してから、もう一度実行してください", p.ContainerName)
 	}
 	if st == docker.Stopped {
 		if err := client.Start(p.ContainerName); err != nil {
@@ -418,23 +439,23 @@ func useExisting(client docker.Client, p project.Project, st docker.State, layou
 	return nil
 }
 
-// approve は、プロジェクトの .devbox と .env が承認済みかを確かめる。
+// approve は、プロジェクトの .sigil と .env が承認済みかを確かめる。
 // 承認済みでなく ask のときは利用者に確認し、承認されたら記録する。ask でなければエラーにする。
 // どちらのファイルもなければ、確認は要らない（全体設定はホストのファイルなので確認しない）。
 //
 // .env については、生の内容ではなく、1Password から読み込む名前と参照の組（opEnv）を対象にする。
 // アプリの設定の行を変えただけで、確認し直さなくて済むように。
 func approve(d Deps, store approval.Store, p project.Project, s settings, ask bool) error {
-	if s.devbox == nil && s.opEnv == nil {
+	if s.sigil == nil && s.opEnv == nil {
 		return nil
 	}
-	sum := approval.Fingerprint(s.devbox, s.opEnv)
+	sum := approval.Fingerprint(s.sigil, s.opEnv)
 	if store.IsApproved(p.Key, sum) {
 		return nil
 	}
 	var files []string
-	if s.devbox != nil {
-		files = append(files, s.devboxPath)
+	if s.sigil != nil {
+		files = append(files, s.sigilPath)
 	}
 	if s.opEnv != nil {
 		files = append(files, s.envPath)
@@ -453,6 +474,20 @@ func approve(d Deps, store approval.Store, p project.Project, s settings, ask bo
 	return store.Record(p.Key, sum)
 }
 
+// warnLegacyEnv は、改名前の環境変数が設定されていて、新しい名前が設定されていなければ注意を出す。
+// 改名前の名前は読まないので、黙っていると、指定したはずのイメージなどが使われず気づきにくいため。
+func warnLegacyEnv(d Deps) {
+	for _, name := range []string{"IMAGE", "CONTEXT"} {
+		oldName, newName := "DEVBOX_"+name, "SIGIL_"+name
+		if _, ok := d.LookupEnv(oldName); !ok {
+			continue
+		}
+		if _, ok := d.LookupEnv(newName); !ok {
+			info(d, "注意: %s は読みません（sigil に改名しました）。%s を使ってください", oldName, newName)
+		}
+	}
+}
+
 func lookup(d Deps, key, def string) string {
 	if v, ok := d.LookupEnv(key); ok && v != "" {
 		return v
@@ -461,14 +496,14 @@ func lookup(d Deps, key, def string) string {
 }
 
 func imageName(d Deps) string {
-	return lookup(d, "DEVBOX_IMAGE", "devbox:latest")
+	return lookup(d, "SIGIL_IMAGE", "sigil:latest")
 }
 
 // build はイメージを作る。ビルドコンテキストは、バイナリに埋め込んだものを一時フォルダに書き出して使う。
 func build(d Deps, extra []string) error {
-	ctxDir := lookup(d, "DEVBOX_CONTEXT", "")
+	ctxDir := lookup(d, "SIGIL_CONTEXT", "")
 	if ctxDir == "" {
-		tmp, err := os.MkdirTemp("", "devbox-build-")
+		tmp, err := os.MkdirTemp("", "sigil-build-")
 		if err != nil {
 			return err
 		}

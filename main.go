@@ -1,11 +1,11 @@
-// dev は、プロジェクトのコードを隔離コンテナ（devbox）で動かすための CLI。
-// 使い方は dev help、仕様は docs/superpowers/specs/ を参照。
+// sigil は、プロジェクトのコードを隔離コンテナ（sigil）で動かすための CLI。
+// 使い方は sigil help、仕様は docs/superpowers/specs/ を参照。
 package main
 
 import (
 	"os"
 
-	"devbox/internal/app"
+	"sigil/internal/app"
 )
 
 func main() {

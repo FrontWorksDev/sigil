@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-const file = "/p/.devbox"
+const file = "/p/.sigil"
 
 func publishes(c Config) []string {
 	var out []string
@@ -58,37 +58,37 @@ func TestParseErrors(t *testing.T) {
 	cases := []struct {
 		in, want string
 	}{
-		{"env\n", "/p/.devbox:1: 値がありません: env"},
-		{"env A B\n", "/p/.devbox:1: 余分な値があります: env A B"},
-		{"env $(id)\n", "/p/.devbox:1: 環境変数名が不正です: $(id)"},
-		{"env `id`\n", "/p/.devbox:1: 環境変数名が不正です: `id`"},
-		{"env 1A\n", "/p/.devbox:1: 環境変数名が不正です: 1A"},
-		{"env A=1\n", "/p/.devbox:1: 環境変数名が不正です: A=1"},
-		{"env PATH\n", "/p/.devbox:1: PATH は渡せません"},
-		{"env SSH_AUTH_SOCK\n", "/p/.devbox:1: SSH_AUTH_SOCK は渡せません"},
-		{"env DOCKER_HOST\n", "/p/.devbox:1: DOCKER_HOST は渡せません"},
-		{"env HOME\n", "/p/.devbox:1: HOME は渡せません"},
-		{"env LD_PRELOAD\n", "/p/.devbox:1: LD_PRELOAD は渡せません"},
-		{"env LD_LIBRARY_PATH\n", "/p/.devbox:1: LD_LIBRARY_PATH は渡せません"},
-		// dev 自身や docker / git / op の動作を変えられる名前（前方一致）
-		{"env DOCKER_CONTEXT\n", "/p/.devbox:1: DOCKER_CONTEXT は渡せません"},
-		{"env XDG_CONFIG_HOME\n", "/p/.devbox:1: XDG_CONFIG_HOME は渡せません"},
-		{"env DEVBOX_INNER\n", "/p/.devbox:1: DEVBOX_INNER は渡せません"},
-		{"env GIT_DIR\n", "/p/.devbox:1: GIT_DIR は渡せません"},
-		{"env OP_SESSION_x\n", "/p/.devbox:1: OP_SESSION_x は渡せません"},
-		{"env DYLD_INSERT_LIBRARIES\n", "/p/.devbox:1: DYLD_INSERT_LIBRARIES は渡せません"},
-		{"env LD_AUDIT\n", "/p/.devbox:1: LD_AUDIT は渡せません"},
-		{"port 51 73\n", "/p/.devbox:1: 余分な値があります: port 51 73"},
-		{"port abc\n", "/p/.devbox:1: ポート指定が不正です: abc"},
-		{"port 123456\n", "/p/.devbox:1: ポート指定が不正です: 123456"},
-		{"port 80:\n", "/p/.devbox:1: ポート指定が不正です: 80:"},
-		{"port 0.0.0.0:80:80\n", "/p/.devbox:1: ポート指定が不正です: 0.0.0.0:80:80"},
-		{"port 0\n", "/p/.devbox:1: ポート番号は 1〜65535 です: 0"},
-		{"port 70000\n", "/p/.devbox:1: ポート番号は 1〜65535 です: 70000"},
-		{"port 8080:0\n", "/p/.devbox:1: ポート番号は 1〜65535 です: 8080:0"},
-		{"run rm -rf /\n", "/p/.devbox:1: 余分な値があります: run rm -rf /"},
-		{"run x\n", "/p/.devbox:1: 不明な指定です: run（env / port のみ）"},
-		{"# ok\nenv OK\nenv $(id)\n", "/p/.devbox:3: 環境変数名が不正です: $(id)"},
+		{"env\n", "/p/.sigil:1: 値がありません: env"},
+		{"env A B\n", "/p/.sigil:1: 余分な値があります: env A B"},
+		{"env $(id)\n", "/p/.sigil:1: 環境変数名が不正です: $(id)"},
+		{"env `id`\n", "/p/.sigil:1: 環境変数名が不正です: `id`"},
+		{"env 1A\n", "/p/.sigil:1: 環境変数名が不正です: 1A"},
+		{"env A=1\n", "/p/.sigil:1: 環境変数名が不正です: A=1"},
+		{"env PATH\n", "/p/.sigil:1: PATH は渡せません"},
+		{"env SSH_AUTH_SOCK\n", "/p/.sigil:1: SSH_AUTH_SOCK は渡せません"},
+		{"env DOCKER_HOST\n", "/p/.sigil:1: DOCKER_HOST は渡せません"},
+		{"env HOME\n", "/p/.sigil:1: HOME は渡せません"},
+		{"env LD_PRELOAD\n", "/p/.sigil:1: LD_PRELOAD は渡せません"},
+		{"env LD_LIBRARY_PATH\n", "/p/.sigil:1: LD_LIBRARY_PATH は渡せません"},
+		// sigil 自身や docker / git / op の動作を変えられる名前（前方一致）
+		{"env DOCKER_CONTEXT\n", "/p/.sigil:1: DOCKER_CONTEXT は渡せません"},
+		{"env XDG_CONFIG_HOME\n", "/p/.sigil:1: XDG_CONFIG_HOME は渡せません"},
+		{"env SIGIL_INNER\n", "/p/.sigil:1: SIGIL_INNER は渡せません"},
+		{"env GIT_DIR\n", "/p/.sigil:1: GIT_DIR は渡せません"},
+		{"env OP_SESSION_x\n", "/p/.sigil:1: OP_SESSION_x は渡せません"},
+		{"env DYLD_INSERT_LIBRARIES\n", "/p/.sigil:1: DYLD_INSERT_LIBRARIES は渡せません"},
+		{"env LD_AUDIT\n", "/p/.sigil:1: LD_AUDIT は渡せません"},
+		{"port 51 73\n", "/p/.sigil:1: 余分な値があります: port 51 73"},
+		{"port abc\n", "/p/.sigil:1: ポート指定が不正です: abc"},
+		{"port 123456\n", "/p/.sigil:1: ポート指定が不正です: 123456"},
+		{"port 80:\n", "/p/.sigil:1: ポート指定が不正です: 80:"},
+		{"port 0.0.0.0:80:80\n", "/p/.sigil:1: ポート指定が不正です: 0.0.0.0:80:80"},
+		{"port 0\n", "/p/.sigil:1: ポート番号は 1〜65535 です: 0"},
+		{"port 70000\n", "/p/.sigil:1: ポート番号は 1〜65535 です: 70000"},
+		{"port 8080:0\n", "/p/.sigil:1: ポート番号は 1〜65535 です: 8080:0"},
+		{"run rm -rf /\n", "/p/.sigil:1: 余分な値があります: run rm -rf /"},
+		{"run x\n", "/p/.sigil:1: 不明な指定です: run（env / port のみ）"},
+		{"# ok\nenv OK\nenv $(id)\n", "/p/.sigil:3: 環境変数名が不正です: $(id)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
@@ -104,18 +104,18 @@ func TestParseErrors(t *testing.T) {
 }
 
 func TestDenied(t *testing.T) {
-	for _, n := range []string{"PATH", "HOME", "SSH_AUTH_SOCK", "DOCKER_HOST", "XDG_STATE_HOME", "DEVBOX_IMAGE", "GIT_SSH_COMMAND", "OP_ACCOUNT", "LD_PRELOAD", "DYLD_LIBRARY_PATH"} {
+	for _, n := range []string{"PATH", "HOME", "SSH_AUTH_SOCK", "DOCKER_HOST", "XDG_STATE_HOME", "SIGIL_IMAGE", "GIT_SSH_COMMAND", "OP_ACCOUNT", "LD_PRELOAD", "DYLD_LIBRARY_PATH"} {
 		if !Denied(n) {
 			t.Errorf("Denied(%q) = false", n)
 		}
 	}
-	for _, n := range []string{"DEVBOX", "DEVBOX_INNER", "DEVBOX_CONTEXT", "DEVBOX_PROJECT_DIR", "DEVBOX_OP_TMP"} {
+	for _, n := range []string{"SIGIL", "SIGIL_INNER", "SIGIL_CONTEXT", "SIGIL_PROJECT_DIR", "SIGIL_OP_TMP"} {
 		if !Denied(n) {
 			t.Errorf("Denied(%q) = false", n)
 		}
 	}
-	// dev の動作に関係しない DEVBOX_ の名前は渡せる（設計書の検証手順でも DEVBOX_TEST_VAR を使う）
-	for _, n := range []string{"DATABASE_URL", "GITHUB_TOKEN", "DOCKERFILE_X", "PATHS", "MY_HOME", "DEVBOX_TEST_VAR"} {
+	// sigil の動作に関係しない SIGIL_ の名前は渡せる（設計書の検証手順でも SIGIL_TEST_VAR を使う）
+	for _, n := range []string{"DATABASE_URL", "GITHUB_TOKEN", "DOCKERFILE_X", "PATHS", "MY_HOME", "SIGIL_TEST_VAR"} {
 		if Denied(n) {
 			t.Errorf("Denied(%q) = true", n)
 		}
@@ -126,7 +126,7 @@ func TestLoadRejectsSymlinkWhenStrict(t *testing.T) {
 	dir := t.TempDir()
 	secret := filepath.Join(dir, "netrc")
 	os.WriteFile(secret, []byte("machine github.com login x password y\n"), 0o600)
-	link := filepath.Join(dir, ".devbox")
+	link := filepath.Join(dir, ".sigil")
 	if err := os.Symlink(secret, link); err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestLoadRejectsSymlinkWhenStrict(t *testing.T) {
 
 func TestLoadRejectsHugeAndSpecialFiles(t *testing.T) {
 	dir := t.TempDir()
-	big := filepath.Join(dir, ".devbox")
+	big := filepath.Join(dir, ".sigil")
 	os.WriteFile(big, []byte(strings.Repeat("# x\n", 40000)), 0o644)
 	if _, _, err := LoadStrict(big); err == nil {
 		t.Error("大きすぎるファイルを読んだ")
@@ -176,7 +176,7 @@ func TestLoad(t *testing.T) {
 		t.Errorf("ファイルがないとき = %v %v %v", c, ok, err)
 	}
 
-	p := filepath.Join(dir, ".devbox")
+	p := filepath.Join(dir, ".sigil")
 	if err := os.WriteFile(p, []byte("env X\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

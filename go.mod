@@ -1,3 +1,3 @@
-module devbox
+module sigil
 
 go 1.27

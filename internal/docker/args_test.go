@@ -6,16 +6,16 @@ import (
 	"strings"
 	"testing"
 
-	"devbox/internal/config"
+	"sigil/internal/config"
 )
 
 func sampleSpec() RunSpec {
 	return RunSpec{
-		Name:          "devbox-proj-33bf5961",
+		Name:          "sigil-proj-33bf5961",
 		ProjectRoot:   "/Users/k/src/proj",
 		ContainerPath: "/workspace/proj",
 		Home:          "/Users/k",
-		Image:         "devbox:latest",
+		Image:         "sigil:latest",
 		HasGit:        true,
 		HasNvimConfig: true,
 		Envs:          []string{"DATABASE_URL", "WAKATIME_API_KEY"},
@@ -45,15 +45,15 @@ func TestRunArgsIsolation(t *testing.T) {
 		}
 	}
 	labels := flagValues(args, "--label")
-	for _, want := range []string{"devbox.project=/Users/k/src/proj", "devbox.layout=2"} {
+	for _, want := range []string{"sigil.project=/Users/k/src/proj", "sigil.layout=2"} {
 		if !slices.Contains(labels, want) {
 			t.Errorf("ラベル %s がない: %v", want, labels)
 		}
 	}
-	if got := flagValues(args, "--name"); !reflect.DeepEqual(got, []string{"devbox-proj-33bf5961"}) {
+	if got := flagValues(args, "--name"); !reflect.DeepEqual(got, []string{"sigil-proj-33bf5961"}) {
 		t.Errorf("--name = %v", got)
 	}
-	if got := flagValues(args, "--hostname"); !reflect.DeepEqual(got, []string{"devbox"}) {
+	if got := flagValues(args, "--hostname"); !reflect.DeepEqual(got, []string{"sigil"}) {
 		t.Errorf("--hostname = %v", got)
 	}
 }
@@ -65,12 +65,12 @@ func TestRunArgsMounts(t *testing.T) {
 		"/Users/k/src/proj:/workspace/proj",
 		"/Users/k/src/proj/.git:/workspace/proj/.git:ro",
 		"/Users/k/.config/nvim:/home/dev/.config/nvim:ro",
-		"devbox-nvim-data:/home/dev/.local/share/nvim",
-		"devbox-nvim-state:/home/dev/.local/state/nvim",
-		"devbox-claude:/home/dev/.claude",
-		"devbox-cache:/home/dev/.cache",
-		"devbox-go:/home/dev/go",
-		"devbox-cargo:/home/dev/.cargo",
+		"sigil-nvim-data:/home/dev/.local/share/nvim",
+		"sigil-nvim-state:/home/dev/.local/state/nvim",
+		"sigil-claude:/home/dev/.claude",
+		"sigil-cache:/home/dev/.cache",
+		"sigil-go:/home/dev/go",
+		"sigil-cargo:/home/dev/.cargo",
 	}
 	if !reflect.DeepEqual(vols, want) {
 		t.Errorf("-v =\n%v\nwant\n%v", vols, want)
@@ -94,7 +94,7 @@ func TestRunArgsNoSecretMounts(t *testing.T) {
 		case strings.Contains(src, ".ssh"), strings.Contains(src, ".aws"), strings.Contains(src, "docker.sock"):
 			t.Errorf("秘密情報をマウントしている: %s", v)
 		case src == s.ProjectRoot, src == s.ProjectRoot+"/.git", src == s.Home+"/.config/nvim":
-		case strings.HasPrefix(src, "devbox-") && !strings.Contains(src, "/"):
+		case strings.HasPrefix(src, "sigil-") && !strings.Contains(src, "/"):
 		default:
 			t.Errorf("想定外のマウント: %s", v)
 		}
@@ -104,12 +104,12 @@ func TestRunArgsNoSecretMounts(t *testing.T) {
 func TestRunArgsNoEnvValues(t *testing.T) {
 	envs := flagValues(RunArgs(sampleSpec()), "-e")
 	for _, e := range envs {
-		if strings.Contains(e, "=") && !strings.HasPrefix(e, "DEVBOX_") && !strings.HasPrefix(e, "GIT_CONFIG_") {
+		if strings.Contains(e, "=") && !strings.HasPrefix(e, "SIGIL_") && !strings.HasPrefix(e, "GIT_CONFIG_") {
 			t.Errorf("値付きの -e: %s", e)
 		}
 	}
 	for _, want := range []string{
-		"DEVBOX_PROJECT_DIR=/workspace/proj",
+		"SIGIL_PROJECT_DIR=/workspace/proj",
 		"GIT_CONFIG_COUNT=1",
 		"GIT_CONFIG_KEY_0=safe.directory",
 		"GIT_CONFIG_VALUE_0=/workspace/proj",
@@ -138,7 +138,7 @@ func TestRunArgsPorts(t *testing.T) {
 func TestRunArgsEndsWithWorkdirAndImage(t *testing.T) {
 	args := RunArgs(sampleSpec())
 	tail := args[len(args)-3:]
-	if !reflect.DeepEqual(tail, []string{"-w", "/workspace/proj", "devbox:latest"}) {
+	if !reflect.DeepEqual(tail, []string{"-w", "/workspace/proj", "sigil:latest"}) {
 		t.Errorf("末尾 = %v", tail)
 	}
 }
@@ -156,17 +156,17 @@ func TestExecArgs(t *testing.T) {
 }
 
 func TestBuildArgs(t *testing.T) {
-	got := BuildArgs("devbox:dev-test", 501, 20, []string{"--no-cache"}, "/tmp/c")
+	got := BuildArgs("sigil:dev-test", 501, 20, []string{"--no-cache"}, "/tmp/c")
 	want := []string{"build", "--build-arg", "USER_UID=501", "--build-arg", "USER_GID=20",
-		"-t", "devbox:dev-test", "--no-cache", "/tmp/c"}
+		"-t", "sigil:dev-test", "--no-cache", "/tmp/c"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("BuildArgs = %v", got)
 	}
 }
 
 func TestLsArgs(t *testing.T) {
-	want := []string{"ps", "-a", "--filter", "label=devbox.project",
-		"--format", "table {{.Names}}\t{{.Status}}\t{{.Label \"devbox.project\"}}"}
+	want := []string{"ps", "-a", "--filter", "label=sigil.project",
+		"--format", "table {{.Names}}\t{{.Status}}\t{{.Label \"sigil.project\"}}"}
 	if got := LsArgs(); !reflect.DeepEqual(got, want) {
 		t.Errorf("LsArgs = %v", got)
 	}

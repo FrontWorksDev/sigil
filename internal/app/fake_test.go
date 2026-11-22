@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"devbox/internal/project"
+	"sigil/internal/project"
 )
 
 type call struct {
@@ -136,7 +136,7 @@ func newEnv(t *testing.T) *testEnv {
 			e.execs = append(e.execs, execCall{argv0, argv, env})
 			// 本物なら起動し直した側が消す一時フォルダを、テストの終わりに消す
 			for _, kv := range env {
-				if dir, ok := strings.CutPrefix(kv, "DEVBOX_OP_TMP="); ok {
+				if dir, ok := strings.CutPrefix(kv, "SIGIL_OP_TMP="); ok {
 					t.Cleanup(func() { os.RemoveAll(dir) })
 				}
 			}

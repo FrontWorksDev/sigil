@@ -1,5 +1,5 @@
-# ~/.config/devbox/devbox — すべてのプロジェクトのコンテナに渡すもの
-# 書き方はプロジェクトの .devbox と同じ（env / port）。
+# ~/.config/sigil/config — すべてのプロジェクトのコンテナに渡すもの
+# 書き方はプロジェクトの .sigil と同じ（env / port）。
 # ホスト側のファイルなので、確認なしで使われます。
 #
 # 値は同じフォルダの secrets.env に 1Password の参照として書く。

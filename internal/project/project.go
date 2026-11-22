@@ -16,12 +16,12 @@ type Project struct {
 	Root          string // ホスト側の最上位フォルダ（シンボリックリンク解決済み）
 	Name          string // フォルダ名
 	Key           string // Root の SHA-256 の先頭 8 文字。承認記録のファイル名にも使う
-	ContainerName string // devbox-<safe>-<key>
+	ContainerName string // sigil-<safe>-<key>
 	ContainerPath string // /workspace/<フォルダ名>
 }
 
 // New は解決済みの絶対パス root から Project を作る。
-// コンテナ名と key の規則はシェル版と同じ（承認記録をそのまま使えるようにするため）。
+// key はプロジェクトのフルパスから決まるので、同じフォルダなら、いつも同じコンテナ名・承認記録になる。
 func New(root string) Project {
 	name := filepath.Base(root)
 	sum := sha256.Sum256([]byte(root))
@@ -37,13 +37,13 @@ func New(root string) Project {
 		Root:          root,
 		Name:          name,
 		Key:           key,
-		ContainerName: "devbox-" + SafeName(name) + "-" + key,
+		ContainerName: "sigil-" + SafeName(name) + "-" + key,
 		ContainerPath: "/workspace/" + inner,
 	}
 }
 
 // SafeName は [A-Za-z0-9_.-] 以外の各バイトを "-" に置き換え、先頭 40 バイトに切り詰める。
-// シェル版の tr -c 'A-Za-z0-9_.-' '-' | cut -c1-40 と同じく、バイト単位で処理する。
+// 文字ではなくバイト単位で処理する（もとのシェル版の tr -c / cut -c と同じ結果にしたため）。
 func SafeName(name string) string {
 	b := []byte(name)
 	for i, c := range b {
@@ -61,7 +61,7 @@ func SafeName(name string) string {
 
 // ホームの中で、秘密情報や、ホストで実行される設定を含む場所。
 // その中や、それを含むフォルダは、コンテナにマウントしない。
-//   - ~/.config には 1Password CLI の設定、gh のトークン、devbox の全体設定（承認なしで使われる）がある
+//   - ~/.config には 1Password CLI の設定、gh のトークン、sigil の全体設定（承認なしで使われる）がある
 //   - ~/Library には Keychain やアプリの認証情報がある
 var sensitiveInHome = []string{".ssh", ".aws", ".gnupg", ".docker", ".config", "Library"}
 
@@ -95,7 +95,7 @@ func within(p, base string) bool {
 
 // CheckSafe は、マウントすると危険な場所を拒否する。
 // ホームやその上をマウントすると、~/.ssh や ~/.aws がコンテナから見えてしまう。
-// extra は、ほかに守る場所（devbox の状態フォルダなど）。
+// extra は、ほかに守る場所（sigil の状態フォルダなど）。
 func CheckSafe(root, home string, extra ...string) error {
 	for _, p := range []string{"/", "/Users", "/home", home} {
 		if samePath(root, p) {

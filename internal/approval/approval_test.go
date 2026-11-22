@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"devbox/internal/config"
-	"devbox/internal/opwrap"
+	"sigil/internal/config"
+	"sigil/internal/opwrap"
 )
 
 func TestSumMatchesShasum(t *testing.T) {
@@ -22,7 +22,7 @@ func TestSumMatchesShasum(t *testing.T) {
 }
 
 func TestRecordModesAndContent(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "devbox", "approved")
+	dir := filepath.Join(t.TempDir(), "sigil", "approved")
 	s := Store{Dir: dir}
 	sum := Sum([]byte("env A\n"))
 	if err := s.Record("abcd1234", sum); err != nil {
@@ -65,20 +65,23 @@ func TestIsApproved(t *testing.T) {
 }
 
 func TestFingerprint(t *testing.T) {
-	devbox := []byte("env A\n")
-	// .env がなければ、シェル版と同じく .devbox だけのハッシュ（既存の承認を使えるように）
-	if got := Fingerprint(devbox, nil); got != Sum(devbox) {
-		t.Error(".env がないときにシェル版と違うハッシュになる")
+	sigil := []byte("env A\n")
+	// シェル版の承認記録との互換はもうないので、.env がないときも同じ形式で計算する（特別扱いしない）
+	if Fingerprint(sigil, nil) != Fingerprint(sigil, []byte{}) {
+		t.Error(".env がないときだけ特別扱いしている")
 	}
-	withEnv := Fingerprint(devbox, []byte("A=op://v/i/f\n"))
-	if withEnv == Sum(devbox) {
+	if Fingerprint(sigil, nil) == Sum(sigil) {
+		t.Error(".sigil だけの生のハッシュになっている（区切りのない形式）")
+	}
+	withEnv := Fingerprint(sigil, []byte("A=op://v/i/f\n"))
+	if withEnv == Sum(sigil) {
 		t.Error(".env がハッシュに含まれていない")
 	}
-	if withEnv == Fingerprint(devbox, []byte("A=op://v/other/f\n")) {
+	if withEnv == Fingerprint(sigil, []byte("A=op://v/other/f\n")) {
 		t.Error(".env の参照先が変わってもハッシュが同じ")
 	}
 	if Fingerprint(nil, []byte("A=op://v/i/f\n")) == "" {
-		t.Error(".devbox がなく .env だけのとき")
+		t.Error(".sigil がなく .env だけのとき")
 	}
 }
 
@@ -91,11 +94,11 @@ func TestAsk(t *testing.T) {
 	}
 	for in, want := range cases {
 		var out bytes.Buffer
-		if got := Ask(strings.NewReader(in), &out, []string{"/p/.devbox", "/p/.env"}, c, refs); got != want {
+		if got := Ask(strings.NewReader(in), &out, []string{"/p/.sigil", "/p/.env"}, c, refs); got != want {
 			t.Errorf("Ask(%q) = %v, want %v", in, got, want)
 		}
 		s := out.String()
-		for _, must := range []string{"/p/.devbox", "/p/.env", "DATABASE_URL", "op://dev/db/url", "LITERAL", "127.0.0.1:8080:80", "全体設定", "[y/N]"} {
+		for _, must := range []string{"/p/.sigil", "/p/.env", "DATABASE_URL", "op://dev/db/url", "LITERAL", "127.0.0.1:8080:80", "全体設定", "[y/N]"} {
 			if !strings.Contains(s, must) {
 				t.Errorf("表示に %q がない:\n%s", must, s)
 			}

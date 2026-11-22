@@ -1,10 +1,10 @@
-# dev CLI 設計書
+# sigil CLI 設計書
 
 - 作成日: 2026-11-19
 - 状態: 承認済み・実装済み
 - 元になった文書: `docs/SPEC.md`（この設計書に統合し、削除済み）
 
-この文書だけで `dev` を実装・検証できるようにしている。仕様を変えるときはこの文書を更新し、末尾の「決定事項」に理由を残す。
+この文書だけで `sigil` を実装・検証できるようにしている。仕様を変えるときはこの文書を更新し、末尾の「決定事項」に理由を残す。
 
 ---
 
@@ -18,30 +18,30 @@ npm / PyPI などのサプライチェーン攻撃や、悪意あるリポジト
 
 利用者の環境:
 - macOS（Apple Silicon）、ターミナルは cmux、エディタは Neovim（LazyVim）。Claude Code をよく使う。
-- 1 つのプロジェクトに対して cmux のペインを複数開き、`dev nvim .`、`dev claude`、`dev`（開発サーバー用）をそれぞれ実行する。2 つ目以降は同じコンテナに入る。
+- 1 つのプロジェクトに対して cmux のペインを複数開き、`sigil nvim .`、`sigil claude`、`sigil`（開発サーバー用）をそれぞれ実行する。2 つ目以降は同じコンテナに入る。
 
-現在はシェル版（`~/.local/share/devbox/bin/dev.sh`。`~/.local/bin/dev` からシンボリックリンク）を使っている。これを Go の単一バイナリで置き換える。
+もとはシェル版（`~/.local/share/devbox/bin/dev.sh`。コマンド名は `dev`）を使っていた。これを Go の単一バイナリで置き換え（v0.1.0）、その後、名前を `sigil` に改めた（決定事項を参照）。
 
 ### ゴール
-- シェル版と同じ使い勝手で、テストで裏付けられた Go 版の `dev`。
+- シェル版と同じ使い勝手で、テストで裏付けられた Go 版の `sigil`。
 - 隔離の約束（下の「やってはいけないこと」）を、コードとテストの両方で守る。
 
 ### やらないこと
-- 既存のコンテナとの互換。シェル版のコンテナは、Go 版の導入後に作り直す（古いものは layout ラベルで検出して `dev stop` を促すだけ）。
+- 既存のコンテナとの互換。シェル版のコンテナは、Go 版の導入後に作り直す（古いものは layout ラベルで検出して `sigil stop` を促すだけ）。
 - Linux や Windows のホスト対応。
 - `op` を使う流れの実機検証（単体テストで担保する）。
 
 ### やってはいけないこと（技術的に動いても失敗とみなす）
 - ホーム、`~/.ssh`、`~/.aws`、Docker ソケットをコンテナにマウントする。
 - シークレットの値をコマンドライン引数、ログ、エラーメッセージに載せる。
-- リポジトリに置かれた `.devbox` によって、確認なしにホストの環境変数がコンテナに渡る。
+- リポジトリに置かれた `.sigil` によって、確認なしにホストの環境変数がコンテナに渡る。
 - 外部の Go モジュールに依存する（このバイナリはホストで動く、唯一の信頼された道具なので）。
 
 ## 2. 前提として用意されているもの
 
 ```
 image/Dockerfile      ベースイメージ（Neovim / Claude Code / Node / Go / Rust / PHP）
-image/devbox-check    コンテナ内で隔離を点検するスクリプト（イメージに組み込まれる）
+image/sigil-check    コンテナ内で隔離を点検するスクリプト（イメージに組み込まれる）
 examples/             設定ファイルのひな形
 ```
 
@@ -51,30 +51,30 @@ examples/             設定ファイルのひな形
 
 - **Go 1.27.4**（2026-11 時点の最新）。リポジトリ直下の `.tool-versions` に `golang 1.27.4` と書いて asdf で固定する。`go.mod` は `go 1.27`。
 - Go の標準ライブラリのみ。cgo なし（`CGO_ENABLED=0`）。macOS（arm64 / amd64）で動く 1 つのバイナリ。
-- `image/` は `//go:embed` でバイナリに埋め込み、`dev build` のときに一時フォルダへ書き出してビルドコンテキストにする（`devbox-check` は実行権限 0755）。
-- ユーザー向けのメッセージとエラーは日本語。先頭に `dev: ` を付けて標準エラーに出し、終了コード 1。
+- `image/` は `//go:embed` でバイナリに埋め込み、`sigil build` のときに一時フォルダへ書き出してビルドコンテキストにする（`sigil-check` は実行権限 0755）。
+- ユーザー向けのメッセージとエラーは日本語。先頭に `sigil: ` を付けて標準エラーに出し、終了コード 1。
 - コードのコメントは日本語で、「なぜそうしているか」を書く。
 
 ## 4. コマンド
 
 | コマンド | 動作 |
 |---|---|
-| `dev` | プロジェクトのコンテナに入る（なければ作る）。コマンドは `bash -l` |
-| `dev <command...>` | コンテナ内で `<command...>` を実行 |
-| `dev -- <command...>` | 下のサブコマンドと同名のコマンドを、コンテナ内で実行するため |
-| `dev stop` | このプロジェクトのコンテナを `docker rm -f` |
-| `dev ls` | devbox のコンテナ一覧（`docker ps -a --filter label=devbox.project`、名前・状態・プロジェクトのパスを表で） |
-| `dev check` | コンテナ内で `devbox-check` を実行 |
-| `dev build [args...]` | イメージをビルド。追加の引数は `docker build` に渡す |
-| `dev help` / `-h` / `--help` | 使い方を表示 |
+| `sigil` | プロジェクトのコンテナに入る（なければ作る）。コマンドは `bash -l` |
+| `sigil <command...>` | コンテナ内で `<command...>` を実行 |
+| `sigil -- <command...>` | 下のサブコマンドと同名のコマンドを、コンテナ内で実行するため |
+| `sigil stop` | このプロジェクトのコンテナを `docker rm -f` |
+| `sigil ls` | sigil のコンテナ一覧（`docker ps -a --filter label=sigil.project`、名前・状態・プロジェクトのパスを表で） |
+| `sigil check` | コンテナ内で `sigil-check` を実行 |
+| `sigil build [args...]` | イメージをビルド。追加の引数は `docker build` に渡す |
+| `sigil help` / `-h` / `--help` | 使い方を表示 |
 
 - `build`、`ls`、`help` はプロジェクトの外でも動く。それ以外はプロジェクトを特定してから動く。
-- `dev stop` で対象のコンテナがないときは「<名前> はありません」と出して終了コード 0（シェル版と同じ）。
-- `dev ls` の書式: `--format 'table {{.Names}}\t{{.Status}}\t{{.Label "devbox.project"}}'`。
+- `sigil stop` で対象のコンテナがないときは「<名前> はありません」と出して終了コード 0（シェル版と同じ）。
+- `sigil ls` の書式: `--format 'table {{.Names}}\t{{.Status}}\t{{.Label "sigil.project"}}'`。
 
 環境変数:
-- `DEVBOX_IMAGE`: イメージ名（既定 `devbox:latest`）
-- `DEVBOX_CONTEXT`: 設定されていれば、埋め込みの代わりにこのフォルダを `dev build` のビルドコンテキストにする
+- `SIGIL_IMAGE`: イメージ名（既定 `sigil:latest`）
+- `SIGIL_CONTEXT`: 設定されていれば、埋め込みの代わりにこのフォルダを `sigil build` のビルドコンテキストにする
 
 ## 5. プロジェクトの特定
 
@@ -82,7 +82,7 @@ examples/             設定ファイルのひな形
 2. **次の場所は拒否する**（エラーで終了し、docker を一切呼ばない）:
    - `/`、`/Users`、`/home`、ホームディレクトリそのもの
    - ホームディレクトリを含むフォルダ（ホームがその配下にある）
-   - 秘密情報を含む場所（`~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.docker`、`~/.config`、`~/Library`、`$XDG_CONFIG_HOME/devbox`、`$XDG_STATE_HOME/devbox`）の中、またはそれを含むフォルダ
+   - 秘密情報を含む場所（`~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.docker`、`~/.config`、`~/Library`、`$XDG_CONFIG_HOME/sigil`、`$XDG_STATE_HOME/sigil`）の中、またはそれを含むフォルダ
    - git リポジトリではないフォルダで、直下に `.git` を持つフォルダがあるもの（その `.git` が書き込める状態でマウントされるため）。git リポジトリの中（モノレポなど）なら対象外
 3. 比較は文字列ではなく、ファイルの同一性（`os.SameFile`）で行う。macOS の APFS は大文字小文字を区別しないので、`/users/<name>` も `/Users/<name>` と同じ場所として扱う。存在しないパスは、大文字小文字を無視した文字列で比べる。
 
@@ -91,7 +91,7 @@ examples/             設定ファイルのひな形
 シェル版と同じ規則にする。
 
 ```
-devbox-<safe>-<key>
+sigil-<safe>-<key>
   safe: フォルダ名の各バイトのうち [A-Za-z0-9_.-] 以外を "-" に置き換え、先頭 40 バイトに切り詰めたもの
   key:  プロジェクトのフルパス（末尾改行なし）の SHA-256 の 16 進表記の先頭 8 文字
 ```
@@ -100,8 +100,8 @@ devbox-<safe>-<key>
 
 | プロジェクトのパス | コンテナ名 |
 |---|---|
-| `/tmp/t/home/proj` | `devbox-proj-33bf5961` |
-| `/tmp/t/home/my proj` | `devbox-my-proj-42cb34c6` |
+| `/tmp/t/home/proj` | `sigil-proj-33bf5961` |
+| `/tmp/t/home/my proj` | `sigil-my-proj-42cb34c6` |
 
 ### コンテナ内のパス
 
@@ -118,14 +118,14 @@ devbox-<safe>-<key>
 
 | ファイル | 内容 | 確認 |
 |---|---|---|
-| `<project>/.devbox` | このプロジェクトに渡す環境変数名とポート | 内容が変わるたびに確認する |
+| `<project>/.sigil` | このプロジェクトに渡す環境変数名とポート | 内容が変わるたびに確認する |
 | `<project>/.env` | 値（1Password の `op://` 参照） | — |
-| `$XDG_CONFIG_HOME/devbox/devbox`（既定 `~/.config/devbox/devbox`） | 全プロジェクト共通の環境変数名とポート | 不要（ホストのファイル） |
-| `$XDG_CONFIG_HOME/devbox/secrets.env` | 全プロジェクト共通の値 | — |
+| `$XDG_CONFIG_HOME/sigil/config`（既定 `~/.config/sigil/config`） | 全プロジェクト共通の環境変数名とポート | 不要（ホストのファイル） |
+| `$XDG_CONFIG_HOME/sigil/secrets.env` | 全プロジェクト共通の値 | — |
 
-`dev` は `.env` と `secrets.env` を中身まで解析しない。`op://` を含むかどうかを調べるだけで、値は表示しない。
+`sigil` は `.env` と `secrets.env` を中身まで解析しない。`op://` を含むかどうかを調べるだけで、値は表示しない。
 
-### `.devbox` / `devbox` の書式
+### `.sigil` / `sigil` の書式
 
 ```
 # コメント（# 以降は無視）
@@ -136,47 +136,45 @@ port 8080:80            # 127.0.0.1:8080 -> コンテナ 80
 
 - **シェルとして実行しない**。1 行ずつ、空白で区切って読むだけ。
 - 1 行はちょうど 2 語。違えばエラー。空行とコメントだけの行は読み飛ばす。
-- `env` の名前は `^[A-Za-z_][A-Za-z0-9_]*$`。次は拒否する: `SSH_AUTH_SOCK`、`PATH`、`HOME`、および `DOCKER_`、`XDG_`、`DEVBOX_`、`GIT_`、`OP_`、`LD_`、`DYLD_` で始まる名前。
-- プロジェクトの `.devbox` と `.env` は、シンボリックリンクを拒否する（`~/.netrc` などへのリンクで、ホストの秘密を読ませないため）。全体設定は dotfiles の管理でリンクにされることがあるので許す。どのファイルも、通常のファイル以外（FIFO、デバイス）と 64KiB を超えるものは拒否する。
+- `env` の名前は `^[A-Za-z_][A-Za-z0-9_]*$`。次は拒否する: `SSH_AUTH_SOCK`、`PATH`、`HOME`、および `DOCKER_`、`XDG_`、`SIGIL_`、`GIT_`、`OP_`、`LD_`、`DYLD_` で始まる名前。
+- プロジェクトの `.sigil` と `.env` は、シンボリックリンクを拒否する（`~/.netrc` などへのリンクで、ホストの秘密を読ませないため）。全体設定は dotfiles の管理でリンクにされることがあるので許す。どのファイルも、通常のファイル以外（FIFO、デバイス）と 64KiB を超えるものは拒否する。
 - `port` は `^[0-9]{1,5}(:[0-9]{1,5})?$`。
 - `env` / `port` 以外はエラー。
 - エラーメッセージは `<ファイル>:<行番号>: <内容>` の形。ファイルはフルパスで示す。
 - プロジェクトの設定と全体の設定は合わせて使う。環境変数名の重複は 1 つにまとめる（最初に出たものの順を保つ）。
 - 列挙された変数がホストで設定されていなければ、注意を出して渡さない。
 
-### `.devbox` の承認
+### `.sigil` の承認
 
-リポジトリに勝手に置かれた `.devbox` で、ホストの環境変数が黙って渡らないようにするための仕組み。
+リポジトリに勝手に置かれた `.sigil` で、ホストの環境変数が黙って渡らないようにするための仕組み。
 
-- 対象: プロジェクトの `.devbox` と、`.env` のうち 1Password から読み込む「名前と参照の組」（7 章で選んだもの）。組を対象にするのは、承認した名前が、どの 1Password 項目から値を取るかを後から差し替えられないようにするため。`.env` の生の内容ではないので、アプリの設定の行を変えても確認し直さない。
-- 記録場所: `$XDG_STATE_HOME/devbox/approved/<key>`（既定 `~/.local/state/devbox/approved/<key>`）。`<key>` はコンテナ名の key と同じ。
-- 中身: ハッシュ（SHA-256 の 16 進表記、64 文字）と改行。比べるときは前後の空白と改行を無視する。
-  - 組がなければ `.devbox` の内容（バイト列そのまま）のハッシュ。シェル版と同じなので、既存の承認がそのまま使える。
-  - 組があれば `"devbox\0" + .devbox + "\0env\0" + <組から作った env ファイル>` のハッシュ。
-- コンテナを**新しく作るとき**に、`.devbox` か組があって記録と一致しなければ確認する:
-  - 渡す環境変数名とポートの一覧（`.devbox` の分）を表示する。全体設定は別に渡される旨も表示する。
+- 対象: プロジェクトの `.sigil` と、`.env` のうち 1Password から読み込む「名前と参照の組」（7 章で選んだもの）。組を対象にするのは、承認した名前が、どの 1Password 項目から値を取るかを後から差し替えられないようにするため。`.env` の生の内容ではないので、アプリの設定の行を変えても確認し直さない。
+- 記録場所: `$XDG_STATE_HOME/sigil/approved/<key>`（既定 `~/.local/state/sigil/approved/<key>`）。`<key>` はコンテナ名の key と同じ。
+- 中身: `"sigil\0" + .sigil + "\0env\0" + <組から作った env ファイル>` の SHA-256 の 16 進表記（64 文字）と改行。組がなければ env ファイルの部分は空。比べるときは前後の空白と改行を無視する。
+- コンテナを**新しく作るとき**に、`.sigil` か組があって記録と一致しなければ確認する:
+  - 渡す環境変数名とポートの一覧（`.sigil` の分）を表示する。全体設定は別に渡される旨も表示する。
   - 組の名前ごとに、1Password の参照先（`op://vault/item/field`）を表示する。
   - 入力は `/dev/tty` から読む（標準入力ではない）。開けなければエラーで終了する。
   - `y` / `Y` / `yes` / `YES` 以外は中止。中止したら docker を呼ばない。
   - 承認したら記録を書く（フォルダ 0700、ファイル 0600）。
 - 全体設定は確認しない。
-- `op run` から起動し直された側（`DEVBOX_INNER`）でも、記録との照合は行う（確認はしない）。一致しなければエラー。`DEVBOX_INNER` を外から設定されても、承認を回避できないようにするため。
+- `op run` から起動し直された側（`SIGIL_INNER`）でも、記録との照合は行う（確認はしない）。一致しなければエラー。`SIGIL_INNER` を外から設定されても、承認を回避できないようにするため。
 
 ## 7. 1Password（op run）
 
-`op run --env-file` は、`op://` の参照だけでなく、ファイル中のすべての `KEY=VALUE` を、起動し直した dev 自身の環境変数にする。プロジェクトの `.env` をそのまま渡すと、次の問題がある。
-- `.env` に `DOCKER_HOST` や `PATH` を書かれると、dev が攻撃者の docker に秘密を送ったり、偽の docker を実行したりしてしまう。
-- dev が確かめたあとで `.env` を差し替えられると、確かめていない内容が使われる。
-- dev と op run で `.env` の解釈（改行、引用符など）がずれると、別の名前が設定されうる。
+`op run --env-file` は、`op://` の参照だけでなく、ファイル中のすべての `KEY=VALUE` を、起動し直した sigil 自身の環境変数にする。プロジェクトの `.env` をそのまま渡すと、次の問題がある。
+- `.env` に `DOCKER_HOST` や `PATH` を書かれると、sigil が攻撃者の docker に秘密を送ったり、偽の docker を実行したりしてしまう。
+- sigil が確かめたあとで `.env` を差し替えられると、確かめていない内容が使われる。
+- sigil と op run で `.env` の解釈（改行、引用符など）がずれると、別の名前が設定されうる。
 
 そこで、プロジェクトの `.env` からは、次をすべて満たす行だけを「1Password から読み込む名前と参照の組」として選ぶ（値は参照のときだけ読み、それ以外は保持しない）:
-- 値が `op://` 参照である。参照ではない行（`VITE_API_URL` などのアプリの設定）は、アプリがコンテナ内で `.env` を直接読むので、dev は扱わない。
-- 名前が設定（`.devbox` / 全体設定）で列挙されている。列挙されていなければ、注意を出して使わない。
+- 値が `op://` 参照である。参照ではない行（`VITE_API_URL` などのアプリの設定）は、アプリがコンテナ内で `.env` を直接読むので、sigil は扱わない。
+- 名前が設定（`.sigil` / 全体設定）で列挙されている。列挙されていなければ、注意を出して使わない。
 - 名前が 6 章の拒否する名前ではない。拒否する名前なら、注意を出して使わない。
 
 参照に表示されない文字（ESC などの制御文字、U+202E などの書式文字、幅のない文字。`unicode.IsPrint` が偽のもの）・引用符・バックスラッシュ・`$`・バッククォートがあれば、行番号付きのエラーで終了する（確認の画面を偽装させない／op run の解釈を変えさせないため）。日本語と、半角・全角の空白は使える。
 
-選んだ組だけで env ファイル（`NAME="op://..."` の行）を作り直し、本人だけが読める一時フォルダ（`$TMPDIR/devbox-op-*`、0700。ファイルは 0600）に置いて、それを op run に渡す。一時フォルダの場所は環境変数 `DEVBOX_OP_TMP` で起動し直した側に伝え、そちらで消す（`$TMPDIR/devbox-op-*` の形のときだけ）。
+選んだ組だけで env ファイル（`NAME="op://..."` の行）を作り直し、本人だけが読める一時フォルダ（`$TMPDIR/sigil-op-*`、0700。ファイルは 0600）に置いて、それを op run に渡す。一時フォルダの場所は環境変数 `SIGIL_OP_TMP` で起動し直した側に伝え、そちらで消す（`$TMPDIR/sigil-op-*` の形のときだけ）。
 
 全体の `secrets.env` はホストのファイルなのでそのまま渡すが、6 章の拒否する名前があればエラーにする。
 
@@ -185,18 +183,18 @@ port 8080:80            # 127.0.0.1:8080 -> コンテナ 80
 コンテナを**新しく作るとき**、`op` が PATH にあり、選んだ組があるか、全体の `secrets.env` に `op://` があれば、`op run` 経由で自分自身を起動し直す。
 
 ```
-op run --no-masking --env-file=$TMPDIR/devbox-op-*/env --env-file=<config>/secrets.env -- <自分の実行ファイルの絶対パス> <元の引数...>
+op run --no-masking --env-file=$TMPDIR/sigil-op-*/env --env-file=<config>/secrets.env -- <自分の実行ファイルの絶対パス> <元の引数...>
 ```
 
 - `--env-file` は、読み込むものがあるファイルだけを、**プロジェクト → 全体の順**で付ける。後のファイルが優先されるので、プロジェクトの `.env` で全体のシークレットを上書きされないようにするため。
 - `--no-masking` は必須。付けないと出力が加工され、Neovim などの対話的なプログラムが壊れる。
-- 環境変数 `DEVBOX_INNER=1` を付けて起動する。起動し直した側では、承認の確認と `op run` をしない（無限ループ防止）。
+- 環境変数 `SIGIL_INNER=1` を付けて起動する。起動し直した側では、承認の確認と `op run` をしない（無限ループ防止）。
 - `syscall.Exec` でプロセスを置き換える。**置き換えたあとの処理は続けない**ことをコードで明示する（テストで Exec を偽物にしたとき、そのままコンテナ作成に進まないように）。
 - 確認（6 章）は `op run` より前に行う。1Password のロックを解除する前に、何を渡すかを見せるため。
 
 ## 8. コンテナの作成
 
-- イメージ（`docker image inspect`）がなければ、「`dev build` を実行してください」というエラーで終了する。
+- イメージ（`docker image inspect`）がなければ、「`sigil build` を実行してください」というエラーで終了する。
 - `.git` がなければ、「ホスト側で git init / clone してください」と注意を出して続行する。
 
 `docker run` の引数（順序は問わないが、最後の直前に `-w`、最後にイメージ名）:
@@ -204,24 +202,24 @@ op run --no-masking --env-file=$TMPDIR/devbox-op-*/env --env-file=<config>/secre
 ```
 run -d --init
 --name <コンテナ名>
---hostname devbox
---label devbox.project=<プロジェクトのホスト側パス>
---label devbox.layout=2
+--hostname sigil
+--label sigil.project=<プロジェクトのホスト側パス>
+--label sigil.layout=2
 --cap-drop=ALL
 --security-opt=no-new-privileges
 -v <project>:<コンテナ内パス>
 -v <project>/.git:<コンテナ内パス>/.git:ro          # .git がある場合のみ
 -v <home>/.config/nvim:/home/dev/.config/nvim:ro    # ホストにある場合のみ
--e DEVBOX_PROJECT_DIR=<コンテナ内パス>
+-e SIGIL_PROJECT_DIR=<コンテナ内パス>
 -e GIT_CONFIG_COUNT=1
 -e GIT_CONFIG_KEY_0=safe.directory
 -e GIT_CONFIG_VALUE_0=<コンテナ内パス>
--v devbox-nvim-data:/home/dev/.local/share/nvim
--v devbox-nvim-state:/home/dev/.local/state/nvim
--v devbox-claude:/home/dev/.claude
--v devbox-cache:/home/dev/.cache
--v devbox-go:/home/dev/go
--v devbox-cargo:/home/dev/.cargo
+-v sigil-nvim-data:/home/dev/.local/share/nvim
+-v sigil-nvim-state:/home/dev/.local/state/nvim
+-v sigil-claude:/home/dev/.claude
+-v sigil-cache:/home/dev/.cache
+-v sigil-go:/home/dev/go
+-v sigil-cargo:/home/dev/.cargo
 -e <NAME>                          # 設定で渡す環境変数ごと。値は付けない
 -p 127.0.0.1:<host>:<container>    # ポートごと。必ず 127.0.0.1
 -w <コンテナ内パス>
@@ -232,7 +230,7 @@ run -d --init
 - `.git` を読み取り専用にするのは、ホストの git が実行する hooks や config を、コンテナから書き換えさせないため。
 - Neovim の設定を読み取り専用にするのは、ホストの Neovim も同じファイルを読むため。
 - ホーム、`~/.ssh`、`~/.aws`、Docker ソケットは**絶対にマウントしない**。
-- `-e NAME` に値を付けないのは、docker が `dev` のプロセスの環境から値を読むので、値がコマンドライン（`ps` で見える）に載らないため。
+- `-e NAME` に値を付けないのは、docker が `sigil` のプロセスの環境から値を読むので、値がコマンドライン（`ps` で見える）に載らないため。
 
 `docker run` の標準出力（コンテナ ID）は捨て、標準エラーは表示する。
 
@@ -248,8 +246,8 @@ docker exec <name> sh -c 'umask 077; printf "[settings]\napi_key = %s\n" "$WAKAT
 ## 9. 既存のコンテナ
 
 - **状態の判定は終了コードで行う**。`docker container inspect` は、コンテナが存在しないときも、docker が使えないときも、**空行を出力して**失敗する。出力で判定すると存在すると誤判定し（シェル版で実際に起きた不具合）、失敗をすべて「ない」とすると Docker Desktop が止まっているときに誤った案内になる。
-  - そこで `docker ps -a --filter name=<name> --format '{{.Names}}\t{{.State}}\t{{.Label "devbox.layout"}}'` を使う。名前が完全に一致する行がなければ「ない」。コマンドが失敗したら、「docker に接続できません。Docker Desktop が起動しているか確認してください」で終了する（`dev stop` も同じ）。回帰テストを書くこと。
-- ラベル `devbox.layout` が `2` でなければ、「このコンテナは古い dev で作られています。dev stop してから、もう一度実行してください」で終了する。
+  - そこで `docker ps -a --filter name=<name> --format '{{.Names}}\t{{.State}}\t{{.Label "sigil.layout"}}'` を使う。名前が完全に一致する行がなければ「ない」。コマンドが失敗したら、「docker に接続できません。Docker Desktop が起動しているか確認してください」で終了する（`sigil stop` も同じ）。回帰テストを書くこと。
+- ラベル `sigil.layout` が `2` でなければ、「このコンテナは古い sigil で作られています。sigil stop してから、もう一度実行してください」で終了する。
 - 停止していれば `docker start`。
 - 既存のコンテナに入るときは、設定の読み込み・承認・`op run` を行わない（作成時に渡したものが使われる）。
 
@@ -263,31 +261,31 @@ docker exec <-it または -i> -e TERM=xterm-256color -e COLORTERM=truecolor -w 
 - `TERM` を固定するのは、cmux（Ghostty 系）の独自の端末情報がコンテナ内にないため。
 - `syscall.Exec` で docker に置き換える（Neovim や Claude Code に端末をそのまま渡すため）。docker は `exec.LookPath` で絶対パスにしてから渡す。
 
-## 11. dev build
+## 11. sigil build
 
 ```
 docker build --build-arg USER_UID=<os.Getuid()> --build-arg USER_GID=<os.Getgid()> -t <image> [追加の引数...] <ビルドコンテキスト>
 ```
 
-標準出力・標準エラーとも表示する。終わったら一時フォルダを消す（`DEVBOX_CONTEXT` を使ったときは何も消さない）。
+標準出力・標準エラーとも表示する。終わったら一時フォルダを消す（`SIGIL_CONTEXT` を使ったときは何も消さない）。
 
 ## 12. 構成（builder の裁量で変えてよいが、テストしやすい分け方を保つこと）
 
 ```
 .tool-versions              golang 1.27.4
-go.mod                      module devbox / go 1.27
+go.mod                      module sigil / go 1.27
 main.go                     app.Run の結果で終了コードを決めるだけ
 image/
-  Dockerfile, devbox-check
-  embed.go                  package devboximage。//go:embed で 2 ファイルを持ち、WriteContext(dir) で書き出す
+  Dockerfile, sigil-check
+  embed.go                  package sigilimage。//go:embed で 2 ファイルを持ち、WriteContext(dir) で書き出す
 internal/
-  config/    .devbox / devbox の解析と統合（純粋関数）
+  config/    .sigil / sigil の解析と統合（純粋関数）
   project/   プロジェクトの特定、危険なパスの拒否、コンテナ名、コンテナ内パス、作業フォルダ
   docker/    run / exec / build / ls の引数組み立てと、終了コードによる状態判定
   approval/  承認記録の読み書きと確認
   opwrap/    op run を使うかの判定と argv の組み立て
   app/       サブコマンドの振り分けと全体の流れ
-Makefile    build / install（~/.local/bin/dev）/ test / vet
+Makefile    build / install（~/.local/bin/sigil）/ test / vet
 README.md
 ```
 
@@ -303,32 +301,32 @@ Docker・git・op・端末がなくても `go test ./...` が通ること。少�
 - 危険なパスの拒否（このとき docker を呼ばない）
 - コンテナ名がテストベクトルと一致する
 - コンテナ内パス（スペース、`:`、`,`、日本語）と作業フォルダの対応（前方一致だけの別フォルダを含む）
-- `docker run` の引数: 隔離のためのオプションがある、ホームや秘密情報のフォルダをマウントしていない、値付きの `-e` がない（`DEVBOX_` / `GIT_CONFIG_` を除く）、ポートが 127.0.0.1
+- `docker run` の引数: 隔離のためのオプションがある、ホームや秘密情報のフォルダをマウントしていない、値付きの `-e` がない（`SIGIL_` / `GIT_CONFIG_` を除く）、ポートが 127.0.0.1
 - 存在しないコンテナで docker が空行を出す場合の判定（回帰テスト）
 - 承認: 端末なし → 中止、`n` → 中止して docker を呼ばない、`y` → 作成して記録、記録済み → 聞かない、内容が変わる → また聞く
-- `op run`: 引数とファイルの順序、`DEVBOX_INNER=1`、置き換えたあとにコンテナを作らない、`op://` がなければ使わない、`DEVBOX_INNER` のときは使わない
+- `op run`: 引数とファイルの順序、`SIGIL_INNER=1`、置き換えたあとにコンテナを作らない、`op://` がなければ使わない、`SIGIL_INNER` のときは使わない
 - 未設定の環境変数は渡さない
 - 既存のコンテナ: 実行中は再利用、停止中は start、古い layout はエラー
 - `stop`、`-- stop`、`check`、`build` の引数
-- 埋め込んだビルドコンテキストが書き出され、`devbox-check` に実行権限がある
+- 埋め込んだビルドコンテキストが書き出され、`sigil-check` に実行権限がある
 
 ## 14. 実機での検証
 
 単体テストのあと、ホストの本物の docker で次を確認する。
 
 ユーザーの既存の Docker 資源は消さない:
-- `devbox-*` のコンテナ・ボリュームと、`devbox:latest` イメージは削除も上書きもしない。
-- 使うのは `devbox:dev-test` と、一時フォルダのテスト用プロジェクトだけ。
+- `sigil-*` のコンテナ・ボリュームと、`sigil:latest` イメージは削除も上書きもしない。
+- 使うのは `sigil:dev-test` と、一時フォルダのテスト用プロジェクトだけ。
 
-1. `DEVBOX_IMAGE=devbox:dev-test ./bin/dev build` が通る（`image/` に問題があればここで直す）。
-2. 一時フォルダに `git init` したテスト用プロジェクトを作り、`DEVBOX_IMAGE=devbox:dev-test` で次を確認する:
-   - `dev check` がすべて ✓（devbox-check の結果を報告する）
-   - `dev -- nvim --version`、`dev -- node --version`、`dev -- go version`、`dev -- cargo --version`、`dev -- php --version`、`dev -- claude --version`
+1. `SIGIL_IMAGE=sigil:dev-test ./bin/sigil build` が通る（`image/` に問題があればここで直す）。
+2. 一時フォルダに `git init` したテスト用プロジェクトを作り、`SIGIL_IMAGE=sigil:dev-test` で次を確認する:
+   - `sigil check` がすべて ✓（sigil-check の結果を報告する）
+   - `sigil -- nvim --version`、`sigil -- node --version`、`sigil -- go version`、`sigil -- cargo --version`、`sigil -- php --version`、`sigil -- claude --version`
    - 2 回目の実行で同じコンテナに入る
    - サブフォルダから実行すると、対応するフォルダで動く
-   - `dev stop` で消える
-3. `.devbox` に `env DEVBOX_TEST_VAR` を書き、ホストで `DEVBOX_TEST_VAR=hello` を設定してコンテナを作る → コンテナ内で値が見える。承認のプロンプトは `/dev/tty` が必要なので、ユーザーに cmux のペインで実行・入力してもらう。
-4. 後片付け: 自分が作ったテスト用コンテナ、`devbox:dev-test` イメージ、一時フォルダだけを消す。`devbox-*` の共有ボリュームは既存のものなので消さない。
+   - `sigil stop` で消える
+3. `.sigil` に `env SIGIL_TEST_VAR` を書き、ホストで `SIGIL_TEST_VAR=hello` を設定してコンテナを作る → コンテナ内で値が見える。承認のプロンプトは `/dev/tty` が必要なので、ユーザーに cmux のペインで実行・入力してもらう。
+4. 後片付け: 自分が作ったテスト用コンテナ、`sigil:dev-test` イメージ、一時フォルダだけを消す。`sigil-*` の共有ボリュームは既存のものなので消さない。
 
 `op` を使う流れ（7 章）は実機では確かめず、単体テストで担保する。
 
@@ -339,10 +337,10 @@ Docker・git・op・端末がなくても `go test ./...` が通ること。少�
 - 14 章の検証結果を報告している。
 - `README.md`（日本語）に次を書いている:
   - インストール（Go 1.27.4 を asdf で入れる、`make install`）
-  - シェル版からの移行: `~/.local/bin/dev` を置き換えるだけで、承認と設定はそのまま使える。シェル版で作ったコンテナは `dev stop` してから作り直す。
+  - `dev`（devbox）からの移行: 設定ファイル・コンテナ・ボリューム・イメージの名前が変わったことと、その移し方・片付け方。
   - 使い方
   - このリポジトリ自体をホストで動かすことの注意: コンテナ内で編集したら、ホストで `git diff` を確認してからビルドする。
-- `Makefile` に `build` / `install`（`~/.local/bin/dev`）/ `test` / `vet` がある。
+- `Makefile` に `build` / `install`（`~/.local/bin/sigil`）/ `test` / `vet` がある。
 - `docs/SPEC.md` を削除し、仕様はこの設計書に一本化されている。
 
 ## 決定事項
@@ -374,3 +372,9 @@ Docker・git・op・端末がなくても `go test ./...` が通ること。少�
 | 2026-11-19 | プロジェクトの `.env` を op run にそのまま渡さず、確かめた「名前と参照の組」だけで作り直した一時ファイルを渡す。参照ではない行は扱わず、列挙されていない名前・拒否する名前の参照は注意を出して使わない。承認の対象も、生の `.env` ではなくこの組にする | コミット後のセキュリティレビュー（確認後の差し替え、dev と op run の解釈のずれ）。また、`.env` に列挙外の名前があると拒否する以前の方式は、Vite / Next.js などがアプリの設定を `.env` に置く普通の使い方で dev を起動できなくしていた（C1 の対処を置き換える） |
 | 2026-11-19 | `.env` の参照に制御文字・引用符・バックスラッシュ・`$`・バッククォートがあれば拒否する | コミット後のセキュリティレビュー（端末の制御文字で確認の画面を偽装できた） |
 | 2026-11-19 | 拒否する名前を、`DEVBOX_` で始まる名前すべてではなく、dev が読む名前（`DEVBOX`、`DEVBOX_INNER`、`DEVBOX_IMAGE`、`DEVBOX_CONTEXT`、`DEVBOX_PROJECT_DIR`、`DEVBOX_OP_TMP`）に絞る | 14 章の検証で使う `DEVBOX_TEST_VAR` まで拒否されていたため |
+| 2026-11-21 | コマンド名を `dev` から `sigil` に改め、設定ファイル（`.devbox` → `.sigil`、`~/.config/devbox/devbox` → `~/.config/sigil/config`）、状態のフォルダ、コンテナ名・ラベル・ボリューム（`devbox-*` → `sigil-*`）、イメージ（`sigil:latest`）、環境変数（`DEVBOX_*` → `SIGIL_*`、イメージ内の目印 `SIGIL=1`）、点検のスクリプト（`sigil-check`）も、すべてそろえる。`dev` の互換は残さない | issue #4。`dev` は汎用的すぎて、役割が伝わらない。まだ使い始めたばかりで、守るべき既存の資源がほとんどないので、名前を全部そろえて分かりやすくする。全体設定のファイル名は、`~/.config/sigil/sigil` と同じ名前が続くのを避けて `config` にした |
+| 2026-11-21 | `.sigil` がなく、改名前の `.devbox` だけがあるときは、名前を変えるよう知らせて止める | 黙って無視すると、渡すはずの環境変数やポートが渡らず、気づきにくいため |
+| 2026-11-21 | 改名前の `.devbox` の検出は、通常のファイルのときだけにする | Jetify Devbox などは `.devbox/` というフォルダを作るため。名前だけで判定すると、そうしたプロジェクトで sigil が起動しなくなる |
+| 2026-11-21 | `~/.config/sigil/` がなく、改名前の `~/.config/devbox/` があれば止めて知らせる。`DEVBOX_IMAGE` / `DEVBOX_CONTEXT` が設定されていて新しい名前がなければ注意を出す | 移し忘れると、全体設定の環境変数や指定したイメージが黙って使われなくなるため |
+| 2026-11-21 | 承認のハッシュで、`.env` がないときの特別扱い（`.sigil` だけのハッシュ）をやめ、いつも同じ形式で計算する | 改名で承認記録の場所が変わり、シェル版の記録との互換を保つ意味がなくなったため |
+| 2026-11-21 | `make install` は、`~/.local/bin/dev` が古い Go 版の dev だと確かめられたときだけ消す（実行はせず、埋め込まれた `devbox-check` の文字列で判定）。それ以外は消さずに知らせる | 別の `dev` というツールや、利用者のスクリプトへのリンクを消さないため |

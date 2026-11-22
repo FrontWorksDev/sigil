@@ -1,7 +1,7 @@
-// Package opwrap は、1Password CLI（op run）を経由して dev を起動し直すための判定と argv を作る。
+// Package opwrap は、1Password CLI（op run）を経由して sigil を起動し直すための判定と argv を作る。
 //
-// dev 自身は秘密の値を扱わない。.env からはキー名と op:// 参照（どの項目か）だけを取り出し、
-// 値の解決は op run に任せ、環境変数として dev に渡してもらう。
+// sigil 自身は秘密の値を扱わない。.env からはキー名と op:// 参照（どの項目か）だけを取り出し、
+// 値の解決は op run に任せ、環境変数として sigil に渡してもらう。
 package opwrap
 
 import (
@@ -15,7 +15,7 @@ import (
 
 // InnerEnv は、op run から起動し直された側であることを示す環境変数。
 // これがあれば、承認の確認と op run をもう一度行わない（無限ループ防止）。
-const InnerEnv = "DEVBOX_INNER"
+const InnerEnv = "SIGIL_INNER"
 
 // HasOpRef は、.env の内容に op:// 参照があるかを返す。
 func HasOpRef(data []byte) bool {
@@ -32,7 +32,7 @@ var envNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // ParseEnv は .env のキー名と op:// 参照を取り出す。
 //
-// op run は .env の行をすべて dev 自身の環境変数にする。何が設定されるかを
+// op run は .env の行をすべて sigil 自身の環境変数にする。何が設定されるかを
 // 確かめるために、キー名を読む必要がある。値は参照（op://...）のときだけ返し、
 // それ以外の値（直接書かれた秘密かもしれない）は返さず、エラーにも出さない。
 func ParseEnv(path string, data []byte) ([]Entry, error) {
@@ -92,9 +92,9 @@ func safeRef(ref string) bool {
 // RenderEnv は、確かめた名前と参照の組だけで、op run に渡す env ファイルの中身を作る。
 //
 // 利用者の .env を op run にそのまま渡さないのは、次の理由から:
-//   - dev が確かめたあとで .env を差し替えられると、確かめていない内容が使われる
-//   - dev と op run で .env の解釈（改行、引用符など）がずれると、別の名前が設定されうる
-//   - .env にはアプリの設定（VITE_API_URL など）も並ぶが、それらを dev の環境に入れる必要はない
+//   - sigil が確かめたあとで .env を差し替えられると、確かめていない内容が使われる
+//   - sigil と op run で .env の解釈（改行、引用符など）がずれると、別の名前が設定されうる
+//   - .env にはアプリの設定（VITE_API_URL など）も並ぶが、それらを sigil の環境に入れる必要はない
 func RenderEnv(entries []Entry) []byte {
 	if len(entries) == 0 {
 		return nil

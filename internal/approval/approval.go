@@ -1,8 +1,8 @@
-// Package approval は、プロジェクトの .devbox を利用者に確認し、その結果を記録する。
+// Package approval は、プロジェクトの .sigil と、.env で 1Password から読み込むものを
+// 利用者に確認し、その結果を記録する。
 //
-// リポジトリに勝手に置かれた .devbox によって、ホストの環境変数が黙って
-// コンテナに渡らないようにするための仕組み。記録の形式はシェル版と同じで、
-// 既存の承認がそのまま使える。
+// リポジトリに勝手に置かれた .sigil によって、ホストの環境変数が黙って
+// コンテナに渡らないようにするための仕組み。
 package approval
 
 import (
@@ -15,41 +15,38 @@ import (
 	"path/filepath"
 	"strings"
 
-	"devbox/internal/config"
-	"devbox/internal/opwrap"
+	"sigil/internal/config"
+	"sigil/internal/opwrap"
 )
 
-// Sum は .devbox の内容（バイト列そのまま）の SHA-256 を 16 進で返す。
-// シェル版の shasum -a 256 < .devbox と同じ値になる。
+// Sum は content の SHA-256 を 16 進で返す。
 func Sum(content []byte) string {
 	h := sha256.Sum256(content)
 	return hex.EncodeToString(h[:])
 }
 
-// Fingerprint は、承認の対象（.devbox とプロジェクトの .env）のハッシュを返す。
+// Fingerprint は、承認の対象（.sigil とプロジェクトの .env）のハッシュを返す。
 //
 // .env も対象にするのは、承認の画面で見せた名前が、どの 1Password 項目から
 // 値を取るかを .env で後から差し替えられないようにするため。
-// .env がないときは .devbox だけのハッシュにして、シェル版の承認記録をそのまま使えるようにする。
-func Fingerprint(devbox, env []byte) string {
-	if env == nil {
-		return Sum(devbox)
-	}
+// 区切り（"\x00"）と見出しを入れて、.sigil と .env の境目をずらした別の組み合わせが、
+// 同じハッシュにならないようにしている。
+func Fingerprint(sigil, env []byte) string {
 	var b []byte
-	b = append(b, "devbox\x00"...)
-	b = append(b, devbox...)
+	b = append(b, "sigil\x00"...)
+	b = append(b, sigil...)
 	b = append(b, "\x00env\x00"...)
 	b = append(b, env...)
 	return Sum(b)
 }
 
-// Store は承認記録の置き場所（$XDG_STATE_HOME/devbox/approved）。
+// Store は承認記録の置き場所（$XDG_STATE_HOME/sigil/approved）。
 type Store struct {
 	Dir string
 }
 
 // IsApproved は、key の記録が sum と一致するかを返す。
-// シェル版は $(cat ...) で比べていて末尾の改行を無視していたので、ここでも前後の空白を無視する。
+// 記録は「ハッシュ + 改行」の形で書くので、前後の空白を無視して比べる（手で編集されても読めるように）。
 func (s Store) IsApproved(key, sum string) bool {
 	b, err := os.ReadFile(filepath.Join(s.Dir, key))
 	if err != nil {
@@ -73,15 +70,15 @@ func (s Store) Record(key, sum string) error {
 	return os.Chmod(p, 0o600)
 }
 
-// Ask は、.devbox で渡すものを out に表示し、tty から答えを読む。
+// Ask は、.sigil で渡すものを out に表示し、tty から答えを読む。
 //
 // 標準入力ではなく /dev/tty から読むのは、パイプなどで標準入力に "y" を流し込まれても
 // 承認されないようにするため（承認は、端末の前にいる人が行う）。
 //
-// files は対象のファイル（.devbox / .env）、c は .devbox の内容、refs は .env の内容。
+// files は対象のファイル（.sigil / .env）、c は .sigil の内容、refs は .env の内容。
 // .env については、名前ごとに 1Password のどの項目から値を取るか（参照）を見せる。値は見せない。
 func Ask(tty io.Reader, out io.Writer, files []string, c config.Config, refs []opwrap.Entry) bool {
-	fmt.Fprintf(out, "dev: %s の内容が新しいか、前回の承認から変わっています。\n", strings.Join(files, " と "))
+	fmt.Fprintf(out, "sigil: %s の内容が新しいか、前回の承認から変わっています。\n", strings.Join(files, " と "))
 	fmt.Fprintln(out, "     このプロジェクトのコンテナに次のものを渡します:")
 	for _, e := range c.Envs {
 		fmt.Fprintf(out, "       環境変数  %s\n", e)
@@ -102,8 +99,8 @@ func Ask(tty io.Reader, out io.Writer, files []string, c config.Config, refs []o
 			fmt.Fprintf(out, "       %-24s %s\n", r.Name, ref)
 		}
 	}
-	fmt.Fprintln(out, "     このほか、全体設定（~/.config/devbox/devbox）の分も渡されます。")
-	fmt.Fprint(out, "dev: この設定でよければ y を入力してください [y/N] ")
+	fmt.Fprintln(out, "     このほか、全体設定（~/.config/sigil/config）の分も渡されます。")
+	fmt.Fprint(out, "sigil: この設定でよければ y を入力してください [y/N] ")
 
 	line, _ := bufio.NewReader(tty).ReadString('\n')
 	switch strings.TrimRight(line, "\r\n") {

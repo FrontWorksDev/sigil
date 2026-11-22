@@ -1,4 +1,4 @@
-// Package config は、.devbox（プロジェクト）と devbox（全体）の設定ファイルを読む。
+// Package config は、.sigil（プロジェクト）と ~/.config/sigil/config（全体）の設定ファイルを読む。
 //
 // 設定ファイルはリポジトリの中にあり、悪意のある人が書いたものかもしれない。
 // そのため、シェルとして実行（source）はせず、1 行ずつ空白で区切って読むだけにする。
@@ -45,26 +45,26 @@ var (
 //   - PATH / HOME / LD_* / DYLD_*: 実行環境を乗っ取らせない
 //
 // さらに、これらの名前は .env にも書かせない。op run は .env の行をそのまま
-// dev 自身の環境変数にするので、DOCKER_HOST や XDG_* を書かれると、
-// dev が攻撃者の docker に秘密を送ったり、別の設定を読んだりしてしまう。
+// sigil 自身の環境変数にするので、DOCKER_HOST や XDG_* を書かれると、
+// sigil が攻撃者の docker に秘密を送ったり、別の設定を読んだりしてしまう。
 var deniedEnvs = map[string]bool{
 	"SSH_AUTH_SOCK": true,
 	"PATH":          true,
 	"HOME":          true,
-	// dev 自身の動作を変える名前。DEVBOX_ で始まる名前すべてではなく、dev が読むものだけを拒否する
-	// （利用者が DEVBOX_TEST_VAR のような名前を使えるように）。dev が読む名前を増やしたら、ここにも足すこと。
-	"DEVBOX":             true, // コンテナ内の目印（イメージの ENV）
-	"DEVBOX_INNER":       true,
-	"DEVBOX_IMAGE":       true,
-	"DEVBOX_CONTEXT":     true,
-	"DEVBOX_PROJECT_DIR": true,
-	"DEVBOX_OP_TMP":      true,
+	// sigil 自身の動作を変える名前。SIGIL_ で始まる名前すべてではなく、sigil が読むものだけを拒否する
+	// （利用者が SIGIL_TEST_VAR のような名前を使えるように）。sigil が読む名前を増やしたら、ここにも足すこと。
+	"SIGIL":             true, // コンテナ内の目印（イメージの ENV）
+	"SIGIL_INNER":       true,
+	"SIGIL_IMAGE":       true,
+	"SIGIL_CONTEXT":     true,
+	"SIGIL_PROJECT_DIR": true,
+	"SIGIL_OP_TMP":      true,
 }
 
 // docker / git / 1Password / 動的リンカ / XDG のフォルダの動作を変えられる名前の接頭辞。
 var deniedPrefixes = []string{"DOCKER_", "XDG_", "GIT_", "OP_", "LD_", "DYLD_"}
 
-// Denied は、name をコンテナや dev に渡してはいけないかを返す。
+// Denied は、name をコンテナや sigil に渡してはいけないかを返す。
 func Denied(name string) bool {
 	if deniedEnvs[name] {
 		return true
@@ -209,7 +209,7 @@ func Load(path string) (Config, bool, error) {
 	return load(path, false)
 }
 
-// LoadStrict はプロジェクトの設定ファイル（.devbox）を読む。シンボリックリンクは拒否する。
+// LoadStrict はプロジェクトの設定ファイル（.sigil）を読む。シンボリックリンクは拒否する。
 func LoadStrict(path string) (Config, bool, error) {
 	return load(path, true)
 }

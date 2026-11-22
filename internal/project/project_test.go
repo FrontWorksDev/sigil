@@ -10,8 +10,8 @@ import (
 
 func TestContainerNameVectors(t *testing.T) {
 	cases := map[string]string{
-		"/tmp/t/home/proj":    "devbox-proj-33bf5961",
-		"/tmp/t/home/my proj": "devbox-my-proj-42cb34c6",
+		"/tmp/t/home/proj":    "sigil-proj-33bf5961",
+		"/tmp/t/home/my proj": "sigil-my-proj-42cb34c6",
 	}
 	for root, want := range cases {
 		if got := New(root).ContainerName; got != want {
@@ -121,9 +121,9 @@ func TestCheckSafeSensitiveDirs(t *testing.T) {
 			t.Errorf("CheckSafe(%q) が通ってしまう", root)
 		}
 	}
-	// 追加で渡した場所（devbox の状態フォルダなど）の中も、それを含むフォルダも拒否する
-	extra := "/data/state/devbox"
-	for _, root := range []string{"/data/state/devbox/approved", "/data/state", "/data"} {
+	// 追加で渡した場所（sigil の状態フォルダなど）の中も、それを含むフォルダも拒否する
+	extra := "/data/state/sigil"
+	for _, root := range []string{"/data/state/sigil/approved", "/data/state", "/data"} {
 		if err := CheckSafe(root, home, extra); err == nil {
 			t.Errorf("CheckSafe(%q, extra) が通ってしまう", root)
 		}

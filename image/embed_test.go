@@ -1,4 +1,4 @@
-package devboximage
+package sigilimage
 
 import (
 	"os"
@@ -25,17 +25,17 @@ func TestWriteContext(t *testing.T) {
 	if string(df) != string(src) {
 		t.Error("書き出した Dockerfile が埋め込み元と一致しない")
 	}
-	// devbox-check をイメージに組み込む行がある（ベースイメージ名には依存しない）
-	if !strings.Contains(string(df), "COPY devbox-check /usr/local/bin/devbox-check") {
+	// sigil-check をイメージに組み込む行がある（ベースイメージ名には依存しない）
+	if !strings.Contains(string(df), "COPY sigil-check /usr/local/bin/sigil-check") {
 		t.Error("Dockerfile の中身が想定と違う")
 	}
 
-	st, err := os.Stat(filepath.Join(dir, "devbox-check"))
+	st, err := os.Stat(filepath.Join(dir, "sigil-check"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if st.Mode().Perm() != 0o755 {
-		t.Errorf("devbox-check のモード = %o, want 755", st.Mode().Perm())
+		t.Errorf("sigil-check のモード = %o, want 755", st.Mode().Perm())
 	}
 
 	entries, err := os.ReadDir(dir)
@@ -47,7 +47,7 @@ func TestWriteContext(t *testing.T) {
 		names = append(names, e.Name())
 	}
 	sort.Strings(names)
-	if strings.Join(names, ",") != "Dockerfile,devbox-check" {
-		t.Errorf("書き出されたファイル = %v, want [Dockerfile devbox-check]", names)
+	if strings.Join(names, ",") != "Dockerfile,sigil-check" {
+		t.Errorf("書き出されたファイル = %v, want [Dockerfile sigil-check]", names)
 	}
 }

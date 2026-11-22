@@ -4,16 +4,16 @@ package docker
 import (
 	"strconv"
 
-	"devbox/internal/config"
+	"sigil/internal/config"
 )
 
 const (
 	// LayoutLabel は、コンテナのマウント配置の版を示すラベル。
 	// 配置を変えたら LayoutVersion を上げ、古いコンテナを作り直してもらう。
-	LayoutLabel   = "devbox.layout"
+	LayoutLabel   = "sigil.layout"
 	LayoutVersion = "2"
-	// ProjectLabel は、コンテナがどのプロジェクトのものかを示すラベル。dev ls で使う。
-	ProjectLabel = "devbox.project"
+	// ProjectLabel は、コンテナがどのプロジェクトのものかを示すラベル。sigil ls で使う。
+	ProjectLabel = "sigil.project"
 
 	containerHome = "/home/dev"
 )
@@ -39,7 +39,7 @@ func RunArgs(s RunSpec) []string {
 	args := []string{
 		"run", "-d", "--init",
 		"--name", s.Name,
-		"--hostname", "devbox",
+		"--hostname", "sigil",
 		"--label", ProjectLabel + "=" + s.ProjectRoot,
 		"--label", LayoutLabel + "=" + LayoutVersion,
 		// 権限を最小にし、setuid などで権限を取り戻させない
@@ -57,21 +57,21 @@ func RunArgs(s RunSpec) []string {
 		args = append(args, "-v", s.Home+"/.config/nvim:"+containerHome+"/.config/nvim:ro")
 	}
 	args = append(args,
-		"-e", "DEVBOX_PROJECT_DIR="+s.ContainerPath,
+		"-e", "SIGIL_PROJECT_DIR="+s.ContainerPath,
 		// コンテナ内では所有者が違って見えるので、git に安全なフォルダとして教える
 		"-e", "GIT_CONFIG_COUNT=1",
 		"-e", "GIT_CONFIG_KEY_0=safe.directory",
 		"-e", "GIT_CONFIG_VALUE_0="+s.ContainerPath,
 		// プロジェクトをまたいで共有するキャッシュ類（ホストのフォルダではなく名前付きボリューム）
-		"-v", "devbox-nvim-data:"+containerHome+"/.local/share/nvim",
-		"-v", "devbox-nvim-state:"+containerHome+"/.local/state/nvim",
-		"-v", "devbox-claude:"+containerHome+"/.claude",
-		"-v", "devbox-cache:"+containerHome+"/.cache",
-		"-v", "devbox-go:"+containerHome+"/go",
-		"-v", "devbox-cargo:"+containerHome+"/.cargo",
+		"-v", "sigil-nvim-data:"+containerHome+"/.local/share/nvim",
+		"-v", "sigil-nvim-state:"+containerHome+"/.local/state/nvim",
+		"-v", "sigil-claude:"+containerHome+"/.claude",
+		"-v", "sigil-cache:"+containerHome+"/.cache",
+		"-v", "sigil-go:"+containerHome+"/go",
+		"-v", "sigil-cargo:"+containerHome+"/.cargo",
 	)
 	for _, e := range s.Envs {
-		// 値は付けない。docker が dev のプロセスの環境から読むので、
+		// 値は付けない。docker が sigil のプロセスの環境から読むので、
 		// 値がコマンドライン（ps で誰でも見える）に載らない。
 		args = append(args, "-e", e)
 	}
@@ -111,7 +111,7 @@ func BuildArgs(image string, uid, gid int, extra []string, contextDir string) []
 	return append(args, contextDir)
 }
 
-// LsArgs は dev ls の docker ps の引数を返す。
+// LsArgs は sigil ls の docker ps の引数を返す。
 func LsArgs() []string {
 	return []string{"ps", "-a", "--filter", "label=" + ProjectLabel,
 		"--format", "table {{.Names}}\t{{.Status}}\t{{.Label \"" + ProjectLabel + "\"}}"}

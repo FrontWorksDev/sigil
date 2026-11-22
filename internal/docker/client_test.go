@@ -40,9 +40,9 @@ func (f *fakeRunner) Run(name string, args []string, stdout, stderr io.Writer) e
 func TestInspectFailureIsNotTreatedAsExisting(t *testing.T) {
 	// 回帰テスト: docker が失敗しても空行を出力することがある（シェル版で inspect が実際にそうだった）。
 	// 出力ではなく終了コードで判定し、失敗は「存在する」とも「ない」ともせず、エラーにする。
-	// （「ない」とすると、Docker Desktop が止まっているときに dev stop が嘘の「ありません」を出す）
+	// （「ない」とすると、Docker Desktop が止まっているときに sigil stop が嘘の「ありません」を出す）
 	f := &fakeRunner{responses: []response{{stdout: "\n", err: errors.New("exit status 1")}}}
-	st, _, err := Client{R: f}.Inspect("devbox-x-1")
+	st, _, err := Client{R: f}.Inspect("sigil-x-1")
 	if err == nil {
 		t.Fatalf("エラーにならない（状態 %v）", st)
 	}
@@ -59,17 +59,17 @@ func TestInspectStates(t *testing.T) {
 	}{
 		{"", Missing, ""},
 		{"\n", Missing, ""},
-		{"devbox-x-1\trunning\t2\n", Running, "2"},
-		{"devbox-x-1\texited\t2\n", Stopped, "2"},
-		{"devbox-x-1\tcreated\t2\n", Stopped, "2"},
-		{"devbox-x-1\trunning\t\n", Running, ""},
+		{"sigil-x-1\trunning\t2\n", Running, "2"},
+		{"sigil-x-1\texited\t2\n", Stopped, "2"},
+		{"sigil-x-1\tcreated\t2\n", Stopped, "2"},
+		{"sigil-x-1\trunning\t\n", Running, ""},
 		// name フィルタは部分一致なので、名前が完全に一致する行だけを見る
-		{"devbox-x-1-old\trunning\t2\n", Missing, ""},
-		{"devbox-x-1-old\trunning\t2\ndevbox-x-1\texited\t\n", Stopped, ""},
+		{"sigil-x-1-old\trunning\t2\n", Missing, ""},
+		{"sigil-x-1-old\trunning\t2\nsigil-x-1\texited\t\n", Stopped, ""},
 	}
 	for _, tc := range cases {
 		f := &fakeRunner{responses: []response{{stdout: tc.out}}}
-		st, layout, err := Client{R: f}.Inspect("devbox-x-1")
+		st, layout, err := Client{R: f}.Inspect("sigil-x-1")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -82,7 +82,7 @@ func TestInspectStates(t *testing.T) {
 func TestInspectArgs(t *testing.T) {
 	f := &fakeRunner{}
 	Client{R: f}.Inspect("c")
-	want := []string{"ps", "-a", "--filter", "name=c", "--format", "{{.Names}}\t{{.State}}\t{{.Label \"devbox.layout\"}}"}
+	want := []string{"ps", "-a", "--filter", "name=c", "--format", "{{.Names}}\t{{.State}}\t{{.Label \"sigil.layout\"}}"}
 	if f.calls[0].name != "docker" || !reflect.DeepEqual(f.calls[0].args, want) {
 		t.Errorf("argv = %v", f.calls[0])
 	}

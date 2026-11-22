@@ -38,6 +38,8 @@ type Deps struct {
 	StdoutIsTerminal func() bool
 	// TermSize は、標準エラーの端末の幅と高さを返す。分からなければ 0, 0。
 	TermSize func() (cols, rows int)
+	// StdoutTermSize は、標準出力の端末の幅と高さを返す（sigil ls / help 用）。分からなければ 0, 0。
+	StdoutTermSize func() (cols, rows int)
 	// After は time.After。演出の待ちを、テストでは待たずに進めるため。
 	After func(time.Duration) <-chan time.Time
 	// Executable は sigil 自身の絶対パスを返す（op run から起動し直すため）。
@@ -70,6 +72,7 @@ func DefaultDeps() Deps {
 		StderrIsTerminal: func() bool { return isCharDevice(os.Stderr) },
 		StdoutIsTerminal: func() bool { return isCharDevice(os.Stdout) },
 		TermSize:         func() (int, int) { return termSize(os.Stderr) },
+		StdoutTermSize:   func() (int, int) { return termSize(os.Stdout) },
 		After:            time.After,
 		Executable: func() (string, error) {
 			p, err := os.Executable()

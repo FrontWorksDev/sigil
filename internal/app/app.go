@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -513,7 +514,8 @@ func newStdoutUI(d Deps) *ui.UI {
 	mode := ui.DetectMode(d.StdoutIsTerminal(), d.LookupEnv)
 	var cols, rows int
 	if mode != ui.Plain {
-		cols, rows = d.TermSize()
+		// 標準エラーだけリダイレクトされていても測れるよう、標準出力の端末で測る
+		cols, rows = d.StdoutTermSize()
 	}
 	return ui.New(d.Stdout, ui.Options{Mode: mode, Cols: cols, Rows: rows})
 }
@@ -613,6 +615,18 @@ func imageName(d Deps) string {
 	return lookup(d, "SIGIL_IMAGE", "sigil:latest")
 }
 
+// buildkitDisabled は、DOCKER_BUILDKIT で BuildKit が止められているかを返す。
+// docker はこの値を真偽値（strconv.ParseBool）として読むので、"0" だけでなく "false" なども見る。
+// 止められていると --progress が使えず、出力の形も違うので、演出せずにそのまま流す。
+func buildkitDisabled(d Deps) bool {
+	v, ok := d.LookupEnv("DOCKER_BUILDKIT")
+	if !ok {
+		return false
+	}
+	b, err := strconv.ParseBool(v)
+	return err == nil && !b
+}
+
 // build はイメージを作る。ビルドコンテキストは、バイナリに埋め込んだものを一時フォルダに書き出して使う。
 func build(d Deps, u *ui.UI, extra []string) error {
 	ctxDir := lookup(d, "SIGIL_CONTEXT", "")
@@ -630,7 +644,7 @@ func build(d Deps, u *ui.UI, extra []string) error {
 	image := imageName(d)
 	// 演出は、出力の形を sigil が決められるときだけにする。利用者が --progress や -q を
 	// 指定したとき、BuildKit を使わないとき（--progress がない）は、今までどおりそのまま流す。
-	if !u.Fancy() || docker.HasProgressFlag(extra) || lookup(d, "DOCKER_BUILDKIT", "") == "0" {
+	if !u.Fancy() || docker.HasProgressFlag(extra) || buildkitDisabled(d) {
 		args := docker.BuildArgs(image, d.Getuid(), d.Getgid(), extra, ctxDir)
 		if err := d.Runner.Run("docker", args, d.Stdout, d.Stderr); err != nil {
 			return loref("紋章の鋳造に失敗しました", "docker build に失敗しました: %w", err)

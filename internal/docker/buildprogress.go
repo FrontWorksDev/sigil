@@ -42,7 +42,8 @@ type BuildWatcher struct {
 
 var (
 	reVertex = regexp.MustCompile(`^#(\d+) \[([^\]]+)\] (.*)$`)
-	reStep   = regexp.MustCompile(`^(.*?)\s+(\d+)/(\d+)$`)
+	// ステージ名は省略できる（1 ステージの Dockerfile では "[2/3] RUN ..." のように名前が付かない）
+	reStep   = regexp.MustCompile(`^(?:(.*?)\s+)?(\d+)/(\d+)$`)
 	reDone   = regexp.MustCompile(`^#(\d+) (DONE|CACHED)\b`)
 	reExport = regexp.MustCompile(`^#\d+ exporting to image`)
 )

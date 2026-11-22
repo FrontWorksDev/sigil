@@ -94,7 +94,7 @@ func New(w io.Writer, o Options) *UI {
 		glyphs: runeGlyphs,
 		after:  o.After,
 		now:    time.Now,
-		notify: func(c chan<- os.Signal) { signal.Notify(c, syscall.SIGINT, syscall.SIGTERM) },
+		notify: func(c chan<- os.Signal) { notifyNotIgnored(c, syscall.SIGINT, syscall.SIGTERM) },
 		stop:   func(c chan<- os.Signal) { signal.Stop(c) },
 		raise:  raiseDefault,
 	}
@@ -105,6 +105,17 @@ func New(w io.Writer, o Options) *UI {
 		u.after = time.After
 	}
 	return u
+}
+
+// notifyNotIgnored は、sigs のうち、無視されていないものだけを受け取る。
+// 無視された状態で起動されたとき（nohup やスクリプトの & など）に Notify すると、
+// 無視が外れてしまい、本来は届かないはずのシグナルで処理を中断してしまうため。
+func notifyNotIgnored(c chan<- os.Signal, sigs ...os.Signal) {
+	for _, s := range sigs {
+		if !signal.Ignored(s) {
+			signal.Notify(c, s)
+		}
+	}
 }
 
 // raiseDefault は、シグナルの扱いを既定に戻してから自分に送り直す。
@@ -135,7 +146,8 @@ func (u *UI) Enter(name string) {
 	if u.mode == Plain {
 		return
 	}
-	u.line(u.fg(purple, "⟡") + " 領域 " + u.bold(u.fit(Sanitize(name), u.cols-16)) + " に入ります")
+	// 名前の前後の固定の部分（字下げ、印、「領域」「に入ります」）が 20 桁、右端に 1 桁あける
+	u.line(u.fg(purple, "⟡") + " 領域 " + u.bold(u.fit(Sanitize(name), u.avail(21))) + " に入ります")
 }
 
 // Success は、済んだことを知らせる 1 行を出す。msg は Bold などで飾ってよいが、
@@ -196,9 +208,11 @@ func (u *UI) Box(lines ...string) {
 	if u.mode == Plain {
 		return
 	}
+	// 枠と字下げで 6 桁、右端に 1 桁あける。はみ出す行は切り詰める（折り返すと枠が崩れる）
 	w := 0
-	for _, l := range lines {
-		w = max(w, Width(l))
+	for i, l := range lines {
+		lines[i] = u.fitStyled(l, u.avail(7))
+		w = max(w, Width(lines[i]))
 	}
 	u.line(u.fg(violet, "╭"+strings.Repeat("─", w+2)+"╮"))
 	for _, l := range lines {
@@ -305,6 +319,51 @@ func stripSGR(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// avail は、端末の幅から n 桁を引いた、使える幅を返す。
+// 幅が分からないとき（0）は切り詰めない（何も出なくなるのを避けるため）。
+func (u *UI) avail(n int) int {
+	if u.cols <= 0 {
+		return 1 << 30
+	}
+	return u.cols - n
+}
+
+// fitStyled は、SGR で飾った s を幅 w に収める。エスケープは幅に数えずにそのまま残し、
+// 切り詰めたときは最後に SGR をリセットする（色がはみ出さないように）。
+func (u *UI) fitStyled(s string, w int) string {
+	if Width(s) <= w {
+		return s
+	}
+	var b strings.Builder
+	n := 0
+	in := false
+	for _, r := range s {
+		switch {
+		case r == '\x1b':
+			in = true
+			b.WriteRune(r)
+			continue
+		case in:
+			b.WriteRune(r)
+			if r == 'm' {
+				in = false
+			}
+			continue
+		}
+		rw := runeWidth(r)
+		if n+rw > w-1 {
+			break
+		}
+		b.WriteRune(r)
+		n += rw
+	}
+	out := b.String() + "…"
+	if u.mode == Color {
+		out += "\x1b[0m"
+	}
+	return out
 }
 
 // fit は、飾りのない s を幅 w に収める。はみ出すときは末尾を … にする。

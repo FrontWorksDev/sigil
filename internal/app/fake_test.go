@@ -189,6 +189,7 @@ func newEnv(t *testing.T) *testEnv {
 		StderrIsTerminal: func() bool { return e.stderrTTY },
 		StdoutIsTerminal: func() bool { return e.stdoutTTY },
 		TermSize:         func() (int, int) { return e.cols, e.rows },
+		StdoutTermSize:   func() (int, int) { return e.cols, e.rows },
 		// 演出の待ちは、待たずにすぐ進める
 		After: func(time.Duration) <-chan time.Time {
 			c := make(chan time.Time, 1)

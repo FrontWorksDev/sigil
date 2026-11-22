@@ -168,6 +168,10 @@ loop:
 		case s := <-sig:
 			u.Restore()
 			u.raise(s)
+			// 本物のシグナルなら raise で終わる。戻ってきたとき（テストなど）も、裏の処理が
+			// 終わるまで待ってから戻る。待たずに戻ると、呼んだ側が docker run の途中で先へ進み、
+			// work が書く変数を同時に読むことになる。
+			<-done
 			return ErrInterrupted
 		case <-u.after(frameInterval):
 		}
@@ -263,7 +267,7 @@ func (u *UI) Spin(label string, work Work) error {
 
 // spin は Spin の本体。label は描くたびに呼ぶ（Progress で添え書きが変わるため）。
 func (u *UI) spin(label func() string, work Work) error {
-	fitted := func() string { return u.fit(Sanitize(label()), u.cols-12) }
+	fitted := func() string { return u.fit(Sanitize(label()), u.avail(12)) }
 
 	var buf bytes.Buffer
 	done := make(chan error, 1)
@@ -287,6 +291,7 @@ loop:
 		case s := <-sig:
 			u.Restore()
 			u.raise(s)
+			<-done // Ritual と同じ理由で、裏の処理を待つ
 			return ErrInterrupted
 		case <-u.after(spinInterval):
 		}

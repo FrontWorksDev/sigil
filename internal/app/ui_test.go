@@ -391,3 +391,37 @@ func TestErrorsUseLoreThenPlain(t *testing.T) {
 		t.Errorf("stderr = %q", got)
 	}
 }
+
+func TestBuildPlainWhenBuildkitDisabledByBool(t *testing.T) {
+	for _, v := range []string{"0", "false", "FALSE", "f"} {
+		e := newEnv(t)
+		e.fancy()
+		e.cwd = "/"
+		e.vars["DOCKER_BUILDKIT"] = v
+		e.run("build")
+		if slices.Contains(e.runner.find("docker build")[0].args, "--progress=plain") {
+			t.Errorf("DOCKER_BUILDKIT=%s で --progress=plain を足している", v)
+		}
+	}
+	// 真の値や解釈できない値は、BuildKit を止めていないものとして扱う
+	e := newEnv(t)
+	e.fancy()
+	e.cwd = "/"
+	e.vars["DOCKER_BUILDKIT"] = "1"
+	e.run("build")
+	if !slices.Contains(e.runner.find("docker build")[0].args, "--progress=plain") {
+		t.Errorf("DOCKER_BUILDKIT=1 で演出していない")
+	}
+}
+
+func TestHelpBannerUsesStdoutSize(t *testing.T) {
+	// 標準エラーだけリダイレクトされて測れなくても、標準出力の端末で幅を測る
+	e := newEnv(t)
+	e.stdoutTTY = true
+	e.d.TermSize = func() (int, int) { return 0, 0 }
+	e.d.StdoutTermSize = func() (int, int) { return 100, 30 }
+	e.run("help")
+	if !strings.Contains(e.stdout.String(), "seal your code") {
+		t.Errorf("標準出力の幅で測っていない")
+	}
+}

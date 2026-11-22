@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
 	"syscall"
 	"testing"
@@ -221,18 +222,23 @@ func TestSignalRestoresAndRaises(t *testing.T) {
 	// 時間は進めず、シグナルが来るまで待たせる
 	u.after = func(time.Duration) <-chan time.Time { return nil }
 	var raised os.Signal
+	release := make(chan struct{})
 	u.raise = func(s os.Signal) {
 		if !strings.HasSuffix(buf.String(), RestoreSeq) {
 			t.Errorf("送り直す前に、端末を元に戻すこと")
 		}
 		raised = s
+		close(release) // 送り直したあとに、裏の処理が終わる
 	}
-	release := make(chan struct{})
-	defer close(release)
 	go func() { (<-sigc) <- syscall.SIGINT }()
-	err := u.Ritual("領域展開", "proj", stages, func(io.Writer) error { <-release; return nil })
+	workDone := false
+	err := u.Ritual("領域展開", "proj", stages, func(io.Writer) error { <-release; workDone = true; return nil })
 	if !errors.Is(err, ErrInterrupted) || raised != syscall.SIGINT {
 		t.Errorf("err = %v, raised = %v", err, raised)
+	}
+	// 裏の処理が終わるまで待ってから戻ること（呼んだ側が docker run の途中で先へ進まないように）
+	if !workDone {
+		t.Errorf("裏の処理を待たずに戻った")
 	}
 }
 
@@ -320,5 +326,49 @@ func TestRealms(t *testing.T) {
 	u3.Realms([]Realm{{Name: "x"}})
 	if buf3.Len() != 0 {
 		t.Errorf("Plain で書いている")
+	}
+}
+
+func TestBoxAndEnterFitWidth(t *testing.T) {
+	long := strings.Repeat("とても長いプロジェクト", 10)
+	u, buf := newTest(Color, 60, 24)
+	u.Box("領域 "+u.Bold(long)+" は展開されました", u.Dim("門  127.0.0.1:5173 → 5173"))
+	u.Enter(long)
+	for l := range strings.SplitSeq(strings.TrimRight(buf.String(), "\n"), "\n") {
+		if w := Width(l); w >= 60 {
+			t.Errorf("幅 60 で %d 桁の行（折り返す）: %q", w, l)
+		}
+	}
+	// 切り詰めても、色がはみ出さない
+	if !strings.Contains(buf.String(), "…\x1b[0m") {
+		t.Errorf("切り詰めたあとに SGR をリセットしていない")
+	}
+	// 幅が分からないときは切り詰めない
+	u2, buf2 := newTest(Mono, 0, 0)
+	u2.Enter("proj")
+	if buf2.String() != "  ⟡ 領域 proj に入ります\n" {
+		t.Errorf("Enter = %q", buf2.String())
+	}
+}
+
+func TestNotifySkipsIgnoredSignals(t *testing.T) {
+	// 無視された状態で起動されたシグナルは受け取らない（Notify すると無視が外れてしまう）
+	signal.Ignore(syscall.SIGUSR1)
+	defer signal.Reset(syscall.SIGUSR1)
+	c := make(chan os.Signal, 1)
+	notifyNotIgnored(c, syscall.SIGUSR1, syscall.SIGUSR2)
+	defer signal.Stop(c)
+	if !signal.Ignored(syscall.SIGUSR1) {
+		t.Errorf("無視されていたシグナルの無視を外した")
+	}
+	// 無視されていないものは受け取る
+	syscall.Kill(syscall.Getpid(), syscall.SIGUSR2)
+	select {
+	case s := <-c:
+		if s != syscall.SIGUSR2 {
+			t.Errorf("受け取ったシグナル = %v", s)
+		}
+	case <-time.After(2 * time.Second):
+		t.Errorf("無視されていないシグナルを受け取れない")
 	}
 }

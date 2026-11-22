@@ -116,3 +116,12 @@ func TestBuildWatcherScratchFirstStepIsForge(t *testing.T) {
 		t.Errorf("別のステージ（one 1/1）を数えている: %v", last)
 	}
 }
+
+func TestBuildWatcherSingleStage(t *testing.T) {
+	// 1 ステージの Dockerfile では、手順にステージ名が付かない
+	_, gs := watch(t, "#5 [1/3] FROM docker.io/library/alpine\n#5 DONE 0.1s\n#6 [2/3] RUN apk add git\n#6 DONE 1.0s\n")
+	last := gs[len(gs)-1]
+	if last.phase != BuildForge || last.note != "[2/3] RUN apk add git" || last.ratio != 2.0/3 {
+		t.Errorf("%v", last)
+	}
+}

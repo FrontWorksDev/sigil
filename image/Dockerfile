@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 #
 # sigil: 隔離された開発用コンテナ
-#   Neovim (LazyVim) / Claude Code / Node.js / Go / Rust / PHP
+#   Neovim (LazyVim) / Claude Code / Node.js / Go / Rust / PHP / Python (uv)
 #
 # ビルド:  sigil build   （bin/sigil が UID/GID を合わせて docker build します）
 
@@ -12,6 +12,7 @@ ARG NODE_IMAGE=node:lts-trixie-slim
 ARG GO_IMAGE=golang:trixie
 ARG RUST_IMAGE=rust:slim-trixie
 ARG COMPOSER_IMAGE=composer:2
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:latest
 # Debian の apt の PHP は最新ではないので、公式 PHP イメージ（中身は debian:trixie-slim）を土台にする
 ARG PHP_IMAGE=php:cli-trixie
 
@@ -19,6 +20,7 @@ FROM ${NODE_IMAGE} AS node
 FROM ${GO_IMAGE} AS go
 FROM ${RUST_IMAGE} AS rust
 FROM ${COMPOSER_IMAGE} AS composer
+FROM ${UV_IMAGE} AS uv
 
 FROM ${PHP_IMAGE}
 
@@ -70,6 +72,43 @@ COPY --from=composer /usr/bin/composer /usr/local/bin/composer
 RUN (corepack enable || true) \
  && npm install -g tree-sitter-cli \
  && npm cache clean --force
+
+# --- Python（uv で最新の安定版） ----------------------------------------
+# Debian の apt の Python（trixie は 3.13）は最新ではないので、uv で入れる。
+# MCP サーバーの多くは `uvx <package>` で起動するので、uv / uvx も入れる。
+# 置き場所は root 所有の /opt にし、dev ユーザーからは書き換えられないようにする
+# （UV_PYTHON_INSTALL_DIR はこの RUN の中だけで使う。ENV に残すと、dev ユーザーの
+#   `uv python install` がこの場所に書こうとして失敗するため）。
+# uv が入れる Python には pip が同梱されているが、EXTERNALLY-MANAGED の印があるので、
+# venv の外での `pip install`（--user を含む）は拒否される。パッケージは venv / uvx で入れる。
+# --no-bin: root の ~/.local/bin に python3.x のリンクを作らせない（入口は下の /usr/local/bin だけにする）。
+COPY --from=uv /uv /uvx /usr/local/bin/
+RUN export UV_PYTHON_INSTALL_DIR=/opt/uv-python UV_NO_CACHE=1 \
+ && uv python install --no-bin \
+ && py="$(uv python find --managed-python)" \
+ && ln -s "$py" /usr/local/bin/python3 \
+ && ln -s python3 /usr/local/bin/python \
+ && python3 --version
+
+# --- wakatime-cli -------------------------------------------------------
+# vim-wakatime は、PATH に wakatime-cli があればそれを使い、自動更新（Python による
+# ~/.wakatime/ へのダウンロード）をしない。~/.wakatime/ は永続化していないので、
+# イメージに入れておかないと、コンテナを作り直すたびにダウンロードが走る。
+# root 所有の /usr/local/bin に置くので、コンテナの中からは差し替えられない。
+# チェックサムは同じリリースのものなので、壊れたダウンロードを検出するためのもの。
+RUN case "${TARGETARCH}" in \
+      amd64|arm64) arch="${TARGETARCH}" ;; \
+      *) echo "unsupported arch: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+ && tmp="$(mktemp -d)" && cd "$tmp" \
+ && base=https://github.com/wakatime/wakatime-cli/releases/latest/download \
+ && curl -fsSLO "${base}/wakatime-cli-linux-${arch}.zip" \
+ && curl -fsSLO "${base}/checksums_sha256.txt" \
+ && grep " wakatime-cli-linux-${arch}.zip\$" checksums_sha256.txt | sha256sum -c - \
+ && unzip -q "wakatime-cli-linux-${arch}.zip" \
+ && install -m 755 "wakatime-cli-linux-${arch}" /usr/local/bin/wakatime-cli \
+ && cd / && rm -rf "$tmp" \
+ && wakatime-cli --version
 
 # --- 一般ユーザー -------------------------------------------------------
 # Mac の GID 20 (staff) は Debian 側に既にあるので、存在すれば流用する

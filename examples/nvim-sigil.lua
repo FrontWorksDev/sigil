@@ -34,3 +34,14 @@ if vim.env.SIGIL then
   }
   vim.opt.clipboard = "unnamedplus"
 end
+
+----------------------------------------------------------------------
+-- 3) （任意）lua/config/options.lua の末尾に追加
+--    イメージには Neovim の Python プロバイダ（pynvim）を入れていないので、
+--    :checkhealth provider で Python 3 の警告が出る。Python のプラグインを
+--    使っていなければ、プロバイダを止めて警告を消せる。
+--    （vim-wakatime は、イメージに入れた wakatime-cli を使うので Python は不要）
+----------------------------------------------------------------------
+if vim.env.SIGIL then
+  vim.g.loaded_python3_provider = 0
+end

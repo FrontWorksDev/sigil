@@ -31,7 +31,7 @@ func TestPlainWhenStderrIsNotTerminal(t *testing.T) {
 	if strings.Contains(e.stderr.String(), "\x1b") {
 		t.Errorf("パイプやリダイレクトでエスケープが出ている: %q", e.stderr.String())
 	}
-	if !strings.Contains(e.stderr.String(), "コンテナ "+e.name()+" を作成します") {
+	if !strings.Contains(e.stderr.String(), "領域 "+e.name()+" を展開します") {
 		t.Errorf("今までどおりの素のテキストを出すこと: %q", e.stderr.String())
 	}
 }
@@ -356,5 +356,38 @@ func TestCheckPassesNoColorWhenHostDisablesColor(t *testing.T) {
 	e.run("nvim", ".")
 	if strings.Contains(strings.Join(e.lastExec().argv, " "), "NO_COLOR") {
 		t.Errorf("check 以外で NO_COLOR を渡している")
+	}
+}
+
+// ---- エラーの 2 行の形 ----
+
+func TestLoreErrorKeepsInnermostAndPlainText(t *testing.T) {
+	inner := lore("紋章がありません", errors.New("イメージ x がありません"))
+	if got := lore("外側", inner); got != inner {
+		t.Errorf("すでに添えてあれば、内側の言葉を優先すること")
+	}
+	var b strings.Builder
+	printError(&b, lore("旧き紋章の領域です", errors.New("1 行目\n2 行目")))
+	if b.String() != "sigil: 旧き紋章の領域です\n       1 行目\n       2 行目\n" {
+		t.Errorf("printError = %q", b.String())
+	}
+	b.Reset()
+	printError(&b, errors.New("ふつうのエラー"))
+	if b.String() != "sigil: ふつうのエラー\n" {
+		t.Errorf("printError = %q", b.String())
+	}
+	if lore("x", nil) != nil {
+		t.Errorf("nil は nil のまま")
+	}
+}
+
+func TestErrorsUseLoreThenPlain(t *testing.T) {
+	e := newEnv(t)
+	e.runner.on("docker image inspect", "", errors.New("no such image"))
+	if code := e.run(); code != 1 {
+		t.Fatalf("code = %d", code)
+	}
+	if got := e.stderr.String(); !strings.HasSuffix(got, "sigil: 紋章がありません\n       イメージ sigil:latest がありません。先に sigil build を実行してください\n") {
+		t.Errorf("stderr = %q", got)
 	}
 }

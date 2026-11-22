@@ -20,18 +20,19 @@ import (
 	"sigil/internal/ui"
 )
 
+// usage は普通の説明を主にし、メッセージに出てくる用語は〔〕で添える程度にする（issue #3）。
 const usage = `使い方:
-  sigil                   プロジェクトのコンテナに入る（なければ作る）
+  sigil                   プロジェクトのコンテナに入る（なければ作る）〔領域に入る／領域展開〕
   sigil <command...>      コンテナ内でコマンドを実行   例: sigil nvim .   sigil claude
   sigil -- <command...>   stop / build などと同名のコマンドをコンテナ内で実行
-  sigil stop              このプロジェクトのコンテナを削除（.sigil を変えたら一度これ）
-  sigil ls                sigil のコンテナの一覧
-  sigil check             隔離が効いているか、コンテナ内で確認
-  sigil build [args...]   イメージを作る（追加の引数は docker build へ）
+  sigil stop              このプロジェクトのコンテナを削除（.sigil を変えたら一度これ）〔領域解除〕
+  sigil ls                sigil のコンテナの一覧〔展開中の領域〕
+  sigil check             隔離が効いているか、コンテナ内で確認〔結界の点検〕
+  sigil build [args...]   イメージを作る（追加の引数は docker build へ）〔紋章の鋳造〕
   sigil help              この説明
 
 設定:
-  <project>/.sigil                このプロジェクトに渡す環境変数名とポート（変わるたびに確認）
+  <project>/.sigil                このプロジェクトに渡す環境変数名とポート（変わるたびに確認）〔契約〕
   <project>/.env                  値（1Password の op:// 参照）
   ~/.config/sigil/config          全プロジェクト共通の環境変数名とポート
   ~/.config/sigil/secrets.env     全プロジェクト共通の値
@@ -41,12 +42,13 @@ const usage = `使い方:
   SIGIL_CONTEXT   sigil build で、埋め込みの代わりに使うビルドコンテキスト
   SIGIL_PLAIN     1 にすると演出（魔法陣やスピナー）を止める。NO_COLOR なら色だけ止める
   SIGIL_GLYPHS    greek にすると、魔法陣の外周をルーン文字ではなくギリシャ文字にする
+
 `
 
 // Run は sigil を実行し、終了コードを返す。
 func Run(args []string, d Deps) int {
 	if err := run(args, d); err != nil {
-		fmt.Fprintf(d.Stderr, "sigil: %s\n", err)
+		printError(d.Stderr, err)
 		return 1
 	}
 	return 0
@@ -85,7 +87,7 @@ func run(args []string, d Deps) error {
 
 	dockerPath, err := d.LookPath("docker")
 	if err != nil {
-		return errors.New("docker が見つかりません")
+		return lore("領域を開く術がありません", errors.New("docker が見つかりません。Docker Desktop をインストールしてください"))
 	}
 	client := docker.Client{R: d.Runner, Stderr: d.Stderr}
 	u := newUI(d)
@@ -114,7 +116,7 @@ func run(args []string, d Deps) error {
 		return out.String(), err
 	})
 	if err != nil {
-		return err
+		return lore("ここに結界は張れません", err)
 	}
 
 	if first(args) == "stop" {
@@ -161,7 +163,7 @@ func run(args []string, d Deps) error {
 	// 戻さないと、Neovim や Claude Code の画面が壊れる。
 	u.Restore()
 	if err := d.Exec(dockerPath, argv, d.Environ()); err != nil {
-		return fmt.Errorf("docker exec を起動できませんでした: %w", err)
+		return loref("領域に入れませんでした", "docker exec を起動できませんでした: %w", err)
 	}
 	// 本物の Exec は戻らない。偽物のときに、ここで止める。
 	return nil
@@ -221,14 +223,14 @@ func loadSettings(p project.Project, dd dirs) (settings, error) {
 		// 通常のファイルのときだけにする。Jetify Devbox などは .devbox/ というフォルダを作るため
 		legacy := filepath.Join(p.Root, ".devbox")
 		if fi, err := os.Lstat(legacy); err == nil && fi.Mode().IsRegular() {
-			return s, fmt.Errorf("%s があります。dev は sigil に改名したので、.sigil に名前を変えてください（mv .devbox .sigil）", legacy)
+			return s, loref("旧き契約の書が残っています", "%s があります。dev は sigil に改名したので、.sigil に名前を変えてください（mv .devbox .sigil）", legacy)
 		}
 	}
 	// 改名前の全体設定だけがあると、WakaTime のキーなどが黙って渡らなくなるので、止めて知らせる
 	if _, err := os.Lstat(dd.config); errors.Is(err, fs.ErrNotExist) {
 		legacy := filepath.Join(filepath.Dir(dd.config), "devbox")
 		if _, err := os.Lstat(legacy); err == nil {
-			return s, fmt.Errorf("改名前の全体設定 %s があります。%s に移してください（mv %s %s、そのうえで中の devbox を config に名前を変える）",
+			return s, loref("旧き契約の書が残っています", "改名前の全体設定 %s があります。%s に移してください（mv %s %s、そのうえで中の devbox を config に名前を変える）",
 				legacy, dd.config, legacy, dd.config)
 		}
 	}
@@ -263,9 +265,9 @@ func loadSettings(p project.Project, dd dirs) (settings, error) {
 			case e.Ref == "":
 				// アプリの設定。sigil は扱わない
 			case config.Denied(e.Name):
-				s.warnings = append(s.warnings, fmt.Sprintf("注意: .env の %s は渡せない名前なので、1Password から読み込みません", e.Name))
+				s.warnings = append(s.warnings, fmt.Sprintf("注意: .env の %s は渡せない名前なので、禁書庫から読み込みません", e.Name))
 			case !listed[e.Name]:
-				s.warnings = append(s.warnings, fmt.Sprintf("注意: .env の %s は .sigil にも全体設定にも列挙されていないので、1Password から読み込みません", e.Name))
+				s.warnings = append(s.warnings, fmt.Sprintf("注意: .env の %s は .sigil にも全体設定にも列挙されていないので、禁書庫から読み込みません", e.Name))
 			default:
 				s.opEntries = append(s.opEntries, e)
 			}
@@ -280,7 +282,7 @@ func loadSettings(p project.Project, dd dirs) (settings, error) {
 		}
 		for _, e := range entries {
 			if config.Denied(e.Name) {
-				return s, fmt.Errorf("%s: %s は書けません（sigil や docker の動作を変えられるため）", s.secretsPth, e.Name)
+				return s, loref("禁書庫の目録に、書けない名前があります", "%s: %s は書けません（sigil や docker の動作を変えられるため）", s.secretsPth, e.Name)
 			}
 		}
 	}
@@ -338,7 +340,7 @@ func removeOpTemp(dir string) {
 func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, home string, dd dirs, args []string) (replaced bool, err error) {
 	st, layout, err := client.Inspect(p.ContainerName)
 	if err != nil {
-		return false, err
+		return false, lore("領域の様子を確かめられません", err)
 	}
 	if st != docker.Missing {
 		// 既存のコンテナには、作成時に渡したものが使われる。設定の読み込みや承認はしない。
@@ -347,7 +349,7 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 
 	s, err := loadSettings(p, dd)
 	if err != nil {
-		return false, err
+		return false, lore("契約の書を読み解けません", err)
 	}
 
 	// op run から起動し直された側（inner）では、確認も op run もしない（無限ループ防止）。
@@ -365,7 +367,7 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 	if !inner && s.needsOp() {
 		opPath, err := d.LookPath("op")
 		if err != nil {
-			info(d, "注意: op が見つからないので、1Password の参照（op://）は読み込みません")
+			info(d, "注意: op が見つからないので、禁書庫を開けません。op:// の参照は読み込みません")
 		} else {
 			self, err := d.Executable()
 			if err != nil {
@@ -375,7 +377,7 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 			if err != nil {
 				return false, err
 			}
-			info(d, "1Password からシークレットを読み込みます")
+			info(d, "禁書庫から召喚します")
 			env := append(d.Environ(), opwrap.InnerEnv+"=1")
 			if tmpDir != "" {
 				env = append(env, opTempEnv+"="+tmpDir)
@@ -386,7 +388,7 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 				if tmpDir != "" {
 					os.RemoveAll(tmpDir)
 				}
-				return false, fmt.Errorf("op run を起動できませんでした: %w", err)
+				return false, loref("禁書庫を開けませんでした", "op run を起動できませんでした: %w", err)
 			}
 			return true, nil
 		}
@@ -394,7 +396,7 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 
 	image := imageName(d)
 	if !client.ImageExists(image) {
-		return false, fmt.Errorf("イメージ %s がありません。先に sigil build を実行してください", image)
+		return false, loref("紋章がありません", "イメージ %s がありません。先に sigil build を実行してください", image)
 	}
 	_, gitErr := os.Stat(filepath.Join(p.Root, ".git"))
 	if gitErr != nil {
@@ -408,7 +410,7 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 	for _, name := range cfg.Envs {
 		// 空文字で設定されているものは「設定されている」とみなして渡す
 		if _, ok := d.LookupEnv(name); !ok {
-			info(d, "注意: 環境変数 %s がホスト側で設定されていないので渡しません", name)
+			info(d, "注意: 持ち込むもの %s がホスト側で設定されていないので、渡しません", name)
 			continue
 		}
 		envs = append(envs, name)
@@ -431,7 +433,7 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 	if u.Fancy() {
 		u.Banner()
 	} else {
-		info(d, "コンテナ %s を作成します", p.ContainerName)
+		info(d, "領域 %s を展開します", p.ContainerName)
 	}
 	// 段階のうち、最後以外は、ここまでに済んでいる（待ち時間を足さないため、実際の処理に合わせる）
 	summon := ui.Stage{Label: "禁書庫から召喚する", Note: "1Password", State: ui.Skipped}
@@ -464,10 +466,10 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 		// cmux でペインを同時に開くと、別のペインが先に同じ名前で作っていることがある。
 		// そのときは失敗とせず、そのコンテナを使う。
 		if st, layout, ierr := client.Inspect(p.ContainerName); ierr == nil && st != docker.Missing {
-			info(d, "別のペインで作られた %s を使います", p.ContainerName)
+			info(d, "別のペインで展開された領域 %s に入ります", p.ContainerName)
 			return false, useExisting(u, client, p, st, layout)
 		}
-		return false, fmt.Errorf("コンテナ %s を作成できませんでした: %w", p.ContainerName, err)
+		return false, loref("領域を展開できませんでした", "コンテナ %s を作成できませんでした: %w", p.ContainerName, err)
 	}
 	// wakaErr は Ritual が work の終わりを待ってから戻るので、ここで読んでよい
 	if wakaErr != nil {
@@ -489,7 +491,7 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 // 演出は 1 行だけにし、待ち時間は足さない（停止中なら docker start の間だけスピナーを回す）。
 func useExisting(u *ui.UI, client docker.Client, p project.Project, st docker.State, layout string) error {
 	if layout != docker.LayoutVersion {
-		return fmt.Errorf("%s は古い sigil で作られています。sigil stop してから、もう一度実行してください", p.ContainerName)
+		return loref("旧き紋章の領域です", "%s は古い sigil で作られています。sigil stop してから、もう一度実行してください", p.ContainerName)
 	}
 	if st == docker.Stopped {
 		err := u.Spin("領域を再展開する  "+p.ContainerName, func(stderr io.Writer) error {
@@ -498,7 +500,7 @@ func useExisting(u *ui.UI, client docker.Client, p project.Project, st docker.St
 			return c.Start(p.ContainerName)
 		})
 		if err != nil {
-			return fmt.Errorf("%s を起動できませんでした: %w", p.ContainerName, err)
+			return loref("領域を再展開できませんでした", "%s を起動できませんでした: %w", p.ContainerName, err)
 		}
 	}
 	u.Enter(filepath.Base(p.Root))
@@ -573,15 +575,15 @@ func approve(d Deps, store approval.Store, p project.Project, s settings, ask bo
 		files = append(files, s.envPath)
 	}
 	if !ask {
-		return fmt.Errorf("%s が承認されていません", strings.Join(files, " と "))
+		return loref("契約が結ばれていません", "%s が承認されていません", strings.Join(files, " と "))
 	}
 	tty, err := d.OpenTTY()
 	if err != nil {
-		return fmt.Errorf("%s を確認できない環境です。対話できるターミナルで実行してください", strings.Join(files, " と "))
+		return loref("契約を確かめられません", "%s を確認できない環境です。対話できるターミナルで実行してください", strings.Join(files, " と "))
 	}
 	defer tty.Close()
 	if !approval.Ask(tty, d.Stderr, files, s.projCfg, s.opEntries) {
-		return errors.New("中止しました")
+		return lore("契約は結ばれませんでした", errors.New("中止しました"))
 	}
 	return store.Record(p.Key, sum)
 }
@@ -631,7 +633,7 @@ func build(d Deps, u *ui.UI, extra []string) error {
 	if !u.Fancy() || docker.HasProgressFlag(extra) || lookup(d, "DOCKER_BUILDKIT", "") == "0" {
 		args := docker.BuildArgs(image, d.Getuid(), d.Getgid(), extra, ctxDir)
 		if err := d.Runner.Run("docker", args, d.Stdout, d.Stderr); err != nil {
-			return fmt.Errorf("docker build に失敗しました: %w", err)
+			return loref("紋章の鋳造に失敗しました", "docker build に失敗しました: %w", err)
 		}
 		return nil
 	}
@@ -656,7 +658,7 @@ func build(d Deps, u *ui.UI, extra []string) error {
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("docker build に失敗しました: %w", err)
+		return loref("紋章の鋳造に失敗しました", "docker build に失敗しました: %w", err)
 	}
 	u.Success("紋章 " + u.Bold(image) + " の鋳造が完了しました " + u.Dim(fmt.Sprintf("(%.1fs)", time.Since(start).Seconds())))
 	return nil
@@ -665,15 +667,15 @@ func build(d Deps, u *ui.UI, extra []string) error {
 func stop(d Deps, client docker.Client, p project.Project) error {
 	st, _, err := client.Inspect(p.ContainerName)
 	if err != nil {
-		return err
+		return lore("領域の様子を確かめられません", err)
 	}
 	if st == docker.Missing {
-		info(d, "%s はありません", p.ContainerName)
+		info(d, "領域 %s はありません", p.ContainerName)
 		return nil
 	}
 	if err := client.Remove(p.ContainerName); err != nil {
-		return fmt.Errorf("%s を削除できませんでした: %w", p.ContainerName, err)
+		return loref("領域を解除できませんでした", "%s を削除できませんでした: %w", p.ContainerName, err)
 	}
-	info(d, "%s を削除しました", p.ContainerName)
+	info(d, "領域 %s を解除しました", p.ContainerName)
 	return nil
 }

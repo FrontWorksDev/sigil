@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"sigil/internal/docker"
 	"sigil/internal/opwrap"
 	"sigil/internal/project"
+	"sigil/internal/ui"
 )
 
 const usage = `使い方:
@@ -36,6 +38,8 @@ const usage = `使い方:
 環境変数:
   SIGIL_IMAGE     イメージ名（既定 sigil:latest）
   SIGIL_CONTEXT   sigil build で、埋め込みの代わりに使うビルドコンテキスト
+  SIGIL_PLAIN     1 にすると演出（魔法陣やスピナー）を止める。NO_COLOR なら色だけ止める
+  SIGIL_GLYPHS    greek にすると、魔法陣の外周をルーン文字ではなくギリシャ文字にする
 `
 
 // Run は sigil を実行し、終了コードを返す。
@@ -124,7 +128,8 @@ func run(args []string, d Deps) error {
 		cmd = []string{"bash", "-l"}
 	}
 
-	replaced, err := ensureContainer(d, client, p, home, dirs, args)
+	u := newUI(d)
+	replaced, err := ensureContainer(d, u, client, p, home, dirs, args)
 	if err != nil {
 		return err
 	}
@@ -142,6 +147,9 @@ func run(args []string, d Deps) error {
 	argv := append([]string{"docker"},
 		docker.ExecArgs(p.ContainerName, p.Workdir(realCwd), d.IsTerminal(), cmd)...)
 	// docker に置き換え、Neovim や Claude Code に端末をそのまま渡す。
+	// 置き換える前に、演出で変えた端末の状態（カーソルの非表示、色、描いていた行）を必ず戻す。
+	// 戻さないと、Neovim や Claude Code の画面が壊れる。
+	u.Restore()
 	if err := d.Exec(dockerPath, argv, d.Environ()); err != nil {
 		return fmt.Errorf("docker exec を起動できませんでした: %w", err)
 	}
@@ -317,14 +325,14 @@ func removeOpTemp(dir string) {
 }
 
 // ensureContainer はコンテナを用意する。op run に置き換えたときは replaced = true。
-func ensureContainer(d Deps, client docker.Client, p project.Project, home string, dd dirs, args []string) (replaced bool, err error) {
+func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, home string, dd dirs, args []string) (replaced bool, err error) {
 	st, layout, err := client.Inspect(p.ContainerName)
 	if err != nil {
 		return false, err
 	}
 	if st != docker.Missing {
 		// 既存のコンテナには、作成時に渡したものが使われる。設定の読み込みや承認はしない。
-		return false, useExisting(client, p, st, layout)
+		return false, useExisting(u, client, p, st, layout)
 	}
 
 	s, err := loadSettings(p, dd)
@@ -362,6 +370,8 @@ func ensureContainer(d Deps, client docker.Client, p project.Project, home strin
 			if tmpDir != "" {
 				env = append(env, opTempEnv+"="+tmpDir)
 			}
+			// op run に置き換える前にも、端末を元に戻す（承認の画面のあとなので、念のため）
+			u.Restore()
 			if err := d.Exec(opPath, opwrap.Argv(self, files, args), env); err != nil {
 				if tmpDir != "" {
 					os.RemoveAll(tmpDir)
@@ -397,8 +407,7 @@ func ensureContainer(d Deps, client docker.Client, p project.Project, home strin
 		}
 	}
 
-	info(d, "コンテナ %s を作成します", p.ContainerName)
-	err = client.Create(docker.RunSpec{
+	spec := docker.RunSpec{
 		Name:          p.ContainerName,
 		ProjectRoot:   p.Root,
 		ContainerPath: p.ContainerPath,
@@ -408,35 +417,98 @@ func ensureContainer(d Deps, client docker.Client, p project.Project, home strin
 		HasNvimConfig: nvimErr == nil && nvim.IsDir(),
 		Envs:          envs,
 		Ports:         cfg.Ports,
+	}
+	if u.Fancy() {
+		u.Banner()
+	} else {
+		info(d, "コンテナ %s を作成します", p.ContainerName)
+	}
+	// 段階のうち、最後以外は、ここまでに済んでいる（待ち時間を足さないため、実際の処理に合わせる）
+	summon := ui.Stage{Label: "禁書庫から召喚する", Note: "1Password", State: ui.Skipped}
+	if inner {
+		summon.State = ui.Done
+	}
+	stages := []ui.Stage{
+		{Label: "契約を読み解く", Note: ".sigil / .env", State: ui.Done},
+		summon,
+		{Label: "禁忌の扉を閉ざす", Note: "~/.ssh ~/.aws docker.sock", State: ui.Done},
+		{Label: "権能を剥奪する", Note: "cap-drop=ALL", State: ui.Done},
+		{Label: "結界を張る", Note: "no-new-privileges", State: ui.Done},
+		{Label: "領域を展開する", Note: p.ContainerName},
+	}
+	var wakaErr error
+	// docker run を裏で動かし、終わるまで魔法陣を描き続ける。docker の標準エラーは、
+	// 描画中はためておき、描き終えてから出す（Plain のときはそのまま流れる）。
+	err = u.Ritual("⟡ 領域展開", ui.Sanitize(filepath.Base(p.Root)), stages, func(stderr io.Writer) error {
+		c := client
+		c.Stderr = stderr
+		if err := c.Create(spec); err != nil {
+			return err
+		}
+		if passWaka {
+			wakaErr = c.SetupWakaTime(p.ContainerName)
+		}
+		return nil
 	})
 	if err != nil {
 		// cmux でペインを同時に開くと、別のペインが先に同じ名前で作っていることがある。
 		// そのときは失敗とせず、そのコンテナを使う。
 		if st, layout, ierr := client.Inspect(p.ContainerName); ierr == nil && st != docker.Missing {
 			info(d, "別のペインで作られた %s を使います", p.ContainerName)
-			return false, useExisting(client, p, st, layout)
+			return false, useExisting(u, client, p, st, layout)
 		}
 		return false, fmt.Errorf("コンテナ %s を作成できませんでした: %w", p.ContainerName, err)
 	}
-	if passWaka {
-		if err := client.SetupWakaTime(p.ContainerName); err != nil {
-			info(d, "注意: WakaTime の設定を書けませんでした: %s", err)
+	// wakaErr は Ritual が work の終わりを待ってから戻るので、ここで読んでよい
+	if wakaErr != nil {
+		info(d, "注意: WakaTime の設定を書けませんでした: %s", wakaErr)
+	}
+	if u.Fancy() {
+		lines := []string{"領域 " + u.Bold(ui.Sanitize(filepath.Base(p.Root))) + " は展開されました"}
+		for _, port := range cfg.Ports {
+			lines = append(lines, u.Dim("門  127.0.0.1:"+port.Host+" → "+port.Container))
 		}
+		lines = append(lines, u.Accent("鍵は外界に。コードは領域の中に。"))
+		u.Box(lines...)
+		u.Entering()
 	}
 	return false, nil
 }
 
 // useExisting は既存のコンテナを使えるようにする。古い layout ならエラー、停止中なら起動する。
-func useExisting(client docker.Client, p project.Project, st docker.State, layout string) error {
+// 演出は 1 行だけにし、待ち時間は足さない（停止中なら docker start の間だけスピナーを回す）。
+func useExisting(u *ui.UI, client docker.Client, p project.Project, st docker.State, layout string) error {
 	if layout != docker.LayoutVersion {
 		return fmt.Errorf("%s は古い sigil で作られています。sigil stop してから、もう一度実行してください", p.ContainerName)
 	}
 	if st == docker.Stopped {
-		if err := client.Start(p.ContainerName); err != nil {
+		err := u.Spin("領域を再展開する  "+p.ContainerName, func(stderr io.Writer) error {
+			c := client
+			c.Stderr = stderr
+			return c.Start(p.ContainerName)
+		})
+		if err != nil {
 			return fmt.Errorf("%s を起動できませんでした: %w", p.ContainerName, err)
 		}
 	}
+	u.Enter(filepath.Base(p.Root))
 	return nil
+}
+
+// newUI は、標準エラーが端末か、NO_COLOR などの環境変数から、演出のしかたを決める。
+func newUI(d Deps) *ui.UI {
+	mode := ui.DetectMode(d.StderrIsTerminal(), d.LookupEnv)
+	var cols, rows int
+	if mode != ui.Plain {
+		cols, rows = d.TermSize()
+	}
+	return ui.New(d.Stderr, ui.Options{
+		Mode:  mode,
+		Cols:  cols,
+		Rows:  rows,
+		Greek: lookup(d, ui.GlyphsEnv, "") == "greek",
+		After: d.After,
+	})
 }
 
 // approve は、プロジェクトの .sigil と .env が承認済みかを確かめる。

@@ -109,7 +109,7 @@ func TestDenied(t *testing.T) {
 			t.Errorf("Denied(%q) = false", n)
 		}
 	}
-	for _, n := range []string{"SIGIL", "SIGIL_INNER", "SIGIL_CONTEXT", "SIGIL_PROJECT_DIR", "SIGIL_OP_TMP"} {
+	for _, n := range []string{"SIGIL", "SIGIL_INNER", "SIGIL_CONTEXT", "SIGIL_PROJECT_DIR", "SIGIL_OP_TMP", "SIGIL_PLAIN", "SIGIL_GLYPHS"} {
 		if !Denied(n) {
 			t.Errorf("Denied(%q) = false", n)
 		}

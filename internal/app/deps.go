@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"syscall"
+	"time"
+	"unsafe"
 
 	sigilimage "sigil/image"
 	"sigil/internal/docker"
@@ -30,6 +32,12 @@ type Deps struct {
 	OpenTTY func() (io.ReadCloser, error)
 	// IsTerminal は、標準入力と標準出力がどちらも端末かを返す。
 	IsTerminal func() bool
+	// StderrIsTerminal は、標準エラーが端末かを返す。演出は標準エラーが端末のときだけ行う。
+	StderrIsTerminal func() bool
+	// TermSize は、標準エラーの端末の幅と高さを返す。分からなければ 0, 0。
+	TermSize func() (cols, rows int)
+	// After は time.After。演出の待ちを、テストでは待たずに進めるため。
+	After func(time.Duration) <-chan time.Time
 	// Executable は sigil 自身の絶対パスを返す（op run から起動し直すため）。
 	Executable func() (string, error)
 
@@ -57,6 +65,9 @@ func DefaultDeps() Deps {
 		IsTerminal: func() bool {
 			return isCharDevice(os.Stdin) && isCharDevice(os.Stdout)
 		},
+		StderrIsTerminal: func() bool { return isCharDevice(os.Stderr) },
+		TermSize:         func() (int, int) { return termSize(os.Stderr) },
+		After:            time.After,
 		Executable: func() (string, error) {
 			p, err := os.Executable()
 			if err != nil {
@@ -76,4 +87,15 @@ func DefaultDeps() Deps {
 func isCharDevice(f *os.File) bool {
 	fi, err := f.Stat()
 	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+// termSize は f の端末の幅と高さを返す。外部モジュールや cgo を使わないよう、
+// ioctl(TIOCGWINSZ) を syscall で直接呼ぶ。端末でなければ 0, 0。
+func termSize(f *os.File) (cols, rows int) {
+	var ws struct{ Row, Col, Xpixel, Ypixel uint16 }
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), uintptr(syscall.TIOCGWINSZ), uintptr(unsafe.Pointer(&ws)))
+	if errno != 0 {
+		return 0, 0
+	}
+	return int(ws.Col), int(ws.Row)
 }

@@ -4,7 +4,7 @@
 
 npm / PyPI などのサプライチェーン攻撃や悪意あるリポジトリから、ホストの鍵を守るための CLI です。
 
-- プロジェクトのコードを動かすもの（Neovim の LSP、Claude Code、npm / cargo / go / composer、テスト、開発サーバー）は、**すべてコンテナの中**で動かします。
+- プロジェクトのコードを動かすもの（Neovim の LSP、Claude Code、npm / cargo / go / composer / uv、テスト、開発サーバー）は、**すべてコンテナの中**で動かします。
 - 鍵（1Password、SSH、AWS）と `git commit` / `git push` は**ホストに残します**。
 - コンテナには、そのプロジェクトのフォルダと、明示的に許可したものだけを渡します。
 

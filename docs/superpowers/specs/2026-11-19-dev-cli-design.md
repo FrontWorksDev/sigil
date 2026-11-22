@@ -40,7 +40,7 @@ npm / PyPI などのサプライチェーン攻撃や、悪意あるリポジト
 ## 2. 前提として用意されているもの
 
 ```
-image/Dockerfile      ベースイメージ（Neovim / Claude Code / Node / Go / Rust / PHP）
+image/Dockerfile      ベースイメージ（Neovim / Claude Code / Node / Go / Rust / PHP / Python）
 image/sigil-check    コンテナ内で隔離を点検するスクリプト（イメージに組み込まれる）
 examples/             設定ファイルのひな形
 ```
@@ -270,6 +270,18 @@ docker build --build-arg USER_UID=<os.Getuid()> --build-arg USER_GID=<os.Getgid(
 
 標準出力・標準エラーとも表示する（演出するときは 16 章のとおり）。終わったら一時フォルダを消す（`SIGIL_CONTEXT` を使ったときは何も消さない）。
 
+### イメージに入れるもの
+
+ツールは基本的にビルドの時点の最新版（決定事項を参照）。
+
+- Neovim（公式リリース）、Claude Code（公式のネイティブインストーラー）、Node.js（最新の LTS）、Go、Rust、PHP（公式 `php:cli-trixie` が土台）、Composer、tree-sitter CLI
+- **Python**: uv で最新の安定版を `/opt/uv-python` に入れ、`/usr/local/bin/python3`（と `python`）から指す。pip は入れない（`uv pip` と `python3 -m venv` を使う）。
+- **uv / uvx**: 公式イメージ `ghcr.io/astral-sh/uv` からコピーする。MCP サーバーの多くは `uvx <package>` で起動する。`uvx` のキャッシュは `~/.cache/uv`（`sigil-cache` で永続化済み）。
+- **wakatime-cli**: GitHub のリリースから取り、同じリリースの `checksums_sha256.txt` で照合して `/usr/local/bin/wakatime-cli` に置く。vim-wakatime は PATH の `wakatime-cli` を使い、Python による自動ダウンロードをしなくなる。
+- `~/.local` と `~/.wakatime` は永続化しない（`uv tool install` や `pip install --user` で入れたものは、コンテナを作り直すと消える）。Claude Code の本体はイメージの `~/.local/bin/claude` にあるので、永続化するとイメージの更新が反映されなくなる。
+- Neovim の Python プロバイダ（pynvim）は入れない。
+- `sigil-check` の「ツール」の一覧に、`python3` / `uv` / `wakatime-cli` を含める。
+
 ## 12. 構成（builder の裁量で変えてよいが、テストしやすい分け方を保つこと）
 
 ```
@@ -457,3 +469,7 @@ issue #3。待ち時間のある処理で何が起きているかを見せ、使
 | 2026-11-22 | 注意と案内では、用語に実際の意味を括弧で添えない。承認の画面だけは添える | 括弧で同じことを 2 回言うと冗長になるため（利用者の判断）。承認の画面はセキュリティ上の判断をしてもらう画面なので、読み違えがないよう意味を添え続ける |
 | 2026-11-22 | 作成時の完了の明滅（3 回、約 0.5 秒）の分だけは、`docker run` のあとに待つ | コードレビューで「待ち時間を足さない」との食い違いを指摘された。明滅は issue で決めた演出なので、そのまま残す（利用者の判断） |
 | 2026-11-22 | 描画中の端末の大きさの変更には追従しない | 描画中に端末を狭くすると、行が折り返して描き直しが崩れる。幅を変えなければ起きず、広げる分には崩れないので、今回は対応しない（利用者の判断） |
+| 2026-11-22 | イメージに Python と uv / uvx を入れる。Python は apt ではなく uv で最新の安定版を入れ、pip は入れない | issue #10。Claude Code の MCP サーバー（多くは `uvx` で起動）が動かなかった。apt の Python（trixie は 3.13）は最新ではなく、「ツールは最新」の方針に合わない。システムの Python を root 所有の `/opt` に置き、パッケージは venv や `uvx` で入れる（利用者の判断で最新を選んだ。MCP サーバーごとに合う Python は `uvx` が選ぶので、出たばかりの版でも影響は小さい） |
+| 2026-11-22 | `wakatime-cli` をイメージの `/usr/local/bin` に入れる。`~/.wakatime/` はホストと共有せず、永続化もしない | issue #10。vim-wakatime は初回の起動で `wakatime-cli` を Python でダウンロードしようとして失敗した。PATH に `wakatime-cli` があれば自動更新をしないので、イメージに入れれば Neovim の設定を変えずに済む。`~/.wakatime/` を共有すると、コンテナから書き換えた実行ファイルがホストの WakaTime で動いてしまう（`.git` を読み取り専用にしているのと同じ理由）。オフラインのあいだの記録が `sigil stop` で失われることは、まれなので扱わない |
+| 2026-11-22 | `~/.local` は永続化しない | `~/.local/bin` は PATH の先頭にある。全プロジェクト共通のボリュームにすると、あるプロジェクトのコードが置いたコマンドが、ほかのプロジェクトのコンテナで `git` などを乗っ取れる。また、Claude Code の公式インストーラーは本体を `~/.local/bin/claude` に置くので、永続化するとイメージを作り直しても古い Claude Code がボリューム側に残り続ける。`uvx` のキャッシュは `~/.cache` にあり永続化済みなので、MCP サーバーの起動には困らない（利用者の判断） |
+| 2026-11-22 | Neovim の Python プロバイダ（pynvim）は入れない | 利用者のプラグインで Python を使うのは vim-wakatime だけで、それも `wakatime-cli` を入れれば不要になる。issue #10 の完了の条件のうち `:checkhealth provider` の項目は外す。必要になったら専用の venv に入れて `g:python3_host_prog` で指す |

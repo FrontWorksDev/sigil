@@ -63,7 +63,7 @@ extra="$(env | cut -d= -f1 | grep -vE '^(PATH|HOME|HOSTNAME|TERM|COLORTERM|LANG|
 if [ -n "$extra" ]; then printf '    %s\n' $extra; else echo "    （なし）"; fi
 
 section "ツール" "コンテナ内のコマンドと版"
-for c in nvim node npm go cargo php composer claude tree-sitter rg fd; do
+for c in nvim node npm go cargo php composer python3 uv claude wakatime-cli tree-sitter rg fd; do
   if command -v "$c" >/dev/null 2>&1; then
     # go だけは --version ではなく version サブコマンドでバージョンを出す
     if [ "$c" = go ]; then v="$(go version 2>/dev/null)"; else v="$("$c" --version 2>/dev/null | head -1)"; fi

@@ -79,10 +79,12 @@ RUN (corepack enable || true) \
 # 置き場所は root 所有の /opt にし、dev ユーザーからは書き換えられないようにする
 # （UV_PYTHON_INSTALL_DIR はこの RUN の中だけで使う。ENV に残すと、dev ユーザーの
 #   `uv python install` がこの場所に書こうとして失敗するため）。
-# pip は使わない方針（uv pip / python3 -m venv で足りる）なので、python3-pip は入れない。
+# uv が入れる Python には pip が同梱されているが、EXTERNALLY-MANAGED の印があるので、
+# venv の外での `pip install`（--user を含む）は拒否される。パッケージは venv / uvx で入れる。
+# --no-bin: root の ~/.local/bin に python3.x のリンクを作らせない（入口は下の /usr/local/bin だけにする）。
 COPY --from=uv /uv /uvx /usr/local/bin/
 RUN export UV_PYTHON_INSTALL_DIR=/opt/uv-python UV_NO_CACHE=1 \
- && uv python install \
+ && uv python install --no-bin \
  && py="$(uv python find --managed-python)" \
  && ln -s "$py" /usr/local/bin/python3 \
  && ln -s python3 /usr/local/bin/python \

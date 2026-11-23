@@ -36,6 +36,7 @@ type hookFunc func(stdin string, extra []string, stdout, stderr io.Writer) error
 type cmdFake struct {
 	calls []cmdCall
 	hooks map[string]hookFunc
+	delta func(stdin string, stdout io.Writer) error // delta の偽物（nil なら呼ばれたらエラー）
 }
 
 func (f *cmdFake) Run(name string, args []string, o gitcommit.RunOpts) error {
@@ -50,6 +51,12 @@ func (f *cmdFake) Run(name string, args []string, o gitcommit.RunOpts) error {
 		c.stdin = string(b)
 	}
 	f.calls = append(f.calls, c)
+	if path.Base(name) == "delta" {
+		if f.delta == nil {
+			return errors.New("delta の応答が決まっていない")
+		}
+		return f.delta(c.stdin, o.Stdout)
+	}
 	// exec -i -w <path> <name> sh -c <script> sh <mode> <hook> <extra...>
 	if name != "docker" || len(args) < 11 || args[0] != "exec" {
 		return fmt.Errorf("想定外の呼び出し: %s", c)
@@ -348,6 +355,112 @@ func TestCommitDiffThenYes(t *testing.T) {
 	}
 	if got := c.git("show", "HEAD:a.txt"); got != "one\nx\x1b[31mred\n" {
 		t.Errorf("HEAD:a.txt = %q", got)
+	}
+}
+
+// withDelta は、ホストに delta がある状態にする（LookPath が絶対パスを返す）。
+func (c *commitEnv) withDelta() {
+	lp := c.d.LookPath
+	c.d.LookPath = func(name string) (string, error) {
+		if name == "delta" {
+			return "/opt/test/bin/delta", nil
+		}
+		return lp(name)
+	}
+}
+
+func TestCommitDiffUsesDelta(t *testing.T) {
+	c := newCommitEnv(t)
+	c.fancy()
+	c.withDelta()
+	c.cmd.delta = func(stdin string, stdout io.Writer) error {
+		io.WriteString(stdout, "\x1b[32mDELTA OUTPUT\x1b[0m\n")
+		return nil
+	}
+	c.write("a.txt", "one\nx\x1b]8;;file:///evil.command\x07red\n")
+	c.write(gitcommit.MessageFile, "fix: a\n")
+	c.tty = "d\ny\n"
+	if code := c.run("commit"); code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, c.stderr.String())
+	}
+	calls := c.cmd.find("/opt/test/bin/delta", "")
+	if len(calls) != 1 {
+		t.Fatalf("delta の呼び出し = %d", len(calls))
+	}
+	if got, want := strings.Join(calls[0].args, " "), "--no-gitconfig --paging=never --line-numbers"; got != want {
+		t.Errorf("delta の引数 = %q, want %q", got, want)
+	}
+	if strings.Contains(calls[0].stdin, "\x1b") || strings.Contains(calls[0].stdin, "\x07") {
+		t.Errorf("delta に生の制御文字を渡した: %q", calls[0].stdin)
+	}
+	if !strings.Contains(calls[0].stdin, "x^[]8;;file:///evil.command^Gred") {
+		t.Errorf("delta への入力 = %q", calls[0].stdin)
+	}
+	if len(c.pages) != 1 || c.pages[0] != "\x1b[32mDELTA OUTPUT\x1b[0m\n" {
+		t.Errorf("ページャーへ渡したもの = %q", c.pages)
+	}
+}
+
+func TestCommitDiffWithoutDeltaUsesBuiltin(t *testing.T) {
+	c := newCommitEnv(t)
+	c.fancy() // delta はない（LookPath が見つけない）
+	c.write("a.txt", "one\nx\x1b[31mred\n")
+	c.write(gitcommit.MessageFile, "fix: a\n")
+	c.tty = "d\ny\n"
+	if code := c.run("commit"); code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, c.stderr.String())
+	}
+	if len(c.pages) != 1 || !strings.Contains(c.pages[0], "x^[[31mred") || !strings.Contains(c.pages[0], "\x1b[38;5;") {
+		t.Errorf("組み込みの表示になっていない: %q", c.pages)
+	}
+}
+
+func TestCommitDiffDeltaFailsFallsBack(t *testing.T) {
+	c := newCommitEnv(t)
+	c.fancy()
+	c.withDelta()
+	c.cmd.delta = func(string, io.Writer) error { return errors.New("exit status 2\x1b[31m") }
+	c.write("a.txt", "one\nx\x1b[31mred\n")
+	c.write(gitcommit.MessageFile, "fix: a\n")
+	c.tty = "d\ny\n"
+	if code := c.run("commit"); code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, c.stderr.String())
+	}
+	if len(c.pages) != 1 || !strings.Contains(c.pages[0], "x^[[31mred") {
+		t.Errorf("組み込みの表示に戻っていない: %q", c.pages)
+	}
+	se := c.stderr.String()
+	if !strings.Contains(se, "sigil: 注意: delta") || !strings.Contains(se, "exit status 2^[[31m") {
+		t.Errorf("注意の行がない: %q", se)
+	}
+}
+
+func TestCommitDiffPlainModesSkipDelta(t *testing.T) {
+	for _, mode := range []string{"plain", "mono"} {
+		t.Run(mode, func(t *testing.T) {
+			c := newCommitEnv(t)
+			c.withDelta() // noCmd 相当: delta を呼んだら cmdFake.delta が nil でエラーになる
+			switch mode {
+			case "plain":
+				c.vars["SIGIL_PLAIN"] = "1"
+				c.fancy()
+			case "mono":
+				c.vars["NO_COLOR"] = "1"
+				c.fancy()
+			}
+			c.write("a.txt", "one\nx\n")
+			c.write(gitcommit.MessageFile, "fix: a\n")
+			c.tty = "d\ny\n"
+			if code := c.run("commit"); code != 0 {
+				t.Fatalf("code = %d, stderr = %s", code, c.stderr.String())
+			}
+			if n := len(c.cmd.find("/opt/test/bin/delta", "")); n != 0 {
+				t.Errorf("delta を %d 回呼んだ", n)
+			}
+			if len(c.pages) != 1 || strings.Contains(c.pages[0], "\x1b") {
+				t.Errorf("組み込みの表示になっていない: %q", c.pages)
+			}
+		})
 	}
 }
 

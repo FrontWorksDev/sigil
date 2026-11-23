@@ -2,6 +2,7 @@ package app
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -169,7 +170,7 @@ func confirmCommit(d Deps, u *ui.UI, g gitcommit.Git, s gitcommit.Snapshot, v ui
 			if err != nil {
 				return lore("刻印を取りやめました", err)
 			}
-			if err := d.Pager(u.DiffPage(diff)); err != nil {
+			if err := d.Pager(diffContent(d, u, diff)); err != nil {
 				info(d, "注意: 差分を表示できませんでした（%s）", ui.EscapeLine(err.Error()))
 			}
 			continue
@@ -179,6 +180,41 @@ func confirmCommit(d Deps, u *ui.UI, g gitcommit.Git, s gitcommit.Snapshot, v ui
 		}
 		return nil
 	}
+}
+
+// diffContent は、ページャーに渡す差分の文字列を作る。ホストに delta があり、色を付ける
+// モード（Plain / Mono でない）なら delta で整形し、なければ、delta が失敗したら、組み込みの
+// ui.DiffPage に戻す。
+//
+// 差分はコンテナが書いた内容（信頼できない）なので、次の 3 つで守る。
+//  1. delta に渡す前に、行ごとに ui.Escape をかける。delta は生の制御文字を見ず、
+//     出力に残るエスケープは delta 自身の SGR だけになる（less -R に渡してよい）。
+//  2. --no-gitconfig で、利用者の git config の [delta] を読ませない。hyperlinks が有効だと、
+//     コンテナが決めたファイル名が OSC 8 のリンクになり、macOS で .command などを
+//     クリックすると実行されうるため。hyperlinks は有効にしない。
+//  3. 標準入力は tty を引き継がず、sigil が渡す文字列だけ。環境変数も足さない。
+//
+// --paging=never は、ページャーを sigil が起動するため（delta が less を起動しないように）。
+// --line-numbers は読みやすさのため（利用者の選択）。ほかの引数は足さない。
+func diffContent(d Deps, u *ui.UI, diff string) string {
+	if !u.Colored() {
+		return u.DiffPage(diff)
+	}
+	deltaPath, err := d.LookPath("delta")
+	if err != nil {
+		return u.DiffPage(diff)
+	}
+	var out, errOut bytes.Buffer
+	err = d.Cmd.Run(deltaPath, []string{"--no-gitconfig", "--paging=never", "--line-numbers"}, gitcommit.RunOpts{
+		Stdin:  strings.NewReader(ui.Escape(diff)),
+		Stdout: &out,
+		Stderr: &errOut,
+	})
+	if err != nil {
+		info(d, "注意: delta で差分を整形できませんでした（%s）。組み込みの表示を使います", ui.EscapeLine(err.Error()))
+		return u.DiffPage(diff)
+	}
+	return out.String()
 }
 
 // pushFlow は、upstream があれば push 先を見せて聞き、承認されたら pre-push を経て push する。

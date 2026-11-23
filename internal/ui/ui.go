@@ -132,6 +132,9 @@ func raiseDefault(s os.Signal) {
 // Fancy は演出をするか（Plain でないか）を返す。
 func (u *UI) Fancy() bool { return u.mode != Plain }
 
+// Colored は色を付けるか（Color モードか）を返す。Plain と Mono（NO_COLOR）は false。
+func (u *UI) Colored() bool { return u.mode == Color }
+
 // Restore は端末を元に戻す。docker exec / op run に置き換える直前に必ず呼ぶこと。
 // Plain のときは何も書かない（素のテキストにエスケープを混ぜないため）。
 func (u *UI) Restore() {

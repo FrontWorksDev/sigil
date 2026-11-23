@@ -113,6 +113,11 @@ go.work.sum
 # env file（.env という名前のファイルは、どこにあってもコミットしない。ひな形は examples/env.example）
 .env
 
+# sigil の設定（このリポジトリだけの扱い）。.sigil は名前とポートだけで秘密を含まないので、
+# 一般のプロジェクトではコミットしてかまわない。このリポジトリでは、gh 用の GH_TOKEN など
+# 各自の使い方の設定になるので、公開リポジトリに入れないよう無視する。
+.sigil
+
 # Editor/IDE
 # .idea/
 # .vscode/

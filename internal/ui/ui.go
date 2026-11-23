@@ -203,7 +203,8 @@ func (u *UI) Banner() {
 }
 
 // Box は lines を枠で囲んで出す。lines は Bold などで飾ってよいが、
-// 外から来た文字列は Sanitize してから渡すこと。
+// 外から来た文字列は Sanitize（1 行にまとめるものは EscapeLine、複数行は Escape）してから渡すこと。
+// 幅を超える行は切り詰める。切り詰めると困る内容（判断の画面）は、呼ぶ前に wrapItem で折り返すこと。
 func (u *UI) Box(lines ...string) { u.boxColor(violet, lines...) }
 
 // boxColor は、枠の色を指定できる Box（⚠ の確認を赤い枠で出すため）。

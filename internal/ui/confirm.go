@@ -110,97 +110,178 @@ func (u *UI) stat(f FileRow, largest int) string {
 	return s
 }
 
+// ---- 折り返し ----
+//
+// 判断の画面では、内容を切り詰めない。右端で切ると、メッセージ行の末尾、パスの拡張子（.env）、
+// 改名の新しい側、リンク先、push 先のホストなど、肝心の部分が見えなくなりうるため。
+// 幅を超える行は、表示幅（全角は 2）で折り返し、続きの行は字下げして 1 つの項目に見せる。
+
+// wrapText は、text を表示幅で折り返す。1 行目は w1、2 行目以降は w2 まで。
+// 空白も含めて 1 文字も落とさない（単語の途中でも折る）。
+func wrapText(text string, w1, w2 int) []string {
+	w1, w2 = max(w1, 2), max(w2, 2)
+	var out []string
+	var b strings.Builder
+	n, limit := 0, w1
+	for _, r := range text {
+		rw := runeWidth(r)
+		if n+rw > limit && n > 0 {
+			out = append(out, b.String())
+			b.Reset()
+			n, limit = 0, w2
+		}
+		b.WriteRune(r)
+		n += rw
+	}
+	return append(out, b.String())
+}
+
+// wrapItem は、1 つの項目を幅 w に折り返した行にする。first は 1 行目の頭（印など）、cont は続きの行の頭。
+// style は文字の部分だけに行ごとにかける（色は行ごとに閉じ、折り返しで色が混ざらない）。
+func wrapItem(first, cont, text string, w int, style func(string) string) []string {
+	if style == nil {
+		style = func(s string) string { return s }
+	}
+	parts := wrapText(text, w-Width(first), w-Width(cont))
+	out := make([]string, len(parts))
+	for i, p := range parts {
+		head := cont
+		if i == 0 {
+			head = first
+		}
+		out[i] = head + style(p)
+	}
+	return out
+}
+
+func spaces(n int) string { return strings.Repeat(" ", max(n, 0)) }
+
+// kv は「ラベル  値」の項目。値が長ければ、ラベルの幅だけ字下げして続ける。
+func kv(label, text string, w int) []string {
+	return wrapItem(label, spaces(Width(label)), text, w, nil)
+}
+
+// bodyW は、section の本文に使える幅（emit と枠の余白に合わせる）。
+func (u *UI) bodyW(boxed bool) int {
+	switch {
+	case u.mode == Plain:
+		return u.avail(8)
+	case boxed:
+		return u.avail(7)
+	}
+	return u.avail(5)
+}
+
 // emit は、画面の 1 行を出す。Plain は字下げだけ、それ以外は u.line と同じ 2 桁の字下げ。
-// どちらも、端末の右端を越えないよう切り詰める（折り返すと枠や行が崩れる）。
+// 呼ぶ側が折り返し済みなので、切り詰めは見出しなど固定の文言が溢れたときの保険。
 func (u *UI) emit(indent int, s string) {
-	io.WriteString(u.w, strings.Repeat(" ", indent)+u.fitStyled(s, u.avail(indent+1))+"\n")
+	io.WriteString(u.w, spaces(indent)+u.fitStyled(s, u.avail(indent+1))+"\n")
 }
 
 // section は見出しと本文を出す。Plain と Color / Mono のどちらでも同じ情報を出す。
+// body は、使える幅を受け取って、折り返し済みの行を返す。
 // boxColor が 0 でなければ、枠で囲む（Plain では枠なし）。
-func (u *UI) section(heading string, lines []string, boxColor int) {
+func (u *UI) section(mark string, markColor int, title string, body func(w int) []string, boxColor int) {
+	// 見出しも、狭い端末で切れないよう折り返す
+	hw := u.bodyW(false) + 2
+	if u.mode != Plain {
+		hw = u.avail(3)
+	}
+	headLines := wrapItem(u.fg(markColor, mark)+" ", "  ", title, hw, u.bold)
+	lines := body(u.bodyW(boxColor != 0))
 	if u.mode == Plain {
-		u.emit(5, heading)
+		for _, l := range headLines {
+			u.emit(5, l)
+		}
 		for _, l := range lines {
 			u.emit(7, l)
 		}
 		return
 	}
 	if boxColor != 0 {
-		u.boxColor(boxColor, append([]string{heading}, lines...)...)
+		u.boxColor(boxColor, append(wrapItem(u.fg(markColor, mark)+" ", "  ", title, u.avail(7), u.bold), lines...)...)
 		return
 	}
-	u.emit(2, heading)
+	for _, l := range headLines {
+		u.emit(2, l)
+	}
 	for _, l := range lines {
 		u.emit(4, l)
 	}
 }
 
-// fileRows は、刻むもの（ファイルの一覧）の本文の行を作る。
-func (u *UI) fileRows(files []FileRow) []string {
+// fileRows は、刻むもの（ファイルの一覧）の本文の行を作る。パスは詰めずに折り返す。
+// 改名は、旧と新を別の行にする（新しい側が押し出されて見えなくならないように）。
+func (u *UI) fileRows(files []FileRow, w int) []string {
 	largest, wordW := 0, 0
 	for _, f := range files {
 		largest = max(largest, f.Added+f.Deleted)
-		_, w, _ := statusStyle(f.Status)
-		wordW = max(wordW, Width(w))
+		_, word, _ := statusStyle(f.Status)
+		wordW = max(wordW, Width(word))
 	}
-	// 本文は 4 桁（Plain は 7 桁）字下げされる。切り詰めの余裕は、狭いほうの Plain に合わせて 8 桁引く
-	rowW := u.avail(8)
 	prefixW := 2 + wordW + 1
 	var out []string
 	for _, f := range files {
 		mark, word, color := statusStyle(f.Status)
-		path := EscapeLine(f.Path)
+		prefix := u.fg(color, mark+" "+word) + spaces(wordW-Width(word)) + " "
+		cont := spaces(prefixW + 2)
+		var lines []string
 		if f.OldPath != "" {
-			path = EscapeLine(f.OldPath) + " → " + path
+			lines = wrapItem(prefix, cont, EscapeLine(f.OldPath), w, nil)
+			lines = append(lines, wrapItem(spaces(prefixW)+"→ ", cont, EscapeLine(f.Path), w, nil)...)
+		} else {
+			lines = wrapItem(prefix, cont, EscapeLine(f.Path), w, nil)
 		}
-		prefix := u.fg(color, mark+" "+word) + strings.Repeat(" ", wordW-Width(word)) + " "
 		stat := u.stat(f, largest)
-		pathW := rowW - prefixW - 2 - Width(stat)
-		switch {
-		case Width(path) <= pathW || pathW >= 20:
-			out = append(out, prefix+u.fit(path, pathW)+"  "+stat)
-		default:
-			// 1 行に収まらないときは、増減を次の行に回す
-			out = append(out, prefix+u.fit(path, rowW-prefixW), strings.Repeat(" ", prefixW)+stat)
+		if last := lines[len(lines)-1]; Width(last)+2+Width(stat) <= w {
+			lines[len(lines)-1] = last + "  " + stat
+		} else {
+			// 増減だけの行は、幅に収まる範囲で字下げする（棒は最大 10 マスなので、切らずに済む）
+			lines = append(lines, spaces(min(prefixW+2, w-Width(stat)))+stat)
 		}
+		out = append(out, lines...)
 	}
 	return out
 }
 
-// messageRows は、銘（コミットメッセージ）の本文の行を作る。
-func (u *UI) messageRows(msg string) []string {
+// messageRows は、銘（コミットメッセージ）の本文の行を作る。長い行は折り返す。
+func (u *UI) messageRows(msg string, w int) []string {
+	trimmed := strings.Trim(msg, "\n")
+	// 件名の長さは、Escape する前（実際にコミットされる文字）で数える
+	n := utf8.RuneCountInString(strings.SplitN(trimmed, "\n", 2)[0])
 	// タブは幅が決まらず枠を崩すので、空白にする
-	msg = strings.ReplaceAll(Escape(msg), "\t", "    ")
-	lines := strings.Split(strings.Trim(msg, "\n"), "\n")
-	out := []string{u.bold(lines[0])}
-	if n := utf8.RuneCountInString(lines[0]); n > subjectLimit {
-		out = append(out, u.fg(yellow, fmt.Sprintf("⚠ 件名が 72 文字を超えています（%d 文字）", n)))
+	lines := strings.Split(strings.ReplaceAll(Escape(trimmed), "\t", "    "), "\n")
+	out := wrapItem("", "  ", lines[0], w, u.bold)
+	if n > subjectLimit {
+		out = append(out, wrapItem("", "  ", fmt.Sprintf("⚠ 件名が 72 文字を超えています（%d 文字）", n), w, func(s string) string { return u.fg(yellow, s) })...)
 	}
 	for _, l := range lines[1:] {
 		if l == "" {
 			out = append(out, "")
-		} else {
-			out = append(out, "  "+l)
+			continue
 		}
+		out = append(out, wrapItem("  ", "    ", l, w, nil)...)
 	}
 	return out
 }
 
 // CommitScreen は、コミットの確認の画面（問いの行は除く）を出す。
 // 色や枠で飾るが、動きは付けない（待っているあいだは静止させる）。
+// 内容は切り詰めず、端末の幅で折り返す。
 func (u *UI) CommitScreen(v CommitView) {
 	// 1. 見出し
-	head := []string{
-		"ブランチ  " + EscapeLine(v.Branch),
-		"HEAD      " + EscapeLine(v.HeadShort) + " " + EscapeLine(v.HeadSubject),
+	hw := u.avail(7)
+	if u.mode == Plain {
+		hw = u.avail(6)
 	}
+	head := kv("ブランチ  ", EscapeLine(v.Branch), hw)
+	head = append(head, kv("HEAD      ", EscapeLine(v.HeadShort)+" "+EscapeLine(v.HeadSubject), hw)...)
 	if len(v.Pathspec) > 0 {
 		var ps []string
 		for _, p := range v.Pathspec {
 			ps = append(ps, EscapeLine(p))
 		}
-		head = append(head, "対象      "+strings.Join(ps, " "))
+		head = append(head, kv("対象      ", strings.Join(ps, " "), hw)...)
 	}
 	title := "⟡ 刻印の儀 ── コミットの確認"
 	if u.mode == Plain {
@@ -213,31 +294,37 @@ func (u *UI) CommitScreen(v CommitView) {
 	}
 
 	// 2. 刻むもの
-	u.section(u.fg(green, "◆")+" "+u.bold("刻むもの（コミットに含まれるファイル）"), u.fileRows(v.Files), 0)
+	u.section("◆", green, "刻むもの（コミットに含まれるファイル）",
+		func(w int) []string { return u.fileRows(v.Files, w) }, 0)
 
 	// 3. 確かめてほしいもの
 	if len(v.Warnings) > 0 {
-		var lines []string
-		for _, w := range v.Warnings {
-			lines = append(lines, u.fg(yellow, "▸ ")+EscapeLine(w.Path), u.dim("    "+EscapeLine(w.Reason)))
-		}
-		u.section(u.fg(red, "⚠ "+u.bold("確かめてほしいもの")), lines, red)
+		u.section("⚠", red, "確かめてほしいもの", func(w int) []string {
+			var lines []string
+			for _, wr := range v.Warnings {
+				lines = append(lines, wrapItem(u.fg(yellow, "▸ "), "  ", EscapeLine(wr.Path), w, nil)...)
+				lines = append(lines, wrapItem("    ", "    ", EscapeLine(wr.Reason), w, u.dim)...)
+			}
+			return lines
+		}, red)
 	}
 
 	// 4. 銘
-	u.section(u.fg(purple, "◆")+" "+u.bold("銘（コミットメッセージ）"), u.messageRows(v.Message), 0)
+	u.section("◆", purple, "銘（コミットメッセージ）",
+		func(w int) []string { return u.messageRows(v.Message, w) }, 0)
 
 	// 5. 試練
-	var hooks []string
-	for _, h := range v.Hooks {
-		if h.OK {
-			hooks = append(hooks, u.fg(green, "✔ ")+EscapeLine(h.Name))
-		} else {
-			hooks = append(hooks, u.fg(red, "✗ ")+EscapeLine(h.Name))
+	u.section("◆", cyan, "試練（フック）", func(w int) []string {
+		var hooks []string
+		for _, h := range v.Hooks {
+			mark := u.fg(green, "✔ ")
+			if !h.OK {
+				mark = u.fg(red, "✗ ")
+			}
+			hooks = append(hooks, wrapItem(mark, "  ", EscapeLine(h.Name), w, nil)...)
 		}
-	}
-	hooks = append(hooks, u.dim("ホストでは hooks を実行していません"))
-	u.section(u.fg(cyan, "◆")+" "+u.bold("試練（フック）"), hooks, 0)
+		return append(hooks, wrapItem("", "", "ホストでは hooks を実行していません", w, u.dim)...)
+	}, 0)
 	io.WriteString(u.w, "\n")
 }
 
@@ -255,12 +342,16 @@ type PushView struct {
 // PushPrompt は、push 先を見せて問いの行を出す（問いの行に改行は付けない）。
 // push 先の名前や URL は、制御文字を処理してから出す。
 func (u *UI) PushPrompt(v PushView) {
-	lines := []string{
-		"リモート      " + EscapeLine(v.Remote),
-		"URL           " + EscapeLine(v.URL),
-		"ブランチ      " + EscapeLine(v.Branch),
-		fmt.Sprintf("送る commit  %d 件", v.Ahead),
+	// push 先は、末尾（ホストやリポジトリ名）が肝心なので、切り詰めずに折り返す
+	w := u.avail(7)
+	if u.mode == Plain {
+		w = u.avail(6)
 	}
+	var lines []string
+	lines = append(lines, kv("リモート      ", EscapeLine(v.Remote), w)...)
+	lines = append(lines, kv("URL           ", EscapeLine(v.URL), w)...)
+	lines = append(lines, kv("ブランチ      ", EscapeLine(v.Branch), w)...)
+	lines = append(lines, kv("送る commit  ", fmt.Sprintf("%d 件", v.Ahead), w)...)
 	if u.mode == Plain {
 		io.WriteString(u.w, "sigil: ⟡ 外界へ解き放つ ── push 先の確認\n")
 		for _, l := range lines {
@@ -276,9 +367,13 @@ func (u *UI) PushPrompt(v PushView) {
 // 明滅させてから結果の枠を出す。lines には外から来た文字列（件名など）が入るので Escape する。
 func (u *UI) Sealed(title string, lines ...string) {
 	title = EscapeLine(title)
-	esc := make([]string, len(lines))
-	for i, l := range lines {
-		esc[i] = EscapeLine(l)
+	w := u.avail(7)
+	if u.mode == Plain {
+		w = u.avail(6)
+	}
+	var esc []string
+	for _, l := range lines {
+		esc = append(esc, wrapItem("", "  ", EscapeLine(l), w, nil)...)
 	}
 	if u.mode == Plain {
 		io.WriteString(u.w, "sigil: ✔ "+title+"\n")
@@ -295,5 +390,5 @@ func (u *UI) Sealed(title string, lines ...string) {
 	}
 	// 作業は済んでいる。魔法陣は、完了の明滅を見せるためだけに描く
 	u.Ritual(title, "", stages, func(io.Writer) error { return nil })
-	u.Box(append([]string{u.fg(green, "✔") + " " + u.bold(title)}, esc...)...)
+	u.Box(append(wrapItem(u.fg(green, "✔")+" ", "  ", title, w, u.bold), esc...)...)
 }

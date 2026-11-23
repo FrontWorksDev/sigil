@@ -84,7 +84,14 @@ func (u *UI) contractBox(v ContractView, files string) {
 			if ref == "" {
 				ref = directValue
 			}
-			rows = append(rows, fmt.Sprintf("%-24s %s", r[0], ref))
+			// 名前と参照先が 1 行に収まらないときは、参照先を次の行に回す（切らない）
+			// 区切りの "\n" と紛れないよう、先に EscapeLine をかける
+			name, ref := EscapeLine(r[0]), EscapeLine(ref)
+			row := fmt.Sprintf("%-24s %s", name, ref)
+			if u.cols > 0 && Width(row) > u.avail(7)-6 {
+				row = name + "\n" + ref
+			}
+			rows = append(rows, row)
 		}
 		groups = append(groups, group{"✦", purple, "禁書庫", ".env で、1Password から値を読み込む名前と参照先", rows})
 	}
@@ -94,21 +101,31 @@ func (u *UI) contractBox(v ContractView, files string) {
 		termW = max(termW, Width(g.term))
 	}
 
-	lines := []string{
-		u.fg(purple, "⟡") + " " + u.bold("契約の確認"),
-		u.dim(EscapeLine(files) + " の内容が新しいか、前回の承認から変わっています。"),
-		"",
-		"このプロジェクトの領域（コンテナ）に、次のものを渡します:",
-	}
+	// 承認の画面なので、内容は切り詰めず、枠の幅で折り返す（参照の末尾の item / field が見えなくなると困る）
+	w := u.avail(7)
+	same := func(s string) string { return s }
+	lines := wrapItem(u.fg(purple, "⟡")+" ", "  ", "契約の確認", w, u.bold)
+	lines = append(lines, wrapItem("", "", EscapeLine(files)+" の内容が新しいか、前回の承認から変わっています。", w, u.dim)...)
+	lines = append(lines, "")
+	lines = append(lines, wrapItem("", "", "このプロジェクトの領域（コンテナ）に、次のものを渡します:", w, same)...)
 	if len(groups) == 0 {
-		lines = append(lines, "  "+u.dim("（なし）"))
+		lines = append(lines, wrapItem("  ", "  ", "（なし）", w, u.dim)...)
 	}
 	for _, g := range groups {
-		lines = append(lines, "  "+u.fg(g.color, g.mark)+" "+u.bold(g.term)+strings.Repeat(" ", termW-Width(g.term))+"  "+u.dim(g.means))
+		head := "  " + u.fg(g.color, g.mark) + " " + u.bold(g.term) + spaces(termW-Width(g.term)) + "  "
+		lines = append(lines, wrapItem(head, spaces(Width(head)+2), g.means, w, u.dim)...)
 		for _, r := range g.rows {
-			lines = append(lines, "      "+EscapeLine(r))
+			// 参照を次の行に回した項目（"\n" 入り）は、2 行目を深く字下げする
+			for k, part := range strings.Split(r, "\n") {
+				first := "      "
+				if k > 0 {
+					first = "        "
+				}
+				lines = append(lines, wrapItem(first, "        ", EscapeLine(part), w, same)...)
+			}
 		}
 	}
-	lines = append(lines, "", u.dim("このほか、全体設定（~/.config/sigil/config）の分も渡されます。"))
+	lines = append(lines, "")
+	lines = append(lines, wrapItem("", "", "このほか、全体設定（~/.config/sigil/config）の分も渡されます。", w, u.dim)...)
 	u.Box(lines...)
 }

@@ -86,21 +86,73 @@ func TestCommitScreenColor(t *testing.T) {
 	}
 }
 
+// squash は、SGR・枠・空白を取り除いてつなげる（折り返しで字下げや枠が入っても、内容が全部あるかを調べるため）。
+func squash(out string) string {
+	var b strings.Builder
+	for _, r := range stripSGR(out) {
+		if r == ' ' || r == '\n' || r == '│' {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+func checkWidth(t *testing.T, mode Mode, out string, cols int) {
+	t.Helper()
+	for _, l := range strings.Split(out, "\n") {
+		if Width(l) > cols {
+			t.Errorf("mode %d: 幅 %d > %d: %q", mode, Width(l), cols, l)
+		}
+	}
+}
+
 func TestCommitScreenNarrow(t *testing.T) {
+	digits := strings.Repeat("0123456789", 12)                            // 120 桁の本文
+	longPath := "dir/" + strings.Repeat("abcdefghij", 10) + "/secret.env" // 100 文字超のパス
+	newPath := "new/" + strings.Repeat("klmnopqrst", 6) + "/renamed-target.go"
+	link := "シンボリックリンク → " + strings.Repeat("target/", 15) + "end.txt"
+	url := "ssh://git@example.com:2222/" + strings.Repeat("org/", 10) + "repo-name.git"
 	for _, mode := range []Mode{Plain, Mono, Color} {
 		u, buf := newTest(mode, 40, 40)
 		v := sampleView()
-		v.Files = append(v.Files, FileRow{Status: 'M', Path: "very/long/directory/name/that/does/not/fit/file.go", Added: 100, Deleted: 20})
-		v.Message = "とても長い件名とても長い件名とても長い件名とても長い件名\n\n" + strings.Repeat("長い本文", 30)
+		v.Files = append(v.Files,
+			FileRow{Status: 'M', Path: longPath, Added: 100, Deleted: 20},
+			FileRow{Status: 'R', OldPath: "old/" + strings.Repeat("uvwxyz", 8) + ".go", Path: newPath})
+		v.Warnings = []WarnRow{{Path: "l/ink", Reason: link}}
+		v.Message = "とても長い件名とても長い件名とても長い件名とても長い件名\n\n" + digits + "\n" + strings.Repeat(" ", 30) + "Signed-off-by: x"
 		u.CommitScreen(v)
-		for _, l := range strings.Split(buf.String(), "\n") {
-			if Width(l) > 40 {
-				t.Errorf("mode %d: 幅 %d > 40: %q", mode, Width(l), l)
+		out := buf.String()
+		checkWidth(t, mode, out, 40)
+		sq := squash(out)
+		for _, want := range []string{digits, longPath, newPath, link, "とても長い件名とても長い件名とても長い件名とても長い件名", "Signed-off-by:x"} {
+			if !strings.Contains(sq, squash(want)) {
+				t.Errorf("mode %d: %q が欠けている:\n%s", mode, want, out)
 			}
 		}
-		if !strings.Contains(buf.String(), "…") {
-			t.Errorf("mode %d: … がない", mode)
+		if strings.Contains(out, "…") {
+			t.Errorf("mode %d: 判断の画面で切り詰めている\n%s", mode, out)
 		}
+
+		u, buf = newTest(mode, 40, 40)
+		u.PushPrompt(PushView{Remote: "origin", URL: url, Branch: "feature/" + digits, Ahead: 3})
+		checkWidth(t, mode, strings.TrimSuffix(buf.String(), "sigil: 外界へ解き放つ（push する）なら y を入力してください [y/N] "), 40)
+		if sq := squash(buf.String()); !strings.Contains(sq, squash(url)) || !strings.Contains(sq, digits) {
+			t.Errorf("mode %d: push 先が欠けている:\n%s", mode, buf.String())
+		}
+	}
+}
+
+func TestContractScreenNarrow(t *testing.T) {
+	ref := "op://" + strings.Repeat("vault", 6) + "/" + strings.Repeat("item", 6) + "/field-name"
+	for _, m := range []Mode{Color, Mono} {
+		u, buf := newTest(m, 60, 40)
+		u.ContractScreen(ContractView{Files: []string{".sigil", ".env"}, Envs: []string{"FOO"}, Refs: [][2]string{{"API_KEY", ref}}})
+		out := buf.String()
+		if !strings.Contains(squash(out), ref) {
+			t.Errorf("mode %d: 参照が欠けている:\n%s", m, out)
+		}
+		checkWidth(t, m, strings.TrimSuffix(out, "sigil: この契約を結ぶ（この設定で承認する）なら y を入力してください [y/N] "), 60)
 	}
 }
 
@@ -108,6 +160,7 @@ func TestCommitScreenLongSubject(t *testing.T) {
 	u, buf := newTest(Plain, 0, 0)
 	v := sampleView()
 	v.Message = strings.Repeat("あ", 73)
+	v.Files = nil
 	u.CommitScreen(v)
 	if !strings.Contains(buf.String(), "72 文字を超えて") {
 		t.Errorf("注意がない:\n%s", buf.String())

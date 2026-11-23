@@ -92,6 +92,41 @@ port 8080:80         # 127.0.0.1:8080 -> コンテナ 80
 - 設定はコンテナを**作るとき**にだけ使われます。変えたら `sigil stop` してから `sigil` を実行してください。
 - ひな形は `examples/` にあります。`examples/env.example` は、プロジェクト直下に `.env` という名前でコピーして使います（`.env` はコミットされないように `.gitignore` で除外しています）。Neovim（LazyVim）をコンテナで使うための設定は `examples/nvim-sigil.lua` を見てください。
 
+### GitHub（gh）を使う
+
+コンテナには `gh` が入っています。issue や PR を扱うには、**プロジェクトごとに作った fine-grained PAT** を `GH_TOKEN` として渡します。
+
+コンテナに渡したトークンは、Claude Code だけでなく、プロジェクトのコード（npm のスクリプト、依存パッケージ、テストなど）からも読めます。安全さは、トークンに許す権限で決まります。
+
+1. GitHub の Settings → Developer settings → Personal access tokens → **Fine-grained tokens** で作ります（classic PAT はリポジトリを絞れないので使いません）。
+   - **Repository access**: Only select repositories で、そのプロジェクトのリポジトリ 1 つだけ
+   - **Permissions**:
+     - Issues: Read and write
+     - Pull requests: Read and write
+     - Contents: **Read-only**（push もマージもできないように。マージには Contents の書き込みが要ります）
+     - Metadata: Read-only（自動で付きます）
+   - **Expiration**: 30〜90 日
+2. トークンを 1Password に入れます。
+3. **そのプロジェクトの** `.sigil` と `.env` にだけ書きます。全体設定（`~/.config/sigil/config`）には書きません。書くと、全プロジェクトのコンテナに渡ってしまいます。
+
+   ```
+   # .sigil
+   env GH_TOKEN
+   ```
+   ```
+   # .env
+   GH_TOKEN=op://Dev/myapp-github/token
+   ```
+4. `sigil stop` してから `sigil` を実行し、確認の画面で `GH_TOKEN` を承認します。
+5. `sigil check` で確かめます。「外界の鍵」の欄に、トークンの種類と、期限まであと何日かが出ます（値は出ません）。classic PAT だと ✗、期限がない・90 日を超える・あと 7 日以内だと注意（!）になります。
+
+- `gh auth login` はしません。`gh` は `GH_TOKEN` を環境変数から読むので、ログインは要りません（`~/.config/gh` にトークンを書かせないため）。
+- `main` などにはブランチ保護を付けておくことを勧めます。
+- コンテナの中の `.git` は読み取り専用なので、コミットと `git push` はホストで行います。`gh pr create` は、ブランチを push したあとに使えます。
+- 権限が広すぎないか（Contents の書き込みなど）は、`sigil check` では確かめません（書き込みを試さないと分からないため）。作ったら一度、コンテナの中で PR のマージが拒否されることを確かめてください。
+
+**GitHub MCP（リモート版）は勧めません。** トークンを Claude Code の設定（`~/.claude`）に書く必要があり、その置き場所（ボリューム `sigil-claude`）は全プロジェクトのコンテナで共有しています。プロジェクトごとに絞ったトークンが、ほかのプロジェクトのコンテナからも読めてしまいます。
+
 ## このリポジトリを開発するときの注意
 
 `sigil` は、ホストで動く**唯一の信頼された道具**です。1Password と docker を操作します。ほかのプロジェクトのコードはコンテナに閉じ込めますが、このリポジトリのコードはホストで実行されます。

@@ -6,11 +6,13 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"sigil/internal/config"
 	"sigil/internal/opwrap"
+	"sigil/internal/ui"
 )
 
 func TestSumMatchesShasum(t *testing.T) {
@@ -94,7 +96,7 @@ func TestAsk(t *testing.T) {
 	}
 	for in, want := range cases {
 		var out bytes.Buffer
-		if got := Ask(strings.NewReader(in), &out, []string{"/p/.sigil", "/p/.env"}, c, refs); got != want {
+		if got := Ask(strings.NewReader(in), ui.New(&out, ui.Options{Mode: ui.Plain}), []string{"/p/.sigil", "/p/.env"}, c, refs); got != want {
 			t.Errorf("Ask(%q) = %v, want %v", in, got, want)
 		}
 		s := out.String()
@@ -112,7 +114,7 @@ func TestAsk(t *testing.T) {
 func TestAskColumnsAligned(t *testing.T) {
 	c := config.Config{Envs: []string{"DATABASE_URL"}, Ports: []config.Port{{Host: "8080", Container: "80"}}}
 	var out bytes.Buffer
-	Ask(strings.NewReader("n\n"), &out, []string{"/p/.sigil"}, c, nil)
+	Ask(strings.NewReader("n\n"), ui.New(&out, ui.Options{Mode: ui.Plain}), []string{"/p/.sigil"}, c, nil)
 	col := map[string]int{}
 	for _, l := range strings.Split(out.String(), "\n") {
 		for _, v := range []string{"DATABASE_URL", "127.0.0.1:8080:80"} {
@@ -131,5 +133,25 @@ func TestAskColumnsAligned(t *testing.T) {
 	}
 	if col["DATABASE_URL"] == 0 || col["DATABASE_URL"] != col["127.0.0.1:8080:80"] {
 		t.Errorf("列がそろっていない: %v\n%s", col, out.String())
+	}
+}
+
+var ansi = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+// Color では枠と記号つきの画面になり、見出しと用語はそのまま読める
+func TestAskColor(t *testing.T) {
+	c := config.Config{Envs: []string{"DATABASE_URL"}}
+	var out bytes.Buffer
+	got := Ask(strings.NewReader("y\n"), ui.New(&out, ui.Options{Mode: ui.Color, Cols: 80, Rows: 24}), []string{"/p/.sigil"}, c, nil)
+	if !got {
+		t.Error("y で承認されない")
+	}
+	// 色の指定（ESC [ ... m）は、記号と文字の間にも入るので、取り除いてから見る
+	s := ansi.ReplaceAllString(out.String(), "")
+	// Color では「持ち込むもの」と意味の説明が別の列に分かれる（Plain の括弧書きにはならない）
+	for _, must := range []string{"⟡ 契約の確認", "持ち込むもの", "ホストの環境変数", "DATABASE_URL"} {
+		if !strings.Contains(s, must) {
+			t.Errorf("表示に %q がない:\n%s", must, s)
+		}
 	}
 }

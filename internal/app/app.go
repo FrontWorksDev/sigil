@@ -584,7 +584,7 @@ func approve(d Deps, store approval.Store, p project.Project, s settings, ask bo
 		return loref("契約を確かめられません", "%s を確認できない環境です。対話できるターミナルで実行してください", strings.Join(files, " と "))
 	}
 	defer tty.Close()
-	if !approval.Ask(tty, d.Stderr, files, s.projCfg, s.opEntries) {
+	if !approval.Ask(tty, newUI(d), files, s.projCfg, s.opEntries) {
 		return lore("契約は結ばれませんでした", errors.New("中止しました"))
 	}
 	return store.Record(p.Key, sum)

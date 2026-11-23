@@ -192,6 +192,9 @@ func confirmCommit(d Deps, u *ui.UI, g gitcommit.Git, s gitcommit.Snapshot, v ui
 //  2. --no-gitconfig で、利用者の git config の [delta] を読ませない。hyperlinks が有効だと、
 //     コンテナが決めたファイル名が OSC 8 のリンクになり、macOS で .command などを
 //     クリックすると実行されうるため。hyperlinks は有効にしない。
+//     DELTA_FEATURES は --no-gitconfig でも効き、`hyperlinks` や `+hyperlinks` で OSC 8 が戻ってしまう。
+//     sigil は読まない変数なので、子プロセスにだけ空で渡して、利用者の値を上書きする（deniedEnvs の対象外）。
+//     ほかに機能を有効にする環境変数は delta --help にない（DELTA_PAGER は --paging=never で無関係）。
 //  3. 標準入力は tty を引き継がず、sigil が渡す文字列だけ。環境変数も足さない。
 //
 // --paging=never は、ページャーを sigil が起動するため（delta が less を起動しないように）。
@@ -206,6 +209,7 @@ func diffContent(d Deps, u *ui.UI, diff string) string {
 	}
 	var out, errOut bytes.Buffer
 	err = d.Cmd.Run(deltaPath, []string{"--no-gitconfig", "--paging=never", "--line-numbers"}, gitcommit.RunOpts{
+		Env:    []string{"DELTA_FEATURES="},
 		Stdin:  strings.NewReader(ui.Escape(diff)),
 		Stdout: &out,
 		Stderr: &errOut,

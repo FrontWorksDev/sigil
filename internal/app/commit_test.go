@@ -34,9 +34,10 @@ type hookFunc func(stdin string, extra []string, stdout, stderr io.Writer) error
 // cmdFake は Deps.Cmd の偽物。git は本物を（全体設定から切り離して）実行し、
 // docker は記録して、フックの名前ごとに決めた応答を返す。
 type cmdFake struct {
-	calls []cmdCall
-	hooks map[string]hookFunc
-	delta func(stdin string, stdout io.Writer) error // delta の偽物（nil なら呼ばれたらエラー）
+	calls                 []cmdCall
+	hooks                 map[string]hookFunc
+	deltaEnvEmptyFeatures bool                                       // delta の Env に DELTA_FEATURES=（空）があったか
+	delta                 func(stdin string, stdout io.Writer) error // delta の偽物（nil なら呼ばれたらエラー）
 }
 
 func (f *cmdFake) Run(name string, args []string, o gitcommit.RunOpts) error {
@@ -54,6 +55,11 @@ func (f *cmdFake) Run(name string, args []string, o gitcommit.RunOpts) error {
 	if path.Base(name) == "delta" {
 		if f.delta == nil {
 			return errors.New("delta の応答が決まっていない")
+		}
+		for _, kv := range o.Env {
+			if kv == "DELTA_FEATURES=" {
+				f.deltaEnvEmptyFeatures = true
+			}
 		}
 		return f.delta(c.stdin, o.Stdout)
 	}
@@ -389,6 +395,9 @@ func TestCommitDiffUsesDelta(t *testing.T) {
 	}
 	if got, want := strings.Join(calls[0].args, " "), "--no-gitconfig --paging=never --line-numbers"; got != want {
 		t.Errorf("delta の引数 = %q, want %q", got, want)
+	}
+	if !c.cmd.deltaEnvEmptyFeatures {
+		t.Error("delta の Env に DELTA_FEATURES= がない")
 	}
 	if strings.Contains(calls[0].stdin, "\x1b") || strings.Contains(calls[0].stdin, "\x07") {
 		t.Errorf("delta に生の制御文字を渡した: %q", calls[0].stdin)

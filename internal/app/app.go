@@ -30,6 +30,8 @@ const usage = `使い方:
   sigil ls                sigil のコンテナの一覧〔展開中の領域〕
   sigil check             隔離が効いているか、コンテナ内で確認〔結界の点検〕
   sigil build [args...]   イメージを作る（追加の引数は docker build へ）〔紋章の鋳造〕
+  sigil commit [-- <path>...]
+                          コンテナで用意した銘で、確認してコミット・push〔刻印の儀〕
   sigil help              この説明
 
 設定:
@@ -86,9 +88,11 @@ func run(args []string, d Deps) error {
 		warnLegacyEnv(d)
 	}
 
+	// commit は、コンテナでフックを実行するときだけ docker を使う。フックのないリポジトリでは
+	// docker がなくてもコミットできるよう、ここでは止めない（要るときに commitCmd が同じエラーにする）。
 	dockerPath, err := d.LookPath("docker")
-	if err != nil {
-		return lore("領域を開く術がありません", errors.New("docker が見つかりません。Docker Desktop をインストールしてください"))
+	if err != nil && first(args) != "commit" {
+		return errNoDocker()
 	}
 	client := docker.Client{R: d.Runner, Stderr: d.Stderr}
 	u := newUI(d)
@@ -120,8 +124,16 @@ func run(args []string, d Deps) error {
 		return lore("ここに結界は張れません", err)
 	}
 
-	if first(args) == "stop" {
+	switch first(args) {
+	case "stop":
 		return stop(d, client, p)
+	case "commit":
+		// -- の後ろのパスは今いるフォルダから読むので、Root と同じくリンクを解いた cwd を渡す
+		realCwd, err := filepath.EvalSymlinks(cwd)
+		if err != nil {
+			realCwd = cwd
+		}
+		return commitCmd(d, u, p, realCwd, args[1:])
 	}
 
 	cmd := args
@@ -168,6 +180,11 @@ func run(args []string, d Deps) error {
 	}
 	// 本物の Exec は戻らない。偽物のときに、ここで止める。
 	return nil
+}
+
+// errNoDocker は、docker が見つからないときのエラー。
+func errNoDocker() error {
+	return lore("領域を開く術がありません", errors.New("docker が見つかりません。Docker Desktop をインストールしてください"))
 }
 
 // dirs は sigil の設定と状態のフォルダ。
@@ -584,7 +601,7 @@ func approve(d Deps, store approval.Store, p project.Project, s settings, ask bo
 		return loref("契約を確かめられません", "%s を確認できない環境です。対話できるターミナルで実行してください", strings.Join(files, " と "))
 	}
 	defer tty.Close()
-	if !approval.Ask(tty, d.Stderr, files, s.projCfg, s.opEntries) {
+	if !approval.Ask(tty, newUI(d), files, s.projCfg, s.opEntries) {
 		return lore("契約は結ばれませんでした", errors.New("中止しました"))
 	}
 	return store.Record(p.Key, sum)

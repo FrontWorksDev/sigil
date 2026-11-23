@@ -6,10 +6,8 @@
 package approval
 
 import (
-	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -17,6 +15,7 @@ import (
 
 	"sigil/internal/config"
 	"sigil/internal/opwrap"
+	"sigil/internal/ui"
 )
 
 // Sum は content の SHA-256 を 16 進で返す。
@@ -70,7 +69,7 @@ func (s Store) Record(key, sum string) error {
 	return os.Chmod(p, 0o600)
 }
 
-// Ask は、.sigil で渡すものを out に表示し、tty から答えを読む。
+// Ask は、.sigil で渡すものを u に表示し、tty から答えを読む。
 //
 // 標準入力ではなく /dev/tty から読むのは、パイプなどで標準入力に "y" を流し込まれても
 // 承認されないようにするため（承認は、端末の前にいる人が行う）。
@@ -79,36 +78,16 @@ func (s Store) Record(key, sum string) error {
 // .env については、名前ごとに 1Password のどの項目から値を取るか（参照）を見せる。値は見せない。
 //
 // セキュリティ上の判断をしてもらう画面なので、演出より読みやすさを優先する。
-// 色や動きは付けず、用語（契約、持ち込むもの、門、禁書庫）には必ず実際の意味を添える。
-func Ask(tty io.Reader, out io.Writer, files []string, c config.Config, refs []opwrap.Entry) bool {
-	fmt.Fprintf(out, "sigil: 契約の確認 ── %s の内容が新しいか、前回の承認から変わっています。\n", strings.Join(files, " と "))
-	fmt.Fprintln(out, "     このプロジェクトの領域（コンテナ）に、次のものを渡します:")
-	for _, e := range c.Envs {
-		fmt.Fprintf(out, "       持ち込むもの（ホストの環境変数）  %s\n", e)
-	}
+// 決断の画面には色・枠・記号は付けるが、動きは付けない。用語（契約、持ち込むもの、門、禁書庫）には
+// 必ず実際の意味を添える。端末でないとき（Plain）は、従来と同じ文面になる。
+func Ask(tty io.Reader, u *ui.UI, files []string, c config.Config, refs []opwrap.Entry) bool {
+	v := ui.ContractView{Files: files, Envs: c.Envs}
 	for _, p := range c.Ports {
-		fmt.Fprintf(out, "       門（ポート）                      %s\n", p.Publish())
+		v.Ports = append(v.Ports, p.Publish())
 	}
-	if len(c.Envs) == 0 && len(c.Ports) == 0 {
-		fmt.Fprintln(out, "       （なし）")
+	for _, r := range refs {
+		v.Refs = append(v.Refs, [2]string{r.Name, r.Ref})
 	}
-	if len(refs) > 0 {
-		fmt.Fprintln(out, "     禁書庫から召喚するもの（.env で、1Password から値を読み込む名前と参照先）:")
-		for _, r := range refs {
-			ref := r.Ref
-			if ref == "" {
-				ref = "（.env に直接書かれた値）"
-			}
-			fmt.Fprintf(out, "       %-24s %s\n", r.Name, ref)
-		}
-	}
-	fmt.Fprintln(out, "     このほか、全体設定（~/.config/sigil/config）の分も渡されます。")
-	fmt.Fprint(out, "sigil: この契約を結ぶ（この設定で承認する）なら y を入力してください [y/N] ")
-
-	line, _ := bufio.NewReader(tty).ReadString('\n')
-	switch strings.TrimRight(line, "\r\n") {
-	case "y", "Y", "yes", "YES":
-		return true
-	}
-	return false
+	u.ContractScreen(v)
+	return ui.IsYes(ui.ReadAnswer(tty))
 }

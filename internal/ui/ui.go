@@ -132,6 +132,9 @@ func raiseDefault(s os.Signal) {
 // Fancy は演出をするか（Plain でないか）を返す。
 func (u *UI) Fancy() bool { return u.mode != Plain }
 
+// Colored は色を付けるか（Color モードか）を返す。Plain と Mono（NO_COLOR）は false。
+func (u *UI) Colored() bool { return u.mode == Color }
+
 // Restore は端末を元に戻す。docker exec / op run に置き換える直前に必ず呼ぶこと。
 // Plain のときは何も書かない（素のテキストにエスケープを混ぜないため）。
 func (u *UI) Restore() {
@@ -203,8 +206,12 @@ func (u *UI) Banner() {
 }
 
 // Box は lines を枠で囲んで出す。lines は Bold などで飾ってよいが、
-// 外から来た文字列は Sanitize してから渡すこと。
-func (u *UI) Box(lines ...string) {
+// 外から来た文字列は Sanitize（1 行にまとめるものは EscapeLine、複数行は Escape）してから渡すこと。
+// 幅を超える行は切り詰める。切り詰めると困る内容（判断の画面）は、呼ぶ前に wrapItem で折り返すこと。
+func (u *UI) Box(lines ...string) { u.boxColor(violet, lines...) }
+
+// boxColor は、枠の色を指定できる Box（⚠ の確認を赤い枠で出すため）。
+func (u *UI) boxColor(color int, lines ...string) {
 	if u.mode == Plain {
 		return
 	}
@@ -214,11 +221,11 @@ func (u *UI) Box(lines ...string) {
 		lines[i] = u.fitStyled(l, u.avail(7))
 		w = max(w, Width(lines[i]))
 	}
-	u.line(u.fg(violet, "╭"+strings.Repeat("─", w+2)+"╮"))
+	u.line(u.fg(color, "╭"+strings.Repeat("─", w+2)+"╮"))
 	for _, l := range lines {
-		u.line(u.fg(violet, "│") + " " + l + strings.Repeat(" ", w-Width(l)) + " " + u.fg(violet, "│"))
+		u.line(u.fg(color, "│") + " " + l + strings.Repeat(" ", w-Width(l)) + " " + u.fg(color, "│"))
 	}
-	u.line(u.fg(violet, "╰"+strings.Repeat("─", w+2)+"╯"))
+	u.line(u.fg(color, "╰"+strings.Repeat("─", w+2)+"╯"))
 }
 
 // ---- 文字の飾り ----

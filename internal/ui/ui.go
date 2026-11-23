@@ -204,7 +204,10 @@ func (u *UI) Banner() {
 
 // Box は lines を枠で囲んで出す。lines は Bold などで飾ってよいが、
 // 外から来た文字列は Sanitize してから渡すこと。
-func (u *UI) Box(lines ...string) {
+func (u *UI) Box(lines ...string) { u.boxColor(violet, lines...) }
+
+// boxColor は、枠の色を指定できる Box（⚠ の確認を赤い枠で出すため）。
+func (u *UI) boxColor(color int, lines ...string) {
 	if u.mode == Plain {
 		return
 	}
@@ -214,11 +217,11 @@ func (u *UI) Box(lines ...string) {
 		lines[i] = u.fitStyled(l, u.avail(7))
 		w = max(w, Width(lines[i]))
 	}
-	u.line(u.fg(violet, "╭"+strings.Repeat("─", w+2)+"╮"))
+	u.line(u.fg(color, "╭"+strings.Repeat("─", w+2)+"╮"))
 	for _, l := range lines {
-		u.line(u.fg(violet, "│") + " " + l + strings.Repeat(" ", w-Width(l)) + " " + u.fg(violet, "│"))
+		u.line(u.fg(color, "│") + " " + l + strings.Repeat(" ", w-Width(l)) + " " + u.fg(color, "│"))
 	}
-	u.line(u.fg(violet, "╰"+strings.Repeat("─", w+2)+"╯"))
+	u.line(u.fg(color, "╰"+strings.Repeat("─", w+2)+"╯"))
 }
 
 // ---- 文字の飾り ----

@@ -57,11 +57,27 @@ type Git struct {
 // Out は git -C Root SafeConfig... args... を実行し、標準出力を返す。
 // 失敗時のエラーには標準エラーを含めるが、端末を操作されないよう Escape する。
 func (g Git) Out(stdin io.Reader, args ...string) (string, error) {
+	var errb bytes.Buffer
+	return g.run(stdin, &errb, &errb, args)
+}
+
+// Interactive は Out と同じ安全な設定で実行するが、標準エラーを stderr にそのままつなぐ。
+// 署名のパスフレーズ入力など、git が端末に出す問い合わせを利用者に見せるため。
+// 標準出力は取り込んで返す。
+func (g Git) Interactive(stdin io.Reader, stderr io.Writer, args ...string) (string, error) {
+	return g.run(stdin, stderr, nil, args)
+}
+
+// run は git を実行する。errb が nil でなければ、失敗時のエラー文に標準エラーの内容を使う。
+func (g Git) run(stdin io.Reader, stderr io.Writer, errb *bytes.Buffer, args []string) (string, error) {
 	full := append([]string{"-C", g.Root}, SafeConfig...)
 	full = append(full, args...)
-	var out, errb bytes.Buffer
-	err := g.R.Run("git", full, RunOpts{Env: g.Env, Stdin: stdin, Stdout: &out, Stderr: &errb})
+	var out bytes.Buffer
+	err := g.R.Run("git", full, RunOpts{Env: g.Env, Stdin: stdin, Stdout: &out, Stderr: stderr})
 	if err != nil {
+		if errb == nil {
+			errb = &bytes.Buffer{}
+		}
 		sub := ""
 		if len(args) > 0 {
 			sub = args[0]

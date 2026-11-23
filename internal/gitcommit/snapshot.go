@@ -46,6 +46,16 @@ func (s Snapshot) Cleanup() {
 	}
 }
 
+// effectivePathspec は、add と reset が使う pathspec を作る。空なら "." にし、
+// メッセージのファイルは利用者に見せていないので、必ず除く。
+// 刻印後の reset でも同じものを使い、add したものと reset するものをそろえる。
+func effectivePathspec(pathspec []string) []string {
+	if len(pathspec) == 0 {
+		pathspec = []string{"."}
+	}
+	return append(append([]string(nil), pathspec...), ":(exclude,top)"+MessageFile)
+}
+
 // TakeSnapshot は、本物の index に触れずに、作業ツリーの今の状態から tree を確定する。
 // 確認のあとで git add をすると、そのあいだにコンテナが書いた変更が紛れ込むため、
 // 先に tree を作って見せ、その tree をコミットする。
@@ -98,12 +108,7 @@ func TakeSnapshot(g Git, r Repo, pathspec []string) (s Snapshot, err error) {
 		return Snapshot{}, err
 	}
 
-	if len(pathspec) == 0 {
-		pathspec = []string{"."}
-	}
-	args := append([]string{"add", "-A", "--"}, pathspec...)
-	// メッセージのファイルは、利用者に見せていないので、必ず除く。
-	args = append(args, ":(exclude,top)"+MessageFile)
+	args := append([]string{"add", "-A", "--"}, effectivePathspec(pathspec)...)
 	if _, err = gi.Out(nil, args...); err != nil {
 		return Snapshot{}, err
 	}

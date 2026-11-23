@@ -94,15 +94,75 @@ func TestSnapshotPathspecLiteral(t *testing.T) {
 	}
 }
 
-func TestEffectivePathspec(t *testing.T) {
-	got := strings.Join(EffectivePathspec(nil), " ")
-	if got != ":(top) :(exclude,top).sigil-commit" {
+func TestAddPathspec(t *testing.T) {
+	got := strings.Join(AddPathspec(nil), " ")
+	if got != ":(top)" {
 		t.Errorf("既定 = %q", got)
 	}
-	got = strings.Join(EffectivePathspec([]string{"a[b].txt", "d/*", "."}), " ")
-	if got != ":(top,literal)a[b].txt :(top,literal)d/* :(top) :(exclude,top).sigil-commit" {
+	got = strings.Join(AddPathspec([]string{"a[b].txt", "d/*", "."}), " ")
+	if got != ":(top,literal)a[b].txt :(top,literal)d/* :(top)" {
 		t.Errorf("指定 = %q", got)
 	}
+	if got := strings.Join(resetPathspec(nil), " "); got != ":(top) :(exclude,top).sigil-commit" {
+		t.Errorf("reset = %q", got)
+	}
+	if !strings.Contains(hookScript, "'"+messagePathspec+"'") {
+		t.Error("hookScript が銘のファイルを index から戻していない")
+	}
+}
+
+// 利用者が勧めどおり .sigil-commit を .gitignore に入れていても、スナップショットが作れ、
+// 銘のファイルはコミットに入らない（追跡されていれば HEAD の内容のまま）。
+func TestSnapshotIgnoredMessageFile(t *testing.T) {
+	t.Run("ignored", func(t *testing.T) {
+		root, g := newRepo(t)
+		write(t, root, ".gitignore", MessageFile+"\n")
+		write(t, root, "a.txt", "a")
+		commitAll(t, g, "c1")
+		write(t, root, "a.txt", "b")
+		write(t, root, MessageFile, "msg\n")
+		s := snap(t, g)
+		if len(s.Changes) != 1 || s.Changes[0].Path != "a.txt" {
+			t.Errorf("%+v", s.Changes)
+		}
+	})
+	t.Run("tracked and modified", func(t *testing.T) {
+		root, g := newRepo(t)
+		write(t, root, MessageFile, "old\n")
+		write(t, root, "a.txt", "a")
+		commitAll(t, g, "c1")
+		write(t, root, ".gitignore", MessageFile+"\n")
+		write(t, root, MessageFile, "new\n")
+		write(t, root, "a.txt", "b")
+		s := snap(t, g)
+		for _, c := range s.Changes {
+			if c.Path == MessageFile {
+				t.Errorf("銘のファイルが入っています: %+v", s.Changes)
+			}
+		}
+		if got := gitOut(t, g, "cat-file", "blob", s.Tree+":"+MessageFile); got != "old\n" {
+			t.Errorf("tree の %s = %q", MessageFile, got)
+		}
+	})
+	t.Run("initial commit", func(t *testing.T) {
+		root, g := newRepo(t)
+		write(t, root, ".gitignore", MessageFile+"\n")
+		write(t, root, "a.txt", "a")
+		write(t, root, MessageFile, "msg\n")
+		s := snap(t, g)
+		if m := byPath(s); len(s.Changes) != 2 || m["a.txt"].Status != 'A' || m[".gitignore"].Status != 'A' {
+			t.Errorf("%+v", s.Changes)
+		}
+	})
+	t.Run("not ignored initial commit", func(t *testing.T) {
+		root, g := newRepo(t)
+		write(t, root, "a.txt", "a")
+		write(t, root, MessageFile, "msg\n")
+		s := snap(t, g)
+		if len(s.Changes) != 1 || s.Changes[0].Path != "a.txt" {
+			t.Errorf("%+v", s.Changes)
+		}
+	})
 }
 
 // 最上位で -- . と指定したとき（commitArgs は "." を返す）も、全体が入る。

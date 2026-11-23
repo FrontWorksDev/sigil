@@ -160,6 +160,37 @@ func TestSealResetLiteral(t *testing.T) {
 	}
 }
 
+// 銘のファイルが .gitignore に入っていても、本物の index の reset は失敗しない。
+// 利用者が add してあった銘のファイルの変更も、コミットしていないので残す。
+func TestSealMessageFileIgnoredAndStaged(t *testing.T) {
+	root, g := newRepo(t)
+	write(t, root, MessageFile, "old\n")
+	write(t, root, "a.txt", "one\n")
+	commitAll(t, g, "init")
+	write(t, root, ".gitignore", MessageFile+"\n")
+	write(t, root, MessageFile, "staged\n")
+	gitOut(t, g, "add", "--", MessageFile)
+	write(t, root, "a.txt", "two\n")
+	r, err := Inspect(g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := TakeSnapshot(g, r, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Cleanup)
+	if _, err := Seal(g, r, s, "msg", nil, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if got := gitOut(t, g, "show", "HEAD:"+MessageFile); got != "old\n" {
+		t.Errorf("HEAD:%s = %q", MessageFile, got)
+	}
+	if got := strings.TrimSpace(gitOut(t, g, "diff", "--cached", "--name-only")); got != MessageFile {
+		t.Errorf("staged = %q, want %s", got, MessageFile)
+	}
+}
+
 func TestSealDoesNotRunHooks(t *testing.T) {
 	root, g := newRepo(t)
 	write(t, root, "a.txt", "one\n")

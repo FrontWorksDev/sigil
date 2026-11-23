@@ -101,7 +101,14 @@ type commitEnv struct {
 }
 
 // newCommitEnv は、newEnv のプロジェクトに本物の git リポジトリを作り、a.txt を 1 回コミットする。
+// README の勧めどおり、.sigil-commit を .gitignore に入れた形にする（現実の使い方）。
 func newCommitEnv(t *testing.T) *commitEnv {
+	t.Helper()
+	return newCommitEnvWith(t, true)
+}
+
+// newCommitEnvWith は ignore が false なら .gitignore を置かない（入れ忘れた利用者の形）。
+func newCommitEnvWith(t *testing.T, ignore bool) *commitEnv {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git がありません")
@@ -124,6 +131,9 @@ func newCommitEnv(t *testing.T) *commitEnv {
 	c.git("config", "user.email", "t@example.com")
 	c.git("config", "commit.gpgSign", "false")
 	e.write("a.txt", "one\n")
+	if ignore {
+		e.write(".gitignore", gitcommit.MessageFile+"\n")
+	}
 	c.commitAll("init")
 	return c
 }
@@ -285,6 +295,8 @@ func TestCommitNothing(t *testing.T) {
 func TestCommitWarnsTrackedMessageFile(t *testing.T) {
 	c := newCommitEnv(t)
 	c.write(gitcommit.MessageFile, "old\n")
+	// .gitignore に入っていても、先に追跡されていた形
+	c.git("add", "-f", "--", gitcommit.MessageFile)
 	c.commitAll("track message file")
 	c.write(gitcommit.MessageFile, "fix: a\n")
 	c.write("a.txt", "two\n")
@@ -373,7 +385,7 @@ func TestCommitHooksInContainer(t *testing.T) {
 			t.Errorf("フック %d = %s, want %s", i, got, want)
 		}
 	}
-	if got := execs[0].args[11:]; strings.Join(got, " ") != ":(top) :(exclude,top).sigil-commit" {
+	if got := execs[0].args[11:]; strings.Join(got, " ") != ":(top)" {
 		t.Errorf("pre-commit の pathspec = %v", got)
 	}
 	if got := c.body(); got != "feat: changed\n" {
@@ -889,7 +901,7 @@ func TestCommitHookPathspecLiteral(t *testing.T) {
 	if len(execs) != 1 {
 		t.Fatalf("docker exec = %v", execs)
 	}
-	if got := strings.Join(execs[0].args[11:], " "); got != ":(top,literal)a[b].txt :(exclude,top).sigil-commit" {
+	if got := strings.Join(execs[0].args[11:], " "); got != ":(top,literal)a[b].txt" {
 		t.Errorf("pre-commit の pathspec = %q", got)
 	}
 }
@@ -923,6 +935,57 @@ func TestCommitPushesSealedCommit(t *testing.T) {
 	if len(push) != 1 || !strings.Contains(push[0].String(), "--recurse-submodules=no") ||
 		!strings.Contains(push[0].String(), sealed+":refs/heads/main") {
 		t.Errorf("push = %v", push)
+	}
+}
+
+// .sigil-commit を .gitignore に入れていても（勧めている形）、フックありで最後まで刻印でき、
+// 銘のファイルは消え、コミットに入らない。入れ忘れていても同じ。
+func TestCommitMessageFileIgnoredOrNot(t *testing.T) {
+	for _, ignore := range []bool{true, false} {
+		t.Run(fmt.Sprintf("ignore=%v", ignore), func(t *testing.T) {
+			c := newCommitEnvWith(t, ignore)
+			c.hook(".git/hooks/pre-commit")
+			c.container("running", "")
+			c.write("b.txt", "b\n")
+			c.write(gitcommit.MessageFile, "feat: b\n")
+			c.tty = "y\n"
+			if code := c.run("commit"); code != 0 {
+				t.Fatalf("code = %d, stderr = %s", code, c.stderr.String())
+			}
+			if _, err := os.Stat(c.msgFile()); !os.IsNotExist(err) {
+				t.Error(".sigil-commit が残っている")
+			}
+			if got := c.git("ls-tree", "-r", "--name-only", "HEAD"); strings.Contains(got, gitcommit.MessageFile) {
+				t.Errorf("銘のファイルがコミットに入った: %q", got)
+			}
+			if got := c.body(); got != "feat: b\n" {
+				t.Errorf("銘 = %q", got)
+			}
+			// フックには除外の指定を渡さない（.gitignore 済みのファイルを名指しすると git add が失敗するため）
+			if got := strings.Join(c.dockerExecs()[0].args[11:], " "); got != ":(top)" {
+				t.Errorf("pre-commit の pathspec = %q", got)
+			}
+		})
+	}
+}
+
+// 銘のファイルそのものを -- で指定したら、わかる言葉で断る。
+func TestCommitArgsRejectsMessageFile(t *testing.T) {
+	for _, arg := range []string{".sigil-commit", "./.sigil-commit", "sub/../.sigil-commit", ".SIGIL-COMMIT"} {
+		t.Run(arg, func(t *testing.T) {
+			c := newCommitEnv(t)
+			c.write("a.txt", "two\n")
+			c.write(gitcommit.MessageFile, "fix: a\n")
+			c.tty = "y\n"
+			if code := c.run("commit", "--", arg); code != 1 {
+				t.Fatalf("code = %d", code)
+			}
+			se := c.stderr.String()
+			if !strings.HasPrefix(se, "sigil: 刻むものを指定できません\n") || !strings.Contains(se, "銘のファイル") {
+				t.Errorf("stderr = %s", se)
+			}
+			c.noCommitTree()
+		})
 	}
 }
 

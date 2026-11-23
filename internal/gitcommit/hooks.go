@@ -65,6 +65,10 @@ func FindHooks(r Repo) (Hooks, error) {
 // 知らない mode は失敗で終わらせる（検査を黙って飛ばさない）。
 // common は CDPATH に左右されない git の絶対パス指定で求める。
 // フックの標準出力は標準エラーへ回す。msg モードでは標準出力がメッセージそのものになるため。
+// pre-commit の pathspec は AddPathspec（銘のファイルを除く指定を含まない）。add のあとで、
+// ホストの dropMessageArgs と同じく、銘のファイルを一時 index から戻す。除く指定を add に
+// 渡すと、銘のファイルが .gitignore 済みのとき git add が失敗するため。
+// 埋め込む messagePathspec は sigil の定数で、利用者やコンテナの入力ではない。
 const hookScript = `set -eu
 mode="$1"; hook="$2"; shift 2
 gitdir="$(git rev-parse --absolute-git-dir)"
@@ -73,13 +77,20 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir "$tmp/objects"
 export GIT_INDEX_FILE="$tmp/index" GIT_OBJECT_DIRECTORY="$tmp/objects" GIT_ALTERNATE_OBJECT_DIRECTORIES="$common/objects"
+has_head=
 if git rev-parse -q --verify HEAD >/dev/null; then
+  has_head=1
   cp "$gitdir/index" "$tmp/index" 2>/dev/null || true
   git reset -q HEAD -- :/
 fi
 case "$mode" in
 pre-commit)
   git add -A -- "$@"
+  if [ -n "$has_head" ]; then
+    git reset -q HEAD -- '` + messagePathspec + `'
+  else
+    git rm --cached -q --ignore-unmatch -- '` + messagePathspec + `'
+  fi
   "$hook" </dev/null >&2 ;;
 msg)
   cat >"$tmp/MSG"

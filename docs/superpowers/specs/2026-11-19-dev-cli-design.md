@@ -481,19 +481,20 @@ issue #13。コンテナの `.git` は読み取り専用（8 章）なので、�
 2. **拒否する条件を調べる**（下の「拒否する条件」）。1 つでも当てはまれば、理由を出して終了する。
 3. **銘（メッセージのファイル）を読む**（下の「メッセージのファイル」）。
 4. **pre-commit の試練**: フックがあれば、コンテナで実行する。失敗したら、フックの出力を見せて終了する。
-5. **tree を確定する**。本人だけが読める一時フォルダ（`$TMPDIR/sigil-commit-*`、0700）に、本物の index を写し（更新時刻も引き継ぐ。最初のコミットで HEAD がないときは写さず、空の index から始める。利用者が add 済みの別のファイルが紛れ込まないように）、`GIT_INDEX_FILE` でそれを指して、`git reset -q HEAD -- :/`（HEAD にそろえる。ファイルの状態の記録は残るので、全部を読み直さずに済む。パスを付ける形にするのは、付けない `git reset` が本物の `ORIG_HEAD` と reflog に書くため）→ `git add -A -- <pathspec>` → `git write-tree` を行う。pre-commit のフックが作業ツリーを整形していれば、整形後の内容がここで入る。
+5. **tree を確定する**。本人だけが読める一時フォルダ（`$TMPDIR/sigil-commit-*`、0700）に、本物の index を写し（更新時刻も引き継ぐ。最初のコミットで HEAD がないときは写さず、空の index から始める。利用者が add 済みの別のファイルが紛れ込まないように）、`GIT_INDEX_FILE` でそれを指して、`git reset -q HEAD -- :/`（HEAD にそろえる。ファイルの状態の記録は残るので、全部を読み直さずに済む。パスを付ける形にするのは、付けない `git reset` が本物の `ORIG_HEAD` と reflog に書くため）→ `git add -A -- <add の pathspec>` → 銘のファイルを一時 index から戻す（HEAD があれば `git reset -q HEAD -- ':(top,literal).sigil-commit'`、なければ `git rm --cached -q --ignore-unmatch -- ':(top,literal).sigil-commit'`）→ `git write-tree` を行う。pre-commit のフックが作業ツリーを整形していれば、整形後の内容がここで入る。銘のファイルを `add` の除く指定（`:(exclude)`）で外さないのは、`.gitignore` 済みのファイルを pathspec で名指しすると、除く指定でも `git add` が「無視されたパス」として失敗するため（README で `.gitignore` に入れるよう勧めているので、普段の使い方そのもの）。戻す手順は、無視されていても、追跡されていても（HEAD の内容のまま）、なくても失敗しない。
 6. **prepare-commit-msg / commit-msg の試練**: フックがあれば、コンテナで実行する。フックが銘を書き換えたら、3 と同じ検査をやり直す。
 7. **確認の画面を出す**（下の「確認の画面」）。答えは `y` / `n` / `d`。`d` なら全差分をページャーで見せ、もう一度聞く。`y` / `Y` / `yes` / `YES` 以外は中止（コミットしない）。
-8. **刻印する**。`git commit-tree <tree> [-p HEAD] -F -`（銘は標準入力から渡す）で commit を作り、`git update-ref -m "commit (sigil): <件名>" <ブランチ（refs/heads/<name>）> <新> <旧>` で、HEAD が 1 のときから動いていないことを条件にブランチを進める。動いていれば（別の端末でコミットされたなど）、エラーにして index も変えない。そのあと本物の index で `git reset -q -- <pathspec>` を行い、コミットした分を HEAD にそろえる（pathspec の外の、利用者が add してあった状態は残す）。
+8. **刻印する**。`git commit-tree <tree> [-p HEAD] -F -`（銘は標準入力から渡す）で commit を作り、`git update-ref -m "commit (sigil): <件名>" <ブランチ（refs/heads/<name>）> <新> <旧>` で、HEAD が 1 のときから動いていないことを条件にブランチを進める。動いていれば（別の端末でコミットされたなど）、エラーにして index も変えない。そのあと本物の index で `git reset -q -- <add の pathspec> ':(exclude,top).sigil-commit'` を行い、コミットした分を HEAD にそろえる（pathspec の外の、利用者が add してあった状態は残す）。`reset` は `.gitignore` の影響を受けないので、ここでは除く指定を使う。銘のファイルはコミットしていないので、利用者が add してあった銘のファイルの変更を消さないため。
 9. **銘のファイルを消す**。
 10. **push を確かめる**（下の「push」）。
 
 ### コマンドの引数
 
-- `sigil commit`: 変更のあるものすべて（追跡していない、無視されていないファイルを含む）をコミットする。pathspec は `:(top)`（最上位の全体）と `:(exclude,top).sigil-commit`。`top` を付けるのは、コンテナの pre-commit で `add` するときも、cwd に左右されないため（`:(top).` は `.` という名前として読まれ、何にも一致しないので使わない）。
-- `sigil commit -- <path>...`: 指定したものだけ。pathspec は `:(top,literal)<path>...` と `:(exclude,top).sigil-commit`（最上位からのパスが `.` なら `:(top)`）。`literal` を付け、glob として読まない（`a[b].txt` が `ab.txt` まで拾うと、確認の画面の範囲と違うファイルが入るため）。ホストの `add`、刻印後の本物の index の `reset`、コンテナの pre-commit の `add` のすべてで同じものを使う。確認の画面には magic を付けない素のパスを出す。これは端末の前にいる利用者が打つものなので、信じてよい。**コンテナが指定したファイルの一覧は使わない**（`.github/workflows` などを紛れ込ませられないように）。
+- `sigil commit`: 変更のあるものすべて（追跡していない、無視されていないファイルを含む）をコミットする。add の pathspec は `:(top)`（最上位の全体）。銘のファイルは add のあとで戻す（5）。`top` を付けるのは、コンテナの pre-commit で `add` するときも、cwd に左右されないため（`:(top).` は `.` という名前として読まれ、何にも一致しないので使わない）。
+- `sigil commit -- <path>...`: 指定したものだけ。add の pathspec は `:(top,literal)<path>...`（最上位からのパスが `.` なら `:(top)`）。`literal` を付け、glob として読まない（`a[b].txt` が `ab.txt` まで拾うと、確認の画面の範囲と違うファイルが入るため）。ホストの `add`、コンテナの pre-commit の `add`（と、そのあとの銘のファイルを戻す手順）、刻印後の本物の index の `reset`（こちらは除く指定を足す。8）のすべてで同じものを使う（コードでは `AddPathspec` 1 か所で作る）。確認の画面には magic を付けない素のパスを出す。これは端末の前にいる利用者が打つものなので、信じてよい。**コンテナが指定したファイルの一覧は使わない**（`.github/workflows` などを紛れ込ませられないように）。
 - `<path>` は git と同じく、今いるフォルダ（リンクを解いたもの）からのパスとして読み、最上位からのパスに直して使う（ホストの git は `-C <root>` で呼ぶため）。プロジェクトの外を指すもの（`../..` など）はエラー。
 - `:` で始まる指定（pathspec の magic、`:(top)` や `:!` など）は受け付けない。銘のファイルを外す指定や、今いるフォルダからという決まりをすり抜けられるため。
+- 最上位からのパスが銘のファイルそのもの（大文字と小文字は区別しない）なら、「銘のファイルで、コミットには含めません」とエラーにする（黙って外すと「刻むものがありません」などの紛らわしい結果になるため）。
 - 銘のファイルは、どちらの場合も必ずコミットから外す。追跡されていたら注意を出す（刻印のあとに消すので、作業ツリーに追跡されたファイルの削除が残ることも添える）。
 - push の URL（`git remote get-url --push`）は、画面に出すときも、コンテナの pre-push のフックに渡すときも、URL の形なら userinfo（`user:token@`）を取り除く。scp の形（`git@host:path`）の user は秘密ではないので残す。本物の push はリモートの名前で行う。
 
@@ -539,7 +540,7 @@ git -C <root> -c core.hooksPath=/dev/null -c core.fsmonitor=false -c submodule.r
 - **あるかどうか**: ホストで、そのフォルダにその名前の実行できるファイルがあるかで判定する。1 つもなければ docker を使わない。
 - **コンテナの状態**: フックがあるのにコンテナが実行中でなければ、「sigil で領域を開いてから、もう一度実行してください」とエラー。
 - **実行のしかた**: `docker exec -i -w <コンテナ内の最上位> <name> sh -c '<sigil が持つ固定のスクリプト>' sh <フックのパス> <引数...>`。フックのパス・pathspec・リモート名などは位置引数で渡し、**シェルの文字列に埋め込まない**。
-  - コンテナの `.git` は読み取り専用なので、スクリプトは `mktemp` で一時の index と object のフォルダを作り、`GIT_INDEX_FILE`、`GIT_OBJECT_DIRECTORY`、`GIT_ALTERNATE_OBJECT_DIRECTORIES=<.git の objects>` を設定してから、本物の index を写して `git reset -q` → `git add -A -- <pathspec>` を行い、フックを実行する。フックの中の `git add` などは、この一時の場所に書く。
+  - コンテナの `.git` は読み取り専用なので、スクリプトは `mktemp` で一時の index と object のフォルダを作り、`GIT_INDEX_FILE`、`GIT_OBJECT_DIRECTORY`、`GIT_ALTERNATE_OBJECT_DIRECTORIES=<.git の objects>` を設定してから、本物の index を写して `git reset -q` → `git add -A -- <add の pathspec>` → 銘のファイルを戻す（5 と同じ。HEAD の有無はスクリプトの中で判断する）を行い、フックを実行する。フックの中の `git add` などは、この一時の場所に書く。
   - prepare-commit-msg / commit-msg: 銘を標準入力で渡し、スクリプトが一時ファイルに書いてからフックに渡す。フックの出力は標準エラーに回し、フックのあとの銘を標準出力に出す。ホストはこれを 3 と同じく検査する。
   - pre-push: 引数は `<リモート名> <URL>`、標準入力は `<local ref> <local sha> <remote ref> <remote sha>` の 1 行。新しい commit はホストの `.git/objects` にあり、コンテナにも見えている。
 - **出力**: 描画中はためておき、成功したら捨て、失敗したら制御文字を処理して全部見せる（`sigil build` と同じ）。
@@ -660,3 +661,4 @@ git -C <root> -c core.hooksPath=/dev/null -c core.fsmonitor=false -c submodule.r
 | 2026-11-23 | push は `HEAD` ではなく刻印したコミットの id を送り（`<id>:<merge の ref>`）、件数と pre-push の入力もその id で求める。`--recurse-submodules=no` を付ける | 確認や pre-push のあいだに HEAD が動くと、利用者が見ていないコミットまで送ってしまうため。全体設定の `push.recurseSubmodules` で、サブモジュールの中の git を動かさないため |
 | 2026-11-23 | `sigil commit -- <path>` のパスは `:(top,literal)<path>` として渡し、glob として読まない。既定は `:(top)` | `a[b].txt` が `ab.txt` まで拾うと、確認の画面の範囲と違うファイルが入る。`top` は、コンテナの pre-commit の cwd に左右されないため。`:(top).` は何にも一致しないので使わない |
 | 2026-11-23 | LFS の `check-attr` は、確定した tree（`--source`）と作業ツリーの両方で調べ、どちらかが `lfs` なら拒否する | tree だけだと、`.gitignore` 済みで tree に入らないが `add` のときには効いていた `.gitattributes` を取りこぼす。作業ツリーだけだと、`add` のあとにコンテナが `.gitattributes` を書き換えると、コミットする tree と違う属性で判断してしまう |
+| 2026-11-23 | 銘のファイルは `git add` の除く指定（`:(exclude,top).sigil-commit`）で外さず、`add -A -- <add の pathspec>` のあとで一時 index から戻す（HEAD があれば `reset -q HEAD -- ':(top,literal).sigil-commit'`、なければ `rm --cached -q --ignore-unmatch`）。ホストとコンテナの pre-commit で同じ手順にする。刻印後の本物の index の `reset` は除く指定を残す。`-- .sigil-commit` の指定はエラーにする | `.sigil-commit` を `.gitignore` に入れると（README の勧めどおり）、除く指定で名指ししただけで `git add` が「無視されたパス」として失敗する（git 2.47 / 2.54 / 2.56 で確認）。実機の確認で、コンテナの pre-commit がこれで止まった。テストは `.gitignore` に入れていなかったので見落とした。`reset` は `.gitignore` の影響を受けず、除く指定のままなら、利用者が add してあった銘のファイルの変更を消さずに済む |

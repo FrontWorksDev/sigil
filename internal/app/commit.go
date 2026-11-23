@@ -46,7 +46,14 @@ func commitArgs(args []string, root, cwd string) ([]string, error) {
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return nil, loref("刻むものを指定できません", "%s はプロジェクトの外を指しています。%s（パスは今いるフォルダから）", ui.EscapeLine(a), commitUsage)
 		}
-		out = append(out, path.Clean(filepath.ToSlash(rel)))
+		rel = path.Clean(filepath.ToSlash(rel))
+		// 銘のファイルは必ずコミットから外すので、名指しされても入れられない。黙って無視すると
+		// 「刻むものがありません」などの紛らわしい結果になるので、はっきり断る。
+		// 大文字と小文字を区別しないファイルシステム（macOS の既定）では同じファイルなので、区別せずに比べる。
+		if strings.EqualFold(rel, gitcommit.MessageFile) {
+			return nil, loref("刻むものを指定できません", "%s は銘のファイルで、コミットには含めません。ほかのパスを指定してください", ui.EscapeLine(a))
+		}
+		out = append(out, rel)
 	}
 	return out, nil
 }

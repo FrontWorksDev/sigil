@@ -52,7 +52,7 @@ func Seal(g Git, r Repo, s Snapshot, message string, pathspec []string, stderr i
 
 	// 刻印した分だけ本物の index を HEAD にそろえる。付けない reset は ORIG_HEAD を書くので、
 	// 必ずパスを付ける。pathspec の外の add 済みの変更はそのまま残る。
-	reset := append([]string{"reset", "-q", "--"}, effectivePathspec(pathspec)...)
+	reset := append([]string{"reset", "-q", "--"}, resetPathspec(pathspec)...)
 	if _, err := g.Out(nil, reset...); err != nil {
 		return commit, err
 	}

@@ -46,19 +46,27 @@ func (s Snapshot) Cleanup() {
 	}
 }
 
-// effectivePathspec は、add と reset が使う pathspec を作る。pathspec は最上位からの素のパス
-// （画面にもそのまま出す）。空なら最上位の全体にし、メッセージのファイルは利用者に見せていないので、必ず除く。
-// 刻印後の reset でも、コンテナの pre-commit でも同じものを使い、add したものと reset するものをそろえる。
+// messagePathspec は、銘のファイルだけを指す pathspec。hookScript にも埋め込む（定数どうしの連結）。
+const messagePathspec = ":(top,literal)" + MessageFile
+
+// AddPathspec は、git add -A に渡す pathspec を作る。pathspec は最上位からの素のパス
+// （画面にもそのまま出す）。空なら最上位の全体。ホストのスナップショットと、
+// コンテナの pre-commit（hookScript）の両方がこれを使い、add する範囲をそろえる。
 //   - top: どこで実行しても（コンテナの cwd が違っても）最上位から読む
 //   - literal: 利用者のパスを glob として読まない。a[b].txt が ab.txt まで拾うと、
 //     確認した範囲と違うファイルが入るため
 //
+// 銘のファイルを除く指定（:(exclude)）は入れない。.gitignore 済みのファイルを pathspec で
+// 名指しすると、除く指定であっても git add が「無視されたパス」として失敗するため
+// （README では .sigil-commit を .gitignore に入れるよう勧めている）。銘のファイルは、
+// add のあとに dropMessageArgs で index から戻す。
+//
 // 最上位の全体は、パスを空にした :(top) で表す（:(top). は "." という名前として読まれ、何にも一致しない）。
-func effectivePathspec(pathspec []string) []string {
+func AddPathspec(pathspec []string) []string {
 	if len(pathspec) == 0 {
-		return []string{":(top)", ":(exclude,top)" + MessageFile}
+		return []string{":(top)"}
 	}
-	out := make([]string, 0, len(pathspec)+1)
+	out := make([]string, 0, len(pathspec))
 	for _, p := range pathspec {
 		if p == "." {
 			out = append(out, ":(top)")
@@ -66,12 +74,26 @@ func effectivePathspec(pathspec []string) []string {
 		}
 		out = append(out, ":(top,literal)"+p)
 	}
-	return append(out, ":(exclude,top)"+MessageFile)
+	return out
 }
 
-// EffectivePathspec は effectivePathspec を外から使うためのもの。
-// コンテナの pre-commit のフックにも、ホストと同じ範囲を add させるため。
-func EffectivePathspec(pathspec []string) []string { return effectivePathspec(pathspec) }
+// dropMessageArgs は、add のあとで一時 index の銘のファイルを元に戻す git の引数。
+// HEAD があれば HEAD の状態に戻す（パスを付けた reset は、HEAD にないファイルなら index から外す）。
+// HEAD がなければ index から外す。どちらも、無視されていても、追跡されていても、なくても失敗しない。
+// hookScript も同じことをする（TestAddPathspec で、同じ pathspec を使っていることを確かめる）。
+func dropMessageArgs(hasHead bool) []string {
+	if hasHead {
+		return []string{"reset", "-q", "HEAD", "--", messagePathspec}
+	}
+	return []string{"rm", "--cached", "-q", "--ignore-unmatch", "--", messagePathspec}
+}
+
+// resetPathspec は、刻印後に本物の index を HEAD にそろえる reset の pathspec。
+// reset は .gitignore の影響を受けないので、ここでは除く指定を使える。銘のファイルを除くのは、
+// 利用者が add してあった銘のファイルの変更を、コミットしていないのに消さないため。
+func resetPathspec(pathspec []string) []string {
+	return append(AddPathspec(pathspec), ":(exclude,top)"+MessageFile)
+}
 
 // TakeSnapshot は、本物の index に触れずに、作業ツリーの今の状態から tree を確定する。
 // 確認のあとで git add をすると、そのあいだにコンテナが書いた変更が紛れ込むため、
@@ -125,8 +147,12 @@ func TakeSnapshot(g Git, r Repo, pathspec []string) (s Snapshot, err error) {
 		return Snapshot{}, err
 	}
 
-	args := append([]string{"add", "-A", "--"}, effectivePathspec(pathspec)...)
+	args := append([]string{"add", "-A", "--"}, AddPathspec(pathspec)...)
 	if _, err = gi.Out(nil, args...); err != nil {
+		return Snapshot{}, err
+	}
+	// 銘のファイルは利用者に見せていないので、コミットに入れない（追跡されていれば HEAD の内容のまま）
+	if _, err = gi.Out(nil, dropMessageArgs(r.Head != "")...); err != nil {
 		return Snapshot{}, err
 	}
 	var tree string

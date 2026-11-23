@@ -168,18 +168,21 @@ func TestHookScriptReadOnlyGit(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			root, g := newRepo(t)
+			// 勧めどおり、銘のファイルは .gitignore に入っている
+			write(t, root, ".gitignore", MessageFile+"\n")
 			if withHead {
 				write(t, root, "old.txt", "old\n")
 				commitAll(t, g, "first")
 			}
 			write(t, root, "new.txt", "n\n")
+			write(t, root, MessageFile, "msg\n")
 			outFile := filepath.Join(t.TempDir(), "out")
 			hook := filepath.Join(t.TempDir(), "hook")
 			writeExec(t, hook, "#!/bin/sh\ngit add new.txt && git diff --cached --name-only > \""+outFile+"\"\n", 0o755)
 			readOnly(t, filepath.Join(root, ".git"))
 
 			before := indexHash(t, root)
-			args := append([]string{PreCommit, hook}, effectivePathspec(nil)...)
+			args := append([]string{PreCommit, hook}, AddPathspec(nil)...)
 			_, se, err := runScript(t, root, "", args...)
 			if err != nil {
 				t.Fatalf("%v: %s", err, se)
@@ -188,10 +191,30 @@ func TestHookScriptReadOnlyGit(t *testing.T) {
 				t.Error("本物の index が変わった")
 			}
 			b, _ := os.ReadFile(outFile)
-			if !strings.Contains(string(b), "new.txt") {
+			if !strings.Contains(string(b), "new.txt") || strings.Contains(string(b), MessageFile) {
 				t.Errorf("OUT=%q", b)
 			}
 		})
+	}
+}
+
+// 銘のファイルが追跡されていて、.gitignore に入っていないときも、フックの一時 index には入らない。
+func TestHookScriptMessageFileTracked(t *testing.T) {
+	root, g := newRepo(t)
+	write(t, root, MessageFile, "old\n")
+	commitAll(t, g, "first")
+	write(t, root, MessageFile, "new\n")
+	write(t, root, "a.txt", "a\n")
+	outFile := filepath.Join(t.TempDir(), "out")
+	hook := filepath.Join(t.TempDir(), "hook")
+	writeExec(t, hook, "#!/bin/sh\ngit diff --cached --name-only > \""+outFile+"\"\n", 0o755)
+	readOnly(t, filepath.Join(root, ".git"))
+	args := append([]string{PreCommit, hook}, AddPathspec(nil)...)
+	if _, se, err := runScript(t, root, "", args...); err != nil {
+		t.Fatalf("%v: %s", err, se)
+	}
+	if b, _ := os.ReadFile(outFile); strings.TrimSpace(string(b)) != "a.txt" {
+		t.Errorf("OUT=%q", b)
 	}
 }
 

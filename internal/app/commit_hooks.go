@@ -137,7 +137,7 @@ func (h hookRunner) prepare(u *ui.UI, g gitcommit.Git, pathspec []string, msg st
 		if pre {
 			prog.Set(0, "", -1)
 			// コンテナの一時 index にも、ホストと同じ範囲を add させる
-			if _, err := h.run(w, gitcommit.PreCommit, gitcommit.EffectivePathspec(pathspec), "", after); err != nil {
+			if _, err := h.run(w, gitcommit.PreCommit, gitcommit.AddPathspec(pathspec), "", after); err != nil {
 				return err
 			}
 			ran = append(ran, ui.HookRow{Name: gitcommit.PreCommit, OK: true})

@@ -153,6 +153,31 @@ RUN case "${TARGETARCH}" in \
  && cd / && rm -rf "$tmp" \
  && lazygit --version
 
+# --- GitHub CLI (gh) ----------------------------------------------------
+# issue / PR をコンテナの中から扱うためのもの（issue #12）。トークンはイメージに入れず、
+# プロジェクトの .sigil / .env で GH_TOKEN として渡す（README を参照）。
+# apt の版（trixie）は古く、公式の apt リポジトリは鍵と取得先をイメージに足すことになるので、
+# lazygit と同じく GitHub のリリースから最新を取る。チェックサムは壊れたダウンロードの検出用。
+# 設定（~/.config/gh）と拡張機能（~/.local/share/gh）は共有ボリュームに置かれないので、
+# あるプロジェクトが仕込んだ gh の alias や拡張機能が、ほかのプロジェクトで動くことはない。
+RUN case "${TARGETARCH}" in \
+      amd64|arm64) arch="${TARGETARCH}" ;; \
+      *) echo "unsupported arch: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+ && tag="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/cli/cli/releases/latest)" \
+ && ver="${tag##*/v}" \
+ && case "$ver" in [0-9]*.[0-9]*) ;; *) echo "unexpected gh tag: $tag" >&2; exit 1 ;; esac \
+ && tmp="$(mktemp -d)" && cd "$tmp" \
+ && base="https://github.com/cli/cli/releases/download/v${ver}" \
+ && file="gh_${ver}_linux_${arch}.tar.gz" \
+ && curl -fsSLO "${base}/${file}" \
+ && curl -fsSLO "${base}/gh_${ver}_checksums.txt" \
+ && grep " ${file}\$" "gh_${ver}_checksums.txt" | sha256sum -c - \
+ && tar -xzf "$file" "gh_${ver}_linux_${arch}/bin/gh" \
+ && install -m 755 "gh_${ver}_linux_${arch}/bin/gh" /usr/local/bin/gh \
+ && cd / && rm -rf "$tmp" \
+ && gh --version
+
 # --- 差分の表示（delta） --------------------------------------------------
 # ホストの ~/.gitconfig はコンテナに渡さないので、システム全体の設定に書く。
 # lazygit の設定は、XDG_CONFIG_DIRS（/etc/xdg）から読まれる場所に置く。どちらも root 所有なので、
@@ -199,6 +224,8 @@ RUN chmod 755 /usr/local/bin/sigil-check
 
 USER ${USERNAME}
 
+# GH_NO_UPDATE_NOTIFIER: gh の更新はイメージの作り直しで行うので、新しい版の知らせを出さない
+# （ここに ENV を足したら、sigil-check の環境変数の除外リストにも足すこと）
 ENV PATH=/home/${USERNAME}/.local/bin:/home/${USERNAME}/.npm-global/bin:/home/${USERNAME}/.cargo/bin:/home/${USERNAME}/go/bin:/usr/local/go/bin:/usr/local/cargo/bin:${PATH} \
     GOPATH=/home/${USERNAME}/go \
     CARGO_HOME=/home/${USERNAME}/.cargo \
@@ -207,6 +234,7 @@ ENV PATH=/home/${USERNAME}/.local/bin:/home/${USERNAME}/.npm-global/bin:/home/${
     npm_config_cache=/home/${USERNAME}/.cache/npm \
     CLAUDE_CONFIG_DIR=/home/${USERNAME}/.claude \
     DISABLE_AUTOUPDATER=1 \
+    GH_NO_UPDATE_NOTIFIER=1 \
     EDITOR=nvim \
     SIGIL=1
 

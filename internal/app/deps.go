@@ -24,6 +24,7 @@ type Deps struct {
 	// （一時の index を指す GIT_INDEX_FILE と、銘を標準入力で渡すため）。
 	Cmd gitcommit.Runner
 	// Pager は、sigil commit の全差分を見せる。content は sigil が Escape して色を付けたもの。
+	// Escape 済みの入力から作った delta の出力のこともあり、その場合は SGR と `ESC[K` だけを含む。
 	Pager func(content string) error
 
 	// Exec は現在のプロセスを argv0 で置き換える。本物（syscall.Exec）は成功すると戻らない。

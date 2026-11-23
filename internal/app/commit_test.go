@@ -1120,3 +1120,68 @@ func TestUsageCommitAligned(t *testing.T) {
 		t.Errorf("usage の commit の行がそろっていない:\n%s", usage)
 	}
 }
+
+func TestCommitDiffDeltaUnsafeOutputFallsBack(t *testing.T) {
+	c := newCommitEnv(t)
+	c.fancy()
+	c.withDelta()
+	c.cmd.delta = func(_ string, stdout io.Writer) error {
+		io.WriteString(stdout, "\x1b]8;;file:///x\x07link\x1b]8;;\x07\n")
+		return nil
+	}
+	c.write("a.txt", "one\nx\x1b[31mred\n")
+	c.write(gitcommit.MessageFile, "fix: a\n")
+	c.tty = "d\ny\n"
+	if code := c.run("commit"); code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, c.stderr.String())
+	}
+	if len(c.pages) != 1 || strings.Contains(c.pages[0], "]8;;") || !strings.Contains(c.pages[0], "x^[[31mred") {
+		t.Errorf("組み込みの表示に戻っていない: %q", c.pages)
+	}
+	if !strings.Contains(c.stderr.String(), "sigil: 注意: delta の出力に想定外の制御シーケンス") {
+		t.Errorf("注意の行がない: %q", c.stderr.String())
+	}
+}
+
+func TestCommitDiffDeltaSGRAndELAccepted(t *testing.T) {
+	c := newCommitEnv(t)
+	c.fancy()
+	c.withDelta()
+	want := "\x1b[0K\x1b[1;32m+x\x1b[0m\x1b[K\n"
+	c.cmd.delta = func(_ string, stdout io.Writer) error {
+		io.WriteString(stdout, want)
+		return nil
+	}
+	c.write("a.txt", "one\nx\n")
+	c.write(gitcommit.MessageFile, "fix: a\n")
+	c.tty = "d\ny\n"
+	if code := c.run("commit"); code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, c.stderr.String())
+	}
+	if len(c.pages) != 1 || c.pages[0] != want {
+		t.Errorf("ページャーへ渡したもの = %q", c.pages)
+	}
+	if strings.Contains(c.stderr.String(), "想定外") {
+		t.Errorf("不要な注意: %q", c.stderr.String())
+	}
+}
+
+func TestDeltaOutputSafe(t *testing.T) {
+	for s, want := range map[string]bool{
+		"plain\n\t":           true,
+		"\x1b[0K":             true,
+		"\x1b[38;5;1mx\x1b[m": true,
+		"日本語":                 true,
+		"\x1b]8;;u\x07":       false,
+		"\x1b":                false,
+		"\x1b[":               false,
+		"\x1b[2J":             false,
+		"a\x07":               false,
+		"\u009b31m":           false,
+		"\xff":                false,
+	} {
+		if got := deltaOutputSafe(s); got != want {
+			t.Errorf("deltaOutputSafe(%q) = %v, want %v", s, got, want)
+		}
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"sigil/internal/gitcommit"
 	"sigil/internal/project"
@@ -188,14 +189,16 @@ func confirmCommit(d Deps, u *ui.UI, g gitcommit.Git, s gitcommit.Snapshot, v ui
 //
 // 差分はコンテナが書いた内容（信頼できない）なので、次の 3 つで守る。
 //  1. delta に渡す前に、行ごとに ui.Escape をかける。delta は生の制御文字を見ず、
-//     出力に残るエスケープは delta 自身の SGR だけになる（less -R に渡してよい）。
+//     出力に残るエスケープは delta 自身の SGR と `ESC[K`（行末まで消去）だけになる（less -R に渡してよい）。
 //  2. --no-gitconfig で、利用者の git config の [delta] を読ませない。hyperlinks が有効だと、
 //     コンテナが決めたファイル名が OSC 8 のリンクになり、macOS で .command などを
 //     クリックすると実行されうるため。hyperlinks は有効にしない。
 //     DELTA_FEATURES は --no-gitconfig でも効き、`hyperlinks` や `+hyperlinks` で OSC 8 が戻ってしまう。
 //     sigil は読まない変数なので、子プロセスにだけ空で渡して、利用者の値を上書きする（deniedEnvs の対象外）。
 //     ほかに機能を有効にする環境変数は delta --help にない（DELTA_PAGER は --paging=never で無関係）。
-//  3. 標準入力は tty を引き継がず、sigil が渡す文字列だけ。環境変数も足さない。
+//  3. 標準入力は tty を引き継がず、sigil が渡す文字列だけ。足す環境変数は 2 で述べた空の `DELTA_FEATURES=` だけ。
+//  4. delta が成功しても、出力を deltaOutputSafe で確かめる。less -R は OSC 8 を生で通すので、
+//     将来の delta が別の方法でハイパーリンクを出しても、SGR と `ESC[K` 以外なら捨てて組み込みの表示に戻す（多層防御）。
 //
 // --paging=never は、ページャーを sigil が起動するため（delta が less を起動しないように）。
 // --line-numbers は読みやすさのため（利用者の選択）。ほかの引数は足さない。
@@ -218,7 +221,43 @@ func diffContent(d Deps, u *ui.UI, diff string) string {
 		info(d, "注意: delta で差分を整形できませんでした（%s）。組み込みの表示を使います", ui.EscapeLine(err.Error()))
 		return u.DiffPage(diff)
 	}
+	if !deltaOutputSafe(out.String()) {
+		info(d, "注意: delta の出力に想定外の制御シーケンスが含まれていたので、組み込みの表示を使います")
+		return u.DiffPage(diff)
+	}
 	return out.String()
+}
+
+// deltaOutputSafe は、delta の出力が SGR（ESC [ ... m）と EL（ESC [ ... K）のほかに、
+// 端末へ効く制御を含まないかを確かめる。ESC は後ろが `[` の CSI だけ、BEL・C1 制御
+// （U+0080〜U+009F）・不正な UTF-8 は不可。less -R は OSC 8 などを生で通すため、
+// 入力を Escape した上でも、delta 側の想定外の出力をここで止める。
+func deltaOutputSafe(s string) bool {
+	for i := 0; i < len(s); {
+		r, n := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && n <= 1:
+			return false
+		case r == '\a' || (r >= 0x80 && r <= 0x9f):
+			return false
+		case r == '\x1b':
+			j := i + 1
+			if j >= len(s) || s[j] != '[' {
+				return false
+			}
+			j++
+			// パラメータ（0x30-0x3F）と中間（0x20-0x2F）のあと、最終バイトは m か K だけ
+			for j < len(s) && s[j] >= 0x20 && s[j] <= 0x3f {
+				j++
+			}
+			if j >= len(s) || (s[j] != 'm' && s[j] != 'K') {
+				return false
+			}
+			n = j + 1 - i
+		}
+		i += n
+	}
+	return true
 }
 
 // pushFlow は、upstream があれば push 先を見せて聞き、承認されたら pre-push を経て push する。

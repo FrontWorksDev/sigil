@@ -112,6 +112,8 @@ func TestSnapshotNameWithNewline(t *testing.T) {
 }
 
 func TestSnapshotRefusesGitlink(t *testing.T) {
+	tmpRoot := t.TempDir()
+	t.Setenv("TMPDIR", tmpRoot)
 	root, g := newRepo(t)
 	write(t, root, "a.txt", "a")
 	commitAll(t, g, "c1")
@@ -139,12 +141,8 @@ func TestSnapshotRefusesGitlink(t *testing.T) {
 		t.Error("失敗時は TmpDir が空のはず")
 	}
 	// 一時フォルダが残っていない
-	if m, _ := filepath.Glob(filepath.Join(os.TempDir(), "sigil-commit-*")); len(m) != 0 {
-		for _, p := range m {
-			if _, err := os.Stat(filepath.Join(p, "index")); err == nil {
-				t.Errorf("一時フォルダが残っています: %s", p)
-			}
-		}
+	if m, _ := filepath.Glob(filepath.Join(tmpRoot, "sigil-commit-*")); len(m) != 0 {
+		t.Errorf("一時フォルダが残っています: %v", m)
 	}
 }
 
@@ -273,4 +271,83 @@ func TestWarningsHooksDir(t *testing.T) {
 	if ws := Warnings(cs, r); len(ws) != 1 || !strings.Contains(ws[0].Reason, "ほかの人") {
 		t.Errorf("%+v", ws)
 	}
+}
+
+func TestSnapshotInitialCommitIgnoresRealIndex(t *testing.T) {
+	root, g := newRepo(t)
+	write(t, root, "a.txt", "a")
+	write(t, root, "b.txt", "b")
+	if _, err := g.Out(nil, "add", "b.txt"); err != nil {
+		t.Fatal(err)
+	}
+	s := snap(t, g, "a.txt")
+	if len(s.Changes) != 1 || s.Changes[0].Path != "a.txt" {
+		t.Errorf("%+v", s.Changes)
+	}
+}
+
+func TestSnapshotLeavesNoResetTraces(t *testing.T) {
+	root, g := newRepo(t)
+	write(t, root, "a.txt", "a")
+	commitAll(t, g, "c1")
+	write(t, root, "a.txt", "b")
+	before, _ := os.ReadFile(filepath.Join(root, ".git", "logs", "HEAD"))
+	snap(t, g)
+	after, _ := os.ReadFile(filepath.Join(root, ".git", "logs", "HEAD"))
+	if string(before) != string(after) {
+		t.Errorf("HEAD の reflog が変わっています:\n%s\n---\n%s", before, after)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".git", "ORIG_HEAD")); !os.IsNotExist(err) {
+		t.Errorf("ORIG_HEAD ができています: %v", err)
+	}
+}
+
+func TestSnapshotLFS(t *testing.T) {
+	lfsAttrs := "*.bin filter=lfs diff=lfs merge=lfs -text\n"
+	refuses := func(t *testing.T, g Git) {
+		t.Helper()
+		r, err := Inspect(g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = TakeSnapshot(g, r, nil)
+		var ref *Refusal
+		if !errors.As(err, &ref) {
+			t.Fatalf("Refusal を期待しましたが %v でした", err)
+		}
+	}
+	t.Run("top-level", func(t *testing.T) {
+		root, g := newRepo(t)
+		write(t, root, ".gitattributes", lfsAttrs)
+		write(t, root, "x.bin", "x")
+		refuses(t, g)
+	})
+	t.Run("ignored gitattributes", func(t *testing.T) {
+		root, g := newRepo(t)
+		write(t, root, ".gitignore", ".gitattributes\n")
+		write(t, root, ".gitattributes", lfsAttrs)
+		write(t, root, "x.bin", "x")
+		refuses(t, g)
+	})
+	t.Run("nested", func(t *testing.T) {
+		root, g := newRepo(t)
+		write(t, root, "sub/.gitattributes", lfsAttrs)
+		write(t, root, "sub/x.bin", "x")
+		refuses(t, g)
+	})
+	t.Run("not in commit", func(t *testing.T) {
+		root, g := newRepo(t)
+		write(t, root, ".gitattributes", lfsAttrs)
+		write(t, root, "x.bin", "x")
+		write(t, root, "ok.txt", "ok")
+		r, err := Inspect(g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := TakeSnapshot(g, r, []string{"ok.txt"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.Cleanup()
+	})
 }

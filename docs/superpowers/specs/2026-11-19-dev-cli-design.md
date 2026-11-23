@@ -481,7 +481,7 @@ issue #13。コンテナの `.git` は読み取り専用（8 章）なので、�
 2. **拒否する条件を調べる**（下の「拒否する条件」）。1 つでも当てはまれば、理由を出して終了する。
 3. **銘（メッセージのファイル）を読む**（下の「メッセージのファイル」）。
 4. **pre-commit の試練**: フックがあれば、コンテナで実行する。失敗したら、フックの出力を見せて終了する。
-5. **tree を確定する**。本物の index を、本人だけが読める一時フォルダ（`$TMPDIR/sigil-commit-*`、0700）に写し、`GIT_INDEX_FILE` でそれを指して、`git reset -q`（HEAD にそろえる。ファイルの状態の記録は残るので、全部を読み直さずに済む）→ `git add -A -- <pathspec>` → `git write-tree` を行う。pre-commit のフックが作業ツリーを整形していれば、整形後の内容がここで入る。
+5. **tree を確定する**。本人だけが読める一時フォルダ（`$TMPDIR/sigil-commit-*`、0700）に、本物の index を写し（更新時刻も引き継ぐ。最初のコミットで HEAD がないときは写さず、空の index から始める。利用者が add 済みの別のファイルが紛れ込まないように）、`GIT_INDEX_FILE` でそれを指して、`git reset -q HEAD -- :/`（HEAD にそろえる。ファイルの状態の記録は残るので、全部を読み直さずに済む。パスを付ける形にするのは、付けない `git reset` が本物の `ORIG_HEAD` と reflog に書くため）→ `git add -A -- <pathspec>` → `git write-tree` を行う。pre-commit のフックが作業ツリーを整形していれば、整形後の内容がここで入る。
 6. **prepare-commit-msg / commit-msg の試練**: フックがあれば、コンテナで実行する。フックが銘を書き換えたら、3 と同じ検査をやり直す。
 7. **確認の画面を出す**（下の「確認の画面」）。答えは `y` / `n` / `d`。`d` なら全差分をページャーで見せ、もう一度聞く。`y` / `Y` / `yes` / `YES` 以外は中止（コミットしない）。
 8. **刻印する**。`git commit-tree <tree> [-p HEAD] -F -`（銘は標準入力から渡す）で commit を作り、`git update-ref -m "commit (sigil): <件名>" HEAD <新> <旧>` で、HEAD が 1 のときから動いていないことを条件にブランチを進める。動いていれば（別の端末でコミットされたなど）、エラーにして index も変えない。そのあと本物の index で `git reset -q -- <pathspec>` を行い、コミットした分を HEAD にそろえる（pathspec の外の、利用者が add してあった状態は残す）。
@@ -510,10 +510,11 @@ git -C <root> -c core.hooksPath=/dev/null -c core.fsmonitor=false -c submodule.r
 
 ### 拒否する条件
 
-- **作業ツリーの中から読み込まれる設定がある**。`git config --show-origin --list` の読み込み元に、作業ツリーの中（`.git` の外）のファイルがあれば拒否する（`[include] path = ../.gitconfig` など）。コンテナが設定を書き換えられると、`core.sshCommand`、`gpg.program`、`credential.helper` などで、ホストでコードを実行できる。`-c` で 1 つずつ打ち消すことはできない。
+- **作業ツリーの中から読み込まれる設定がある**。`git config --show-origin --list` の読み込み元に、作業ツリーの中（`.git` の外）のファイルがあれば拒否する（`[include] path = ../.gitconfig` など）。コンテナが設定を書き換えられると、`core.sshCommand`、`gpg.program`、`credential.helper` などで、ホストでコードを実行できる。`-c` で 1 つずつ打ち消すことはできない。`include.path` と `includeIf.*.path` は、値を解決して（先頭の `~/` はホーム、相対パスは書かれたファイルのあるフォルダから）、作業ツリーの中（`.git` の外）を指すなら、ファイルがまだなくても拒否する（のちに作られると読み込まれるため）。見かけのパスと、リンクを解いたパスのどちらかが中なら拒否する。
+- **`.git` が `<Root>/.git` の本物のフォルダでない**。GitDir と CommonDir がどちらも `<Root>/.git`（リンクを解いて比べる）で、それが `lstat` でフォルダ（リンクや gitfile でない）でなければ拒否する。リンクされた worktree と `--separate-git-dir` は対応しない（手動でコミットしてもらう）。`.git` が作業ツリーの中を指す gitfile だと、「`.git` の中の設定は安全」という前提が崩れるため。Root が `git rev-parse --show-toplevel` と違うときは、呼び出しの誤りとしてエラーにする。
 - **進行中の操作がある**。`MERGE_HEAD`、`CHERRY_PICK_HEAD`、`REVERT_HEAD`、`rebase-merge/`、`rebase-apply/` があれば拒否する。`commit-tree` では、マージの親などを正しく残せないため。
 - **gitlink の追加・変更がある**。確定した tree と HEAD の差分に mode 160000 の追加・変更があれば拒否する。コンテナが作った入れ子のリポジトリ（`sub/.git/config`）は、のちにホストの git が中の設定（fsmonitor など）を読むきっかけになる。変更のない既存のサブモジュールはかまわない。
-- **LFS を使っている**。作業ツリーのどこかの `.gitattributes` に `filter=lfs` があるか、`.lfsconfig` があれば、「LFS のリポジトリには対応していません。手動でコミット・push してください」と出して終了する。LFS の実体は pre-push のフック（ホストの `git lfs`）で送られるので、フックを止めると届かない。ホストで `git lfs push` を呼ぶと、作業ツリーの `.lfsconfig` を読むことになる。
+- **LFS を使っている**。確定した tree に入るパス（削除を除く）を `git check-attr -z --stdin filter`（一時の index を指して）に渡し、`lfs` になるものがあるか、作業ツリーの最上位に `.lfsconfig` があれば、「LFS のリポジトリには対応していません。手動でコミット・push してください」と出して終了する。LFS の実体は pre-push のフック（ホストの `git lfs`）で送られるので、フックを止めると届かない。ホストで `git lfs push` を呼ぶと、作業ツリーの `.lfsconfig` を読むことになる。
 - **フックの場所がプロジェクトの外にある**（下の「フック」）。
 - **コミットするものがない**（確定した tree が HEAD と同じ）。「刻むものがありません」と出して終了コード 1。
 
@@ -530,7 +531,7 @@ git -C <root> -c core.hooksPath=/dev/null -c core.fsmonitor=false -c submodule.r
 フックの中身はプロジェクトのコードなので、コンテナで実行する。コンテナが結果を偽っても、フックは品質の関所なので、セキュリティ上は何も失わない。
 
 - **対象**: pre-commit、prepare-commit-msg、commit-msg、pre-push。post-commit などは実行しない（関所ではないため）。
-- **場所**: ホストで `git rev-parse --git-path hooks` で求めた、`core.hooksPath` を反映したフォルダ。プロジェクトの中（`.git/hooks` を含む）なら、コンテナ内のパスに読み替える。プロジェクトの外（全体設定の `core.hooksPath` など）はコンテナから見えないので、フックがあれば拒否する。
+- **場所**: ホストで、設定ファイルの `core.hooksPath`（相対パスは作業ツリーの最上位から。空の値は最上位。`~user/` と `%(prefix)/` は対応しない）から求めたフォルダ。なければ `.git/hooks`。`git rev-parse --git-path hooks` は使わない（sigil は常に `-c core.hooksPath=/dev/null` を付けて git を呼ぶので、答えが変わってしまうため）。プロジェクトの中（`.git/hooks` を含む）なら、コンテナ内のパスに読み替える。プロジェクトの外（全体設定の `core.hooksPath` など）はコンテナから見えないので、フックがあれば拒否する。
 - **あるかどうか**: ホストで、そのフォルダにその名前の実行できるファイルがあるかで判定する。1 つもなければ docker を使わない。
 - **コンテナの状態**: フックがあるのにコンテナが実行中でなければ、「sigil で領域を開いてから、もう一度実行してください」とエラー。
 - **実行のしかた**: `docker exec -i -w <コンテナ内の最上位> <name> sh -c '<sigil が持つ固定のスクリプト>' sh <フックのパス> <引数...>`。フックのパス・pathspec・リモート名などは位置引数で渡し、**シェルの文字列に埋め込まない**。
@@ -639,3 +640,10 @@ git -C <root> -c core.hooksPath=/dev/null -c core.fsmonitor=false -c submodule.r
 | 2026-11-23 | コンテナが書いた内容（差分、ファイル名、銘、フックの出力）は、制御文字を見える形に置き換えてから sigil が色を付ける。`git --color` の出力は使わない | コンテナの ESC が混ざると、偽の表示を作れるため |
 | 2026-11-23 | 刻印（`commit-tree` / `update-ref`）と push は、演出を描かずに行う。演出は、コンテナでフックを実行するあいだと、済んだあとの明滅・結果の枠にだけ付ける | 署名の pinentry や 1Password、SSH のパスフレーズの確認が端末に出ることがあり、描画とぶつかるため。待ち時間を足さない方針（16 章）にも合う |
 | 2026-11-23 | 作業ツリーの中を指す `core.hooksPath` / `include.path` を、手で `git commit` するときのために `sigil` が知らせる機能は、別の issue にする | 今回の範囲を絞るため（利用者の判断） |
+| 2026-11-23 | 最初のコミット（HEAD なし）では、本物の index を写さず、空の index から tree を作る | 利用者が add 済みの別のファイルが、pathspec の外なのに紛れ込むため |
+| 2026-11-23 | HEAD にそろえるには `git reset -q HEAD -- :/` を使う（パスなしの `git reset -q` は使わない） | パスなしだと本物の `ORIG_HEAD` と HEAD の reflog に書いてしまうため |
+| 2026-11-23 | LFS は、`.gitattributes` を読むのではなく、コミットに入るパスの `filter` 属性（`check-attr`）で調べる。`.lfsconfig` の有無は従来どおり | ファイルを自分で読むと、確かめてから読むまでにリンクへ差し替えられたり、`.gitignore` 済みの `.gitattributes`（git は使う）を取りこぼしたりするため。実際に適用される属性を git に聞くのが確実 |
+| 2026-11-23 | `include.path` / `includeIf.*.path` は、値を解決し、作業ツリーの中を指せば（ファイルがなくても）拒否する | 読み込み元の一覧には、まだないファイルが出ないため。のちにコンテナが作ると読み込まれる |
+| 2026-11-23 | `.git` が `<Root>/.git` の本物のフォルダでなければ拒否する（リンクされた worktree、`--separate-git-dir`、gitfile は対応しない） | gitfile が作業ツリーの中を指すと、「`.git` の中の設定は安全」という例外が、コンテナの書ける場所に効いてしまうため |
+| 2026-11-23 | 設定の読み込み元は、見かけのパスとリンクを解いたパスのどちらかが作業ツリーの中なら拒否する | リンクを使った回避を防ぐため |
+| 2026-11-23 | フックの場所は、設定ファイルの `core.hooksPath` から自分で求める（既定は `.git/hooks`、空は作業ツリーの最上位） | `rev-parse --git-path hooks` は、sigil が常に付ける `-c core.hooksPath=/dev/null` に上書きされるため |

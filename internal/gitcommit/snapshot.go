@@ -63,14 +63,24 @@ func TakeSnapshot(g Git, r Repo, pathspec []string) (s Snapshot, err error) {
 	}()
 
 	idx := filepath.Join(tmp, "index")
-	// 本物の index がなければ写さない（空の index から始まる）。
-	if b, rerr := os.ReadFile(filepath.Join(r.GitDir, "index")); rerr == nil {
-		if err = os.WriteFile(idx, b, 0o600); err != nil {
-			return Snapshot{}, fmt.Errorf("index を写せませんでした: %s", ui.Escape(err.Error()))
+	// 最初のコミット（HEAD なし）では写さない。空の index から始めないと、
+	// 利用者が add 済みの別のファイルが、pathspec の外なのに紛れ込む。
+	// HEAD があるときは、写してから HEAD にそろえる（記録が残り、読み直しが減る）。
+	if r.Head != "" {
+		// 本物の index がなければ写さない（空の index から始まる）。
+		if b, rerr := os.ReadFile(filepath.Join(r.GitDir, "index")); rerr == nil {
+			if err = os.WriteFile(idx, b, 0o600); err != nil {
+				return Snapshot{}, fmt.Errorf("index を写せませんでした: %s", ui.Escape(err.Error()))
+			}
+			// 更新時刻も引き継ぐ。新しい時刻になると、git が「同じ時刻に書き換わったファイル」
+			// （racy）の中身の確認を省き、サイズが同じ変更を見落とすため。
+			if st, serr := os.Stat(filepath.Join(r.GitDir, "index")); serr == nil {
+				_ = os.Chtimes(idx, st.ModTime(), st.ModTime())
+			}
+		} else if !os.IsNotExist(rerr) {
+			err = fmt.Errorf("index を読めませんでした: %s", ui.Escape(rerr.Error()))
+			return Snapshot{}, err
 		}
-	} else if !os.IsNotExist(rerr) {
-		err = fmt.Errorf("index を読めませんでした: %s", ui.Escape(rerr.Error()))
-		return Snapshot{}, err
 	}
 	gi := g.With("GIT_INDEX_FILE=" + idx)
 
@@ -82,8 +92,9 @@ func TakeSnapshot(g Git, r Repo, pathspec []string) (s Snapshot, err error) {
 			return Snapshot{}, err
 		}
 		base = strings.TrimSpace(out)
-	} else if _, err = gi.Out(nil, "reset", "-q"); err != nil {
-		// HEAD にそろえる。ファイルの状態の記録は残るので、全部を読み直さずに済む。
+	} else if _, err = gi.Out(nil, "reset", "-q", "HEAD", "--", ":/"); err != nil {
+		// HEAD にそろえる。パスを付ける形にするのは、付けない reset が
+		// ORIG_HEAD と HEAD の reflog に書いてしまうため（本物の記録を汚さない）。
 		return Snapshot{}, err
 	}
 
@@ -121,6 +132,12 @@ func TakeSnapshot(g Git, r Repo, pathspec []string) (s Snapshot, err error) {
 	}
 	if len(changes) == 0 {
 		err = ErrNothing
+		return Snapshot{}, err
+	}
+
+	// LFS は、コミットに入るパスの filter 属性で調べる。.gitattributes のファイルを
+	// 自分で読むと、読む間の差し替えや、.gitignore 済みのファイルを取りこぼす。
+	if err = checkLFS(gi, changes); err != nil {
 		return Snapshot{}, err
 	}
 
@@ -250,6 +267,33 @@ func fillBlobInfo(g Git, cs []Change) error {
 				return err
 			}
 			cs[i].LinkTarget = t
+		}
+	}
+	return nil
+}
+
+// checkLFS は、コミットに入るパスのどれかが filter=lfs なら *Refusal を返す。
+// パスは標準入力で渡す（引数の長さの上限を避ける）。
+func checkLFS(g Git, cs []Change) error {
+	var in strings.Builder
+	for _, c := range cs {
+		if c.Status != 'D' {
+			in.WriteString(c.Path)
+			in.WriteByte(0)
+		}
+	}
+	if in.Len() == 0 {
+		return nil
+	}
+	out, err := g.Out(strings.NewReader(in.String()), "check-attr", "-z", "--stdin", "filter")
+	if err != nil {
+		return err
+	}
+	// 書式: <パス>\0<属性>\0<値>\0 の繰り返し
+	toks := strings.Split(out, "\x00")
+	for i := 0; i+2 < len(toks); i += 3 {
+		if toks[i+2] == "lfs" {
+			return lfsRefusal()
 		}
 	}
 	return nil

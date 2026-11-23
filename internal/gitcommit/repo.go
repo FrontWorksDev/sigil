@@ -1,6 +1,7 @@
 package gitcommit
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,6 +48,15 @@ func Inspect(g Git) (Repo, error) {
 	}
 	r := Repo{Root: root}
 
+	// 呼び出し側の取り違えを防ぐ。Root が最上位でないと、「.git が Root の直下」という前提が崩れる。
+	top, err := g.Out(nil, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return r, err
+	}
+	if resolve(strings.TrimSpace(top)) != resolve(root) {
+		return r, fmt.Errorf("プロジェクトのフォルダ（%s）が git の最上位ではありません", ui.EscapeLine(root))
+	}
+
 	// 1. HEAD がブランチを指していること（まだコミットがなくてもよい）
 	br, err := g.Out(nil, "symbolic-ref", "-q", "HEAD")
 	if err != nil {
@@ -65,6 +75,15 @@ func Inspect(g Git) (Repo, error) {
 	}
 	r.CommonDir = absFrom(root, strings.TrimSpace(cd))
 
+	// .git が作業ツリーの直下の本物のフォルダであること。gitfile（.git がファイル）や
+	// リンクだと、設定の置き場が作業ツリーの中になり、「.git の中の設定は安全」という前提が崩れる。
+	// 別の場所の .git や、リンクされた worktree も同じ理由で対象外にする。
+	dotGit := filepath.Join(root, ".git")
+	fi, err := os.Lstat(dotGit)
+	if err != nil || !fi.IsDir() || resolve(r.GitDir) != resolve(dotGit) || resolve(r.CommonDir) != resolve(dotGit) {
+		return r, refuse("このリポジトリの形（リンクされた worktree、.git がファイルやリンク、別の場所の .git）には対応していません。手動でコミットしてください")
+	}
+
 	if h, err := g.Out(nil, "rev-parse", "-q", "--verify", "HEAD"); err == nil {
 		r.Head = strings.TrimSpace(h)
 	}
@@ -75,22 +94,45 @@ func Inspect(g Git) (Repo, error) {
 		return r, err
 	}
 	entries := parseConfig(cfg)
+	// 見かけのパスと実体のパスの、どちらかが作業ツリーの中（.git の外）なら危険とみなす。
+	bad := func(p string) bool {
+		return inWorktree(root, dotGit, filepath.Clean(p)) || inWorktree(resolve(root), resolve(dotGit), resolve(p))
+	}
+	refuseCfg := func(p string) *Refusal {
+		return refuse("作業ツリーの中のファイル（" + ui.EscapeLine(relOr(root, p)) +
+			"）が git の設定として読み込まれます。コンテナが設定を書き換えると、ホストでコードを実行できてしまうため、中止しました。手動でコミットしてください")
+	}
 	for _, e := range entries {
 		if !strings.HasPrefix(e.origin, "file:") {
 			continue
 		}
-		p := absFrom(root, strings.TrimPrefix(e.origin, "file:"))
-		if within(root, p) && !within(r.GitDir, p) && !within(r.CommonDir, p) {
-			return r, refuse("作業ツリーの中のファイル（" + ui.EscapeLine(relOr(root, p)) +
-				"）が git の設定として読み込まれています。コンテナが設定を書き換えると、ホストでコードを実行できてしまうため、中止しました。手動でコミットしてください")
+		origin := absFrom(root, strings.TrimPrefix(e.origin, "file:"))
+		if bad(origin) {
+			return r, refuseCfg(origin)
+		}
+		// include / includeIf のパスは、ファイルがなくても、のちに作られると読み込まれる。
+		if e.key == "include.path" || (strings.HasPrefix(e.key, "includeif.") && strings.HasSuffix(e.key, ".path")) {
+			v := e.value
+			if strings.HasPrefix(v, "~/") {
+				if home, err := os.UserHomeDir(); err == nil {
+					v = filepath.Join(home, v[2:])
+				}
+			}
+			if !filepath.IsAbs(v) {
+				v = filepath.Join(filepath.Dir(origin), v)
+			}
+			if p := filepath.Clean(v); bad(p) {
+				return r, refuseCfg(p)
+			}
 		}
 	}
 
 	// フックの場所。-c core.hooksPath=/dev/null が優先されてしまうので、
 	// rev-parse --git-path は使わず、設定ファイルの値を自分で読む。
+	// 空の値は git と同じく作業ツリーの最上位。~user/ と %(prefix)/ には対応しない。
 	r.HooksDir = filepath.Join(r.CommonDir, "hooks")
 	for _, e := range entries {
-		if e.key == "core.hookspath" && strings.HasPrefix(e.origin, "file:") && e.value != "" {
+		if e.key == "core.hookspath" && strings.HasPrefix(e.origin, "file:") {
 			v := e.value
 			if strings.HasPrefix(v, "~/") {
 				if home, err := os.UserHomeDir(); err == nil {
@@ -109,33 +151,28 @@ func Inspect(g Git) (Repo, error) {
 		}
 	}
 
-	// 4. LFS
-	lfs := refuse("LFS のリポジトリには対応していません。手動でコミット・push してください")
+	// 4. LFS。.gitattributes の filter=lfs は、コミットに入るパスごとに TakeSnapshot が check-attr で調べる。
 	if _, err := os.Lstat(filepath.Join(root, ".lfsconfig")); err == nil {
-		return r, lfs
-	}
-	list, err := g.Out(nil, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", ":(glob)**/.gitattributes")
-	if err != nil {
-		return r, err
-	}
-	for _, rel := range strings.Split(list, "\x00") {
-		if rel == "" {
-			continue
-		}
-		p := filepath.Join(root, filepath.FromSlash(rel))
-		// リンクの先を読まない。git も、リンクの .gitattributes は使わない。
-		if fi, err := os.Lstat(p); err != nil || !fi.Mode().IsRegular() {
-			continue
-		}
-		b, err := os.ReadFile(p)
-		if err != nil {
-			continue
-		}
-		if strings.Contains(string(b), "filter=lfs") {
-			return r, lfs
-		}
+		return r, lfsRefusal()
 	}
 	return r, nil
+}
+
+func lfsRefusal() *Refusal {
+	return refuse("LFS のリポジトリには対応していません。手動でコミット・push してください")
+}
+
+// inWorktree は p が root の中で、かつ dotGit の外かを返す（見た目のパスだけで比べる）。
+func inWorktree(root, dotGit, p string) bool {
+	return lexWithin(root, p) && !lexWithin(dotGit, p)
+}
+
+func lexWithin(dir, p string) bool {
+	rel, err := filepath.Rel(dir, p)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 type configEntry struct {
@@ -161,23 +198,22 @@ func absFrom(base, p string) string {
 	return filepath.Clean(p)
 }
 
-// within は p が dir の中（dir 自身を含む）かを返す。
-// macOS の /var → /private/var のようなリンクの違いで取り違えないよう、実体のパスで比べる。
-func within(dir, p string) bool {
-	dir, p = resolve(dir), resolve(p)
-	rel, err := filepath.Rel(dir, p)
-	if err != nil {
-		return false
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
+// resolve はリンクを解いた実体のパスを返す（macOS の /var → /private/var など）。
+// 存在しないパスは、存在する一番深い親を解いて、残りをつなぐ。
 func resolve(p string) string {
 	p = filepath.Clean(p)
-	if e, err := filepath.EvalSymlinks(p); err == nil {
-		return e
+	rest := ""
+	for q := p; ; {
+		if e, err := filepath.EvalSymlinks(q); err == nil {
+			return filepath.Join(e, rest)
+		}
+		parent := filepath.Dir(q)
+		if parent == q {
+			return p
+		}
+		rest = filepath.Join(filepath.Base(q), rest)
+		q = parent
 	}
-	return p
 }
 
 func relOr(root, p string) string {

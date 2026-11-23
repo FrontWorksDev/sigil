@@ -27,11 +27,24 @@ func TestInspectRefuses(t *testing.T) {
 				t.Fatal(err)
 			}
 		},
+		"include missing file": func(t *testing.T, root string, g Git) {
+			f, err := os.OpenFile(filepath.Join(root, ".git", "config"), os.O_APPEND|os.O_WRONLY, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			if _, err := f.WriteString("[include]\n\tpath = ../.gitconfig-proj\n[includeIf \"gitdir:/nonexistent/\"]\n\tpath = ../.gitconfig-if\n"); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"gitfile into worktree": func(t *testing.T, root string, g Git) {
+			if err := os.Rename(filepath.Join(root, ".git"), filepath.Join(root, "gitdir")); err != nil {
+				t.Fatal(err)
+			}
+			write(t, root, ".git", "gitdir: "+filepath.Join(root, "gitdir")+"\n")
+		},
 		"MERGE_HEAD": func(t *testing.T, root string, g Git) {
 			write(t, root, ".git/MERGE_HEAD", "0000000000000000000000000000000000000000\n")
-		},
-		"lfs attributes": func(t *testing.T, root string, g Git) {
-			write(t, root, "sub/.gitattributes", "*.bin filter=lfs diff=lfs merge=lfs -text\n")
 		},
 		"lfsconfig": func(t *testing.T, root string, g Git) {
 			write(t, root, ".lfsconfig", "[lfs]\n\turl = https://example.com\n")
@@ -82,6 +95,55 @@ func TestInspectOK(t *testing.T) {
 		t.Errorf("Head=%q", r.Head)
 	}
 	if r.HooksDir != root+"/.husky/_" {
+		t.Errorf("HooksDir=%q", r.HooksDir)
+	}
+}
+
+func TestInspectRefusesLinkedWorktree(t *testing.T) {
+	root, g := newRepo(t)
+	write(t, root, "a.txt", "a")
+	commitAll(t, g, "c1")
+	other, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt := filepath.Join(other, "wt")
+	if _, err := g.Out(nil, "worktree", "add", "-q", "-b", "wt", wt); err != nil {
+		t.Fatal(err)
+	}
+	wg := g
+	wg.Root = wt
+	_, err = Inspect(wg)
+	var ref *Refusal
+	if !errors.As(err, &ref) {
+		t.Fatalf("Refusal を期待しましたが %v でした", err)
+	}
+}
+
+func TestInspectRootMustBeToplevel(t *testing.T) {
+	root, g := newRepo(t)
+	write(t, root, "sub/a.txt", "a")
+	g.Root = filepath.Join(root, "sub")
+	_, err := Inspect(g)
+	if err == nil {
+		t.Fatal("エラーを期待しました")
+	}
+	var ref *Refusal
+	if errors.As(err, &ref) {
+		t.Errorf("Refusal ではなく通常のエラーのはず: %v", err)
+	}
+}
+
+func TestInspectEmptyHooksPath(t *testing.T) {
+	root, g := newRepo(t)
+	if _, err := g.Out(nil, "config", "core.hooksPath", ""); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Inspect(g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.HooksDir != root {
 		t.Errorf("HooksDir=%q", r.HooksDir)
 	}
 }

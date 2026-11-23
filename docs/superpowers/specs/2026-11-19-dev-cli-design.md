@@ -385,6 +385,7 @@ Docker・git・op・端末がなくても `go test ./...` が通ること。少�
   - このリポジトリ自体をホストで動かすことの注意: コンテナ内で編集したら、ホストで `git diff` を確認してからビルドする。
 - `Makefile` に `build` / `install`（`~/.local/bin/sigil`）/ `test` / `vet` がある。
 - `docs/SPEC.md` を削除し、仕様はこの設計書に一本化されている。
+- 18 章の CI が PR で通る。
 
 ## 16. 表示（演出）
 
@@ -581,6 +582,49 @@ git -C <root> -c core.hooksPath=/dev/null -c core.fsmonitor=false -c submodule.r
 - `y` なら、pre-push のフックがあればコンテナで実行し、失敗したら push しない。続けて `git ... push --no-verify --recurse-submodules=no <remote> <刻印したコミットの id>:<merge の ref>` を実行する。`HEAD` を送ると、確認や pre-push のあいだに HEAD が動いたとき、利用者が見ていないコミットまで送ってしまうため。`--recurse-submodules=no` は、利用者の全体設定（`push.recurseSubmodules`）があっても、サブモジュールの中で git を動かさないため。SSH のパスフレーズなどを端末で聞かれることがあるので、描画はせず、git の出力はそのまま流す（相手は利用者が設定したリモートで、コンテナではない）。
 - 断られたら push せず、コミットは残す。push に失敗しても、コミットは残し、その旨を出して終了コード 1。
 
+## 18. CI（GitHub Actions）
+
+issue #5。sigil はホストで動く唯一の信頼された道具なので、CI もサプライチェーン攻撃を前提に組む。
+
+### ワークフロー
+
+| ファイル | きっかけ | すること |
+|---|---|---|
+| `.github/workflows/ci.yml` | main への push、`pull_request` | テスト・静的検査・ビルド・外部モジュールがないことの確認・Codecov への送信 |
+| `.github/workflows/vulncheck.yml` | main への push、`pull_request`、週 1 回の `schedule`、`workflow_dispatch` | govulncheck だけ |
+
+- **ci.yml の test**: `ubuntu-latest` と `macos-latest` で回す（大文字小文字を区別しないファイルシステムなど、macOS でしか意味を持たないテストがあるため）。
+  - `go test -race -coverprofile=coverage.out ./...`、`go vet ./...`、`gofmt -l .` の出力が空であること。
+  - `-race` は cgo を使うが、テストのときだけ。sigil 本体のビルドは `CGO_ENABLED=0` のまま（3 章）。
+- **ci.yml の build**: Linux のランナーから `CGO_ENABLED=0 GOOS=darwin GOARCH=arm64` と `amd64` で `go build -trimpath` する。
+- **外部モジュールがないこと**: `go list -m all` の出力が `sigil` だけであることを確かめる。`go.mod` を grep するより、Go 自身の解釈で見るほうが確実なため。
+- **Codecov**: ubuntu の `coverage.out` だけを送る。`CODECOV_TOKEN` は Secrets に入れる。フォークからの PR には Secrets が渡らないので、トークンなしでの送信（公開リポジトリで使える tokenless upload）に任せる。`pull_request_target` は使わない（フォークのコードに Secrets を渡すため）。codecov-action は実行時に Codecov の CLI を別にダウンロードし、これはロックファイルで固定されないので、action の入力で CLI の版も固定する。README にバッジを付ける。
+- **govulncheck**: `go install golang.org/x/vuln/cmd/govulncheck@<版>` で版を固定して入れ（`@latest` にしない）、`govulncheck ./...` が脆弱性を見つけたら失敗させる。ランナーの中だけで使い、ホストにも `go.mod` にも入れない（外部モジュールを入れない方針は sigil 本体のコードの話で、CI の道具は当たらない）。対処は `.tool-versions` と `go.mod` の Go の版を上げること。脆弱性はコードを変えなくても後から公表されるので、定期実行でも動かす。govulncheck の版は Dependabot では拾えないので、手で上げる（四半期に 1 回を目安にする）。
+- **Go の版**: `actions/setup-go` に `go-version-file: .tool-versions` を渡し、手元と同じ版にする。`GOTOOLCHAIN=local` にして、`go.mod` を理由に別の版のツールチェーンをダウンロードさせない。
+
+### 守ること
+
+- **`permissions: contents: read`** をワークフローの先頭に書き、書き込み権限を渡さない。
+- `actions/checkout` は `persist-credentials: false` にする（後の手順にトークンを残さない）。
+- 使う Actions は `actions/checkout`、`actions/setup-go`、`codecov/codecov-action` に限る。別のリポジトリの再利用ワークフローとコンテナイメージは使わない（ロックファイルで固定されないため）。
+
+### Actions の固定（gh-actions-lock）
+
+GitHub 公式の gh の拡張 `github/gh-actions-lock` で、ワークフローが使う Actions を、間接的に使うもの（composite action の中など）も含めて、正確なコミットに固定する。固定した結果は `.github/workflows/actions.lock` に記録し、コミットする。
+
+- **ロックファイルは手元（ホスト）で作る**。ワークフローを足したときと、`uses:` を変えたときに `gh actions-lock` を実行する。コミットの前に `gh actions-lock --verify-local`（オフラインで、すべての `uses:` がロックファイルにあるかを見る）を通す。拡張はホストに版を固定して入れる（`gh extension install github/gh-actions-lock --pin <版>`）。
+- ロックファイルに載ったワークフローは、YAML のタグではなく、ロックされたコミットで動く（docs.github.com「Workflow dependency lockfiles」）。そのため YAML の `uses:` は読みやすいタグ（`v7.0.1` など）のまま書く。
+- **CI では拡張を入れない**（`--verify` のワークフローを作らない）。実行を止めるのは、ジョブの開始時のランナー側の確認で、CI の `--verify` は、それより先に分かりやすく落とすだけの補助になるため。
+- ロックファイルに載っていないワークフローの実行は、リポジトリのポリシー「Require lockfile」（Settings → Actions → Policies）で止める。個人のアカウントの公開リポジトリで使えるかは、ドキュメントに書かれていないので、設定画面で確かめる。使えず、ロックされたコミットで動くことも確かめられなければ、YAML の `uses:` もコミットの SHA で固定する（`actions/checkout@<40 文字の SHA> # v7.0.1`）。
+- **ロックファイルの差分は必ず読む**。`v4` のような動くタグが古いコミットに戻されても検出されない（gh-actions-lock の Limitations）。`--accept-moved` は使わない。
+- 更新は Dependabot（`github-actions` だけ）に PR を作らせる。Dependabot は、ロックファイルに載ったワークフローのエントリも更新する（ドキュメントによる）。取り込む前にロックファイルの差分を読む。更新されていなければ、その PR のブランチで、ホストで `gh actions-lock --relock` を実行する。
+
+### GitHub 側の設定（利用者が行う）
+
+- Codecov にリポジトリを登録し、`CODECOV_TOKEN` を Secrets に入れる。
+- main ブランチの保護で、ci.yml と vulncheck.yml のジョブの成功をマージの条件にする。
+- Settings → Actions → Policies で「Require lockfile」のポリシーを作り、Active にする（使えるかを確かめる）。
+
 ## 決定事項
 
 | 日付 | 決定 | 理由 |
@@ -665,3 +709,5 @@ git -C <root> -c core.hooksPath=/dev/null -c core.fsmonitor=false -c submodule.r
 | 2026-11-23 | 銘のファイルは `git add` の除く指定（`:(exclude,top).sigil-commit`）で外さず、`add -A -- <add の pathspec>` のあとで一時 index から戻す（HEAD があれば `reset -q HEAD -- ':(top,literal).sigil-commit'`、なければ `rm --cached -q --ignore-unmatch`）。ホストとコンテナの pre-commit で同じ手順にする。刻印後の本物の index の `reset` は除く指定を残す。`-- .sigil-commit` の指定はエラーにする | `.sigil-commit` を `.gitignore` に入れると（README の勧めどおり）、除く指定で名指ししただけで `git add` が「無視されたパス」として失敗する（git 2.47 / 2.54 / 2.56 で確認）。実機の確認で、コンテナの pre-commit がこれで止まった。テストは `.gitignore` に入れていなかったので見落とした。`reset` は `.gitignore` の影響を受けず、除く指定のままなら、利用者が add してあった銘のファイルの変更を消さずに済む |
 | 2026-11-23 | 状態の印を ASCII の記号（`+` `~` `-` `→`）にする | 装飾記号（Dingbats）は端末やフォントで幅や大きさがそろわず、見栄えが悪かった（実機確認での利用者の判断） |
 | 2026-11-23 | `sigil commit` の `d` は、ホストに delta があれば delta で差分を整形する。事前に制御文字を置き換え、`--no-gitconfig --paging=never --line-numbers` で呼び、なければ・失敗したら組み込みの表示に戻す。Plain / Mono では使わない | 読みやすさのための利用者の判断（issue #13）。差分はコンテナの内容なので、delta に生の制御文字を渡さず（出力は delta 自身の SGR と `ESC[K` だけになり `less -R` に渡せる）、`[delta]` の設定を読ませず、環境変数 `DELTA_FEATURES` は子プロセスにだけ空で渡して上書きする（`DELTA_FEATURES=hyperlinks` は `--no-gitconfig` でも OSC 8 を戻す。実機で確認）（hyperlinks で、コンテナが決めたファイル名が OSC 8 のクリックできるリンクになり、`.command` の実行につながるため）。受け入れる危険: 利用者が入れた delta（git や less と同じ立場）が信頼できない内容を解釈するので、delta 自身の不具合は残る。軽減は、事前の置き換え・`--no-gitconfig`・フォールバック |
+| 2026-11-23 | CI を ci.yml（テスト・静的検査・ビルド・Codecov）と vulncheck.yml（govulncheck。定期実行も）に分ける | issue #5。定期実行は govulncheck だけでよく、ファイルを分ければ `if:` でほかのジョブを止める必要がない |
+| 2026-11-23 | Actions は gh-actions-lock で固定する。拡張はホストに版を固定して入れ、ロックファイルは手元で作る。CI では拡張を入れず `--verify` も回さない。止めるのはランナー側の確認（ロックされたコミットで動くことと、ポリシー「Require lockfile」）に任せ、どちらも確かめられなければ YAML も SHA で固定する | issue #5。公式で、間接的に使う Actions も固定でき、ランナー側の確認と連動する（ほかの候補は pinact、unfunco/gh-pin、amenocal/gh-pin-actions）。拡張はほかのプロジェクトでも使うので、コンテナではなくホストに入れる（GitHub 公式で、gh 自体をすでにホストで信頼しているため。利用者の判断）。CI の `--verify` は、ロックファイルの誤りをランナーより先に知らせるだけの補助で、一人で開発するこのリポジトリでは、CI で拡張を入れて版を管理する手間に見合わない（利用者の判断） |

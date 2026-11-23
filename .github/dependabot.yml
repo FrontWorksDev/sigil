@@ -1,0 +1,10 @@
+# Actions の更新だけを PR にする（設計書 18 章）。sigil は外部モジュールを使わないので gomod は対象にしない。
+# Dependabot は .github/workflows/actions.lock のエントリも更新する。取り込む前に、ロックファイルの差分を読む
+# （動くタグが古いコミットに戻されても検出されないため）。更新されていなければ、その PR のブランチで、
+# ホストから `gh actions-lock --relock` を実行する。
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

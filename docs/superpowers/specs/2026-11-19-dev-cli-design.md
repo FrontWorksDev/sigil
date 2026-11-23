@@ -551,7 +551,7 @@ git -C <root> -c core.hooksPath=/dev/null -c core.fsmonitor=false -c submodule.r
 標準エラーに出す。枠と色で飾るが、動きは付けない（16 章）。上から次の順。
 
 1. 見出しの枠: `⟡ 刻印の儀 ── コミットの確認`、ブランチ、HEAD の短いハッシュと件名、pathspec（指定したときだけ）。
-2. **刻むもの（コミットに含まれるファイル）**: 確定した tree と HEAD の差分の、すべてのファイル。状態ごとの印・言葉・色（`✚ 追加` 緑、`✎ 変更` 黄、`✖ 削除` 赤、`➜ 名前の変更` シアン）と、増減の数とバー（`+12 -3 ████▌`）。バイナリは大きさを出す。判断の画面では、内容（パス、銘、理由、push 先、参照）を切り詰めず、端末の幅で折り返す。
+2. **刻むもの（コミットに含まれるファイル）**: 確定した tree と HEAD の差分の、すべてのファイル。状態ごとの印・言葉・色（`+ 追加` 緑、`~ 変更` 黄、`- 削除` 赤、`→ 名前の変更` シアン）と、増減の数とバー（`+12 -3 ████▌`）。バイナリは大きさを出す。判断の画面では、内容（パス、銘、理由、push 先、参照）を切り詰めず、端末の幅で折り返す。
 3. **⚠ 確かめてほしいもの**（あるときだけ。赤い枠で、ファイルごとに理由を添える）:
    - CI（`.github/`、`.gitlab-ci.yml`、`.circleci/`）: 「GitHub などで実行されます」
    - 秘密らしいもの（`.env`、`.env.*`、`*.pem`、`*.key`、`id_rsa*`、`id_ed25519*`）
@@ -662,3 +662,4 @@ git -C <root> -c core.hooksPath=/dev/null -c core.fsmonitor=false -c submodule.r
 | 2026-11-23 | `sigil commit -- <path>` のパスは `:(top,literal)<path>` として渡し、glob として読まない。既定は `:(top)` | `a[b].txt` が `ab.txt` まで拾うと、確認の画面の範囲と違うファイルが入る。`top` は、コンテナの pre-commit の cwd に左右されないため。`:(top).` は何にも一致しないので使わない |
 | 2026-11-23 | LFS の `check-attr` は、確定した tree（`--source`）と作業ツリーの両方で調べ、どちらかが `lfs` なら拒否する | tree だけだと、`.gitignore` 済みで tree に入らないが `add` のときには効いていた `.gitattributes` を取りこぼす。作業ツリーだけだと、`add` のあとにコンテナが `.gitattributes` を書き換えると、コミットする tree と違う属性で判断してしまう |
 | 2026-11-23 | 銘のファイルは `git add` の除く指定（`:(exclude,top).sigil-commit`）で外さず、`add -A -- <add の pathspec>` のあとで一時 index から戻す（HEAD があれば `reset -q HEAD -- ':(top,literal).sigil-commit'`、なければ `rm --cached -q --ignore-unmatch`）。ホストとコンテナの pre-commit で同じ手順にする。刻印後の本物の index の `reset` は除く指定を残す。`-- .sigil-commit` の指定はエラーにする | `.sigil-commit` を `.gitignore` に入れると（README の勧めどおり）、除く指定で名指ししただけで `git add` が「無視されたパス」として失敗する（git 2.47 / 2.54 / 2.56 で確認）。実機の確認で、コンテナの pre-commit がこれで止まった。テストは `.gitignore` に入れていなかったので見落とした。`reset` は `.gitignore` の影響を受けず、除く指定のままなら、利用者が add してあった銘のファイルの変更を消さずに済む |
+| 2026-11-23 | 状態の印を ASCII の記号（`+` `~` `-` `→`）にする | 装飾記号（Dingbats）は端末やフォントで幅や大きさがそろわず、見栄えが悪かった（実機確認での利用者の判断） |

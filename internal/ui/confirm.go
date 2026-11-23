@@ -43,15 +43,15 @@ const subjectLimit = 72
 func statusStyle(s byte) (mark, word string, color int) {
 	switch s {
 	case 'A':
-		return "✚", "追加", green
+		return "+", "追加", green
 	case 'M':
-		return "✎", "変更", yellow
+		return "~", "変更", yellow
 	case 'D':
-		return "✖", "削除", red
+		return "-", "削除", red
 	case 'R':
-		return "➜", "名前の変更", cyan
+		return "→", "名前の変更", cyan
 	case 'T':
-		return "✎", "種類の変更", yellow
+		return "~", "種類の変更", yellow
 	}
 	return "?", "不明", gray
 }

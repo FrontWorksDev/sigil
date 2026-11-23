@@ -53,7 +53,7 @@ func TestCommitScreenPlain(t *testing.T) {
 	if strings.ContainsRune(out, '\x1b') {
 		t.Errorf("Plain にエスケープがある: %q", out)
 	}
-	for _, want := range []string{"✚ 追加", "✎ 変更", "✖ 削除", "➜ 名前の変更", "from.txt", "⚠", "ホストでは hooks を実行していません",
+	for _, want := range []string{"+ 追加", "~ 変更", "- 削除", "→ 名前の変更", "from.txt", "⚠", "ホストでは hooks を実行していません",
 		"+12", "-1", "2.0KiB", "刻印の儀", "main", "abc1234", "pre-commit", "commit-msg", "件名です", "    本文の 1 行目"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("%q がない:\n%s", want, out)
@@ -79,7 +79,7 @@ func TestCommitScreenColor(t *testing.T) {
 	u, buf := newTest(Color, 100, 40)
 	u.CommitScreen(sampleView())
 	out := buf.String()
-	for _, want := range []string{"\x1b[38;5;114m✚", "\x1b[38;5;221m✎", "\x1b[38;5;203m✖", "\x1b[38;5;87m➜"} {
+	for _, want := range []string{"\x1b[38;5;114m+", "\x1b[38;5;221m~", "\x1b[38;5;203m-", "\x1b[38;5;87m→"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("%q がない", want)
 		}

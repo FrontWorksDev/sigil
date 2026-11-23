@@ -160,6 +160,8 @@ RUN case "${TARGETARCH}" in \
 # lazygit と同じく GitHub のリリースから最新を取る。チェックサムは壊れたダウンロードの検出用。
 # 設定（~/.config/gh）と拡張機能（~/.local/share/gh）は共有ボリュームに置かれないので、
 # あるプロジェクトが仕込んだ gh の alias や拡張機能が、ほかのプロジェクトで動くことはない。
+# キャッシュ（~/.cache/gh）は共有の sigil-cache の中になるので、sigil がコンテナごとの tmpfs を
+# 重ねる（internal/docker/args.go）。Actions のログなど、非公開のデータをほかのプロジェクトに読ませないため。
 RUN case "${TARGETARCH}" in \
       amd64|arm64) arch="${TARGETARCH}" ;; \
       *) echo "unsupported arch: ${TARGETARCH}" >&2; exit 1 ;; \

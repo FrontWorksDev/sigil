@@ -70,6 +70,11 @@ func RunArgs(s RunSpec) []string {
 		"-v", "sigil-cache:"+containerHome+"/.cache",
 		"-v", "sigil-go:"+containerHome+"/go",
 		"-v", "sigil-cargo:"+containerHome+"/.cargo",
+		// gh のキャッシュ（gh run view --log が保存する Actions のログなど）は、そのリポジトリの
+		// 非公開のデータで、CI に出た秘密を含むこともある。共有の ~/.cache に置くと、ほかの
+		// プロジェクトのコードから読めてしまうので、このコンテナだけのメモリ上に置く（issue #12）。
+		// コンテナを止めると消えるが、ログはまた取りに行くだけなので困らない。
+		"--tmpfs", containerHome+"/.cache/gh:rw,noexec,nosuid,nodev",
 	)
 	for _, e := range s.Envs {
 		// 値は付けない。docker が sigil のプロセスの環境から読むので、

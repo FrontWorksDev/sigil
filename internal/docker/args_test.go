@@ -84,6 +84,16 @@ func TestRunArgsMounts(t *testing.T) {
 	}
 }
 
+// gh のキャッシュは非公開のリポジトリのデータを含むので、共有の sigil-cache ではなく、
+// コンテナごとの tmpfs に置く（issue #12）。
+func TestRunArgsGhCacheIsPerContainer(t *testing.T) {
+	got := flagValues(RunArgs(sampleSpec()), "--tmpfs")
+	want := []string{"/home/dev/.cache/gh:rw,noexec,nosuid,nodev"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("--tmpfs = %v, want %v", got, want)
+	}
+}
+
 func TestRunArgsNoSecretMounts(t *testing.T) {
 	s := sampleSpec()
 	for _, v := range flagValues(RunArgs(s), "-v") {

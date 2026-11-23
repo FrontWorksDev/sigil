@@ -68,19 +68,27 @@ if [ -n "$extra" ]; then printf '    %s\n' $extra; else echo "    （なし）";
 # GitHub のトークン（issue #12）。コンテナに渡したトークンは、プロジェクトのコードからも読めるので、
 # 安全さはトークンに許す権限で決まる。ここでは確実に分かることだけを確かめる:
 #   - 種類（先頭の文字列）: classic PAT と OAuth のトークンは、対象のリポジトリを絞れない
-#   - 期限（API の応答ヘッダー）: 長すぎる・ないときは注意
+#   - 期限（API の応答ヘッダー）: 長すぎる・ないときは注意。PAT（fine-grained / classic）だけ
+#   - コンテナの中で gh auth login されていないか（~/.config/gh/hosts.yml のトークン）
 # 権限そのもの（Contents の書き込みなど）は、書き込みを試さないと分からないので確かめない
 # （点検のために書き込みの API を呼ぶのは危ない）。README の手順で、人の手で一度確かめる。
 # トークンの値は表示しない。gh へも環境変数で渡し、コマンドラインには載せない
 # （export は bash の組み込みなので、値がほかのプロセスの引数として見えない）。
+gh_token_names="GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN"
+gh_hosts="$HOME/.config/gh/hosts.yml"
+
 check_gh_token() {
   local name="$1" tok="${!1}"
   case "$tok" in
     github_pat_*) ok "$name は fine-grained PAT" ;;
     ghp_*) ng "$name は classic PAT（対象のリポジトリを絞れない）。fine-grained PAT にしてください" ;;
-    gho_*) ng "$name は OAuth のトークン（gh auth login などで作られ、リポジトリを絞れない）。fine-grained PAT にしてください" ;;
-    *) warn "$name のトークンの種類が分からない（fine-grained PAT を勧めます）" ;;
+    gho_*) ng "$name は OAuth のトークン（gh auth login などで作られ、リポジトリを絞れない）。fine-grained PAT にしてください"; return ;;
+    # GitHub App のトークンは、届く範囲がアプリの設定しだいで、期限も短い（数時間）ので、期限の案内は出さない
+    ghu_*|ghs_*) warn "$name は GitHub App のトークン（届く範囲はアプリの設定しだい。fine-grained PAT を勧めます）"; return ;;
+    *) warn "$name のトークンの種類が分からない（fine-grained PAT を勧めます）"; return ;;
   esac
+  # GHES 向けの名前は、github.com に問い合わせても意味がないので、種類だけを見る
+  case "$name" in *ENTERPRISE*) return ;; esac
 
   if ! command -v gh >/dev/null 2>&1; then
     warn "gh が見つからないので、$name の期限を確かめられない"
@@ -111,7 +119,8 @@ check_gh_token() {
   fi
   now="$(date -u +%s)"
   days=$(( (ts - now) / 86400 ))
-  day="$(date -u -d "@$ts" +%Y-%m-%d)"
+  # コンテナの時刻は UTC なので、GitHub の画面（ブラウザの時刻）と 1 日ずれることがある。UTC と明記する
+  day="$(date -u -d "@$ts" +%Y-%m-%d) UTC"
   if [ "$ts" -le "$now" ]; then
     ng "$name の期限が切れている（$day）"
   elif [ "$days" -le 7 ]; then
@@ -123,11 +132,31 @@ check_gh_token() {
   fi
 }
 
-if [ -n "${GH_TOKEN:-}" ] || [ -n "${GITHUB_TOKEN:-}" ]; then
+has_gh_token=""
+for n in $gh_token_names; do
+  if [ -n "${!n:-}" ]; then has_gh_token=1; fi
+done
+if [ -n "$has_gh_token" ] || [ -e "$gh_hosts" ]; then
   section "外界の鍵" "GitHub のトークン（値は表示しない）"
-  for n in GH_TOKEN GITHUB_TOKEN; do
-    if [ -n "${!n:-}" ]; then check_gh_token "$n"; fi
+  for n in $gh_token_names; do
+    [ -n "${!n:-}" ] || continue
+    # GH_TOKEN と同じ値なら、同じトークンを 2 回数えないよう飛ばす（gh は GH_TOKEN を使う）
+    if [ "$n" = GITHUB_TOKEN ] && [ "${GITHUB_TOKEN}" = "${GH_TOKEN:-}" ]; then
+      printf '    %sGITHUB_TOKEN は GH_TOKEN と同じ値%s\n' "$c_dim" "$c_off"
+      continue
+    fi
+    check_gh_token "$n"
   done
+  # gh auth login は、すべてのリポジトリに届く OAuth のトークンを hosts.yml に書く。
+  # README では GH_TOKEN で渡し、ログインしない手順にしているので、見つけたら失敗にする
+  # （~/.config は永続化していないので、残るのはこのコンテナの中だけ）。
+  if [ -e "$gh_hosts" ]; then
+    if grep -q 'oauth_token' "$gh_hosts" 2>/dev/null; then
+      ng "gh auth login のトークンが ~/.config/gh/hosts.yml にある。gh auth logout してください"
+    else
+      ok "gh auth login のトークンはない"
+    fi
+  fi
 fi
 
 section "ツール" "コンテナ内のコマンドと版"

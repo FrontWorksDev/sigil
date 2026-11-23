@@ -220,6 +220,7 @@ run -d --init
 -v sigil-cache:/home/dev/.cache
 -v sigil-go:/home/dev/go
 -v sigil-cargo:/home/dev/.cargo
+--tmpfs /home/dev/.cache/gh:rw,noexec,nosuid,nodev
 -e <NAME>                          # 設定で渡す環境変数ごと。値は付けない
 -p 127.0.0.1:<host>:<container>    # ポートごと。必ず 127.0.0.1
 -w <コンテナ内パス>
@@ -231,6 +232,7 @@ run -d --init
 - Neovim の設定を読み取り専用にするのは、ホストの Neovim も同じファイルを読むため。
 - ホーム、`~/.ssh`、`~/.aws`、Docker ソケットは**絶対にマウントしない**。
 - `-e NAME` に値を付けないのは、docker が `sigil` のプロセスの環境から値を読むので、値がコマンドライン（`ps` で見える）に載らないため。
+- `~/.cache/gh` に tmpfs を重ねるのは、gh のキャッシュ（`gh run view --log` の Actions のログなど）が非公開のリポジトリのデータで、共有の `sigil-cache` に置くとほかのプロジェクトのコードから読めるため（issue #12）。
 
 `docker run` の標準出力（コンテナ ID）は捨て、標準エラーは表示する。
 
@@ -284,7 +286,7 @@ docker build --build-arg USER_UID=<os.Getuid()> --build-arg USER_GID=<os.Getgid(
 - **LazyVim が使うツール**（issue #11）: apt から `lua5.1` / `liblua5.1-0-dev` / `luarocks`（lazy.nvim の rocks）、`libsqlite3-dev`（snacks.picker の履歴。FFI で `libsqlite3.so` を読む）、`bat`（`batcat` に `bat` のリンクを張る）、`git-delta`。lazygit は GitHub のリリースから最新を取り、同じリリースの `checksums.txt` で照合する。
 - **差分の表示**: `/etc/gitconfig` に `core.pager = delta --navigate`、`interactive.diffFilter = delta --color-only` を書く（navigate を `[delta]` の節に書くと lazygit から呼ばれた delta にも効き、lazygit の中では動かずに見出しの印だけが出るため、git のページャーの引数にする）。lazygit の設定は `/etc/xdg/lazygit/config.yml`（`git.diffRenderers` に `delta --{{colorScheme}} --paging=never`）。どちらも root 所有。
 - 画像の表示（snacks.image、`magick` / `chafa` など）、ゴミ箱（`trash-cli`）、`xdg-open`、Ruby / Perl / Node の Neovim プロバイダは入れない。プロバイダの警告を消す設定は `examples/nvim-sigil.lua` に載せる。
-- **gh**（issue #12）: GitHub のリリースから最新を取り、同じリリースの `gh_<版>_checksums.txt` で照合して `/usr/local/bin/gh` に置く。新しい版の知らせは `GH_NO_UPDATE_NOTIFIER=1` で止める（更新はイメージの作り直しで行う）。トークンはイメージにも全体設定にも入れず、プロジェクトの `.sigil` / `.env` で `GH_TOKEN` として渡す（手順は README）。`gh` の設定（`~/.config/gh`）と拡張機能（`~/.local/share/gh`）は共有ボリュームに置かれないので、プロジェクトをまたいで alias や拡張機能が動くことはない。
+- **gh**（issue #12）: GitHub のリリースから最新を取り、同じリリースの `gh_<版>_checksums.txt` で照合して `/usr/local/bin/gh` に置く。新しい版の知らせは `GH_NO_UPDATE_NOTIFIER=1` で止める（更新はイメージの作り直しで行う）。トークンはイメージにも全体設定にも入れず、プロジェクトの `.sigil` / `.env` で `GH_TOKEN` として渡す（手順は README）。`gh` の設定（`~/.config/gh`）と拡張機能（`~/.local/share/gh`）は共有ボリュームに置かれないので、プロジェクトをまたいで alias や拡張機能が動くことはない。キャッシュ（`~/.cache/gh`）は共有の `sigil-cache` の中になるので、コンテナごとの tmpfs を重ねる（8 章）。
 - `sigil-check` の「ツール」の一覧に、`python3` / `uv` / `gh` / `wakatime-cli` / `lua5.1` / `luarocks` / `lazygit` / `bat` / `delta` を含める。
 - **`sigil-check` の GitHub のトークンの点検**（issue #12）: `GH_TOKEN` か `GITHUB_TOKEN` があるときだけ、「外界の鍵 ── GitHub のトークン」の欄を出す。値は表示しない。
   - 種類を先頭の文字列で判定する。`github_pat_`（fine-grained PAT）は ✓、`ghp_`（classic PAT）と `gho_`（OAuth のトークン）はリポジトリを絞れないので ✗、それ以外は注意。
@@ -489,3 +491,5 @@ issue #3。待ち時間のある処理で何が起きているかを見せ、使
 | 2026-11-22 | 画像の表示（snacks.image、`magick` / `chafa` / `ueberzugpp` など）、ゴミ箱、`xdg-open`、Ruby / Perl / Node のプロバイダは入れない | issue #11。コンテナの中の Neovim からは端末が kitty graphics protocol 対応だと分からず（`TERM` を固定し、端末を判定する環境変数も渡していない）、texlive や mmdc は重い。ゴミ箱は永続化せず、`trash-cli` はプロジェクトに `.Trash-<uid>` を作ることがある。ホストのブラウザは開けない。プロバイダは使うプラグインがほぼないので、設定で止める |
 | 2026-11-23 | イメージに gh を入れ、GitHub のリリースから最新を取る。トークンはプロジェクトごとの fine-grained PAT を、そのプロジェクトの `.sigil` / `.env` で `GH_TOKEN` として渡す | issue #12。apt の版は古く、公式の apt リポジトリは鍵と取得先をイメージに足すことになる。lazygit と同じ取り方にそろえる。全体設定に書くと全プロジェクトに渡るので、プロジェクトの設定（承認の画面に出る）だけで渡す。GitHub MCP（リモート版）は、トークンを全プロジェクトで共有する `~/.claude`（`sigil-claude`）に書くことになるので勧めない |
 | 2026-11-23 | `sigil-check` でトークンの種類（先頭の文字列）と期限（応答ヘッダー）を確かめ、権限そのものは確かめない。期限の問題は ✗ ではなく注意にする | issue #12。種類と期限は確実に分かる。権限は、fine-grained PAT ではトークンから読めず、書き込みの API を中身の誤りで呼んで 403 と 422 を見分ける方法は、GitHub が先に権限を調べる前提に頼り、崩れると本当に書き込む。点検の道具がすることとして危ないので、README の手順で一度、人の手で確かめる。期限が長いのは隔離が破れているわけではないので、失敗には数えない（利用者の判断） |
+| 2026-11-23 | `~/.cache/gh` に、コンテナごとの tmpfs（`rw,noexec,nosuid,nodev`）を重ねる。`sigil.layout` の版は上げない | issue #12 のコードレビュー。gh は `gh run view --log` の Actions のログなどを `~/.cache/gh` に置き、そこは共有の `sigil-cache` の中なので、非公開のリポジトリのデータ（CI に出た秘密を含むことがある）がほかのプロジェクトのコードから読めた。issue #7 の「書き換えて、ほかで実行させる」とは逆の、「置かれたものを、ほかから読まれる」向きの問題で、#7 の方針（ふだんは共有のまま）では塞がらないので、gh を入れるこの変更で塞ぐ。gh の実行を包むスクリプトで `XDG_CACHE_HOME` を変える案より、docker の引数だけで済み、テストできる（利用者の判断）。gh が入っているのはこの変更より後に作ったイメージだけで、そのイメージで作るコンテナには必ず tmpfs が付くので、既存のコンテナを作り直させる必要はない |
+| 2026-11-23 | `sigil-check` で、`~/.config/gh/hosts.yml` のトークン（コンテナの中での `gh auth login`）を ✗ にする。`gho_` / `ghu_` / `ghs_` には期限の案内を出さず、`GITHUB_TOKEN` が `GH_TOKEN` と同じ値なら数えない。期限の日付に UTC と添える | issue #12 のコードレビュー。ログインされると、すべてのリポジトリに届くトークンがあるのに「結界は完全です」になっていた。OAuth や GitHub App のトークンは期限のヘッダーがない・短いので、「期限を付けて作り直す」という案内は誤り。コンテナの時刻は UTC で、GitHub の画面と 1 日ずれて見えることがある |

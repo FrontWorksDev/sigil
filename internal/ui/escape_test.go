@@ -9,6 +9,10 @@ func TestEscape(t *testing.T) {
 		{"\u0085", "<U+0085>"},
 		{"x\u202ey", "x<U+202E>y"},
 		{"a\u200bb", "a<U+200B>b"},
+		{"a\u2028b\u2029c", "a<U+2028>b<U+2029>c"},
+		{"a\u3000b\u00a0c", "a\u3000b\u00a0c"},
+		{"\ufeff", "<U+FEFF>"},
+		{"a\xffb", "a\ufffdb"},
 		{"日本語 🎉\tz\n", "日本語 🎉\tz\n"},
 	}
 	for _, c := range cases {

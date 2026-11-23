@@ -22,7 +22,7 @@ func Escape(s string) string {
 			b.WriteByte(byte(r) + '@')
 		case r == 0x7f:
 			b.WriteString("^?")
-		case !unicode.IsPrint(r) && (!unicode.IsSpace(r) || r == 0x85):
+		case !unicode.IsPrint(r) && (!unicode.IsSpace(r) || r == 0x85 || r == 0x2028 || r == 0x2029):
 			// C1 や U+202E（向きの上書き）、U+200B（幅ゼロ）など。見た目を偽装できるため明示する
 			fmt.Fprintf(&b, "<U+%04X>", r)
 		default:

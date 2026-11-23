@@ -96,3 +96,39 @@ func Push(g Git, u Upstream, stdout, stderr io.Writer) error {
 	}
 	return nil
 }
+
+// RedactURL は、URL の形のリモート（scheme://userinfo@host...）から userinfo を丸ごと取り除く。
+// remote get-url --push は利用者の全体設定の insteadOf を反映するので、
+// https://user:TOKEN@host/... のような認証情報が入りうる。それを画面に出したり、
+// コンテナのフックに渡したり（docker exec の引数として ps にも見える）しないため。
+// scp の形（user@host:path）の user は秘密ではないので、そのまま残す。
+// 読めないものは変えずに返す（panic しない）。
+func RedactURL(u string) string {
+	i := strings.Index(u, "://")
+	if i <= 0 || !isScheme(u[:i]) {
+		return u
+	}
+	rest := u[i+3:]
+	auth := rest
+	if end := strings.IndexAny(rest, "/?#"); end >= 0 {
+		auth = rest[:end]
+	}
+	at := strings.LastIndex(auth, "@")
+	if at < 0 {
+		return u
+	}
+	return u[:i+3] + rest[at+1:]
+}
+
+// isScheme は、RFC 3986 の scheme（英字で始まり、英数字と + - . が続く）かを返す。
+func isScheme(s string) bool {
+	for i, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+		case i > 0 && (r >= '0' && r <= '9' || r == '+' || r == '-' || r == '.'):
+		default:
+			return false
+		}
+	}
+	return s != ""
+}

@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -19,16 +20,35 @@ import (
 var commitUsage = errors.New("使い方: sigil commit [-- <path>...]")
 
 // commitArgs は sigil commit の後ろの引数から pathspec を取り出す。
-// 空ならすべて（nil）。-- の後ろは、端末の前の利用者が打ったものなので、そのまま信じてよい。
+// 空ならすべて（nil）。-- の後ろは、端末の前の利用者が打ったものなので信じてよいが、
+// git と同じく今いるフォルダ（cwd、リンクを解いたもの）からのパスとして読み、最上位からのパスに直す
+// （ホストの git は -C <root> で呼ぶため）。
 // コンテナが指定したファイルの一覧は使わない（.github/workflows などを紛れ込ませられないように）。
-func commitArgs(args []string) ([]string, error) {
+func commitArgs(args []string, root, cwd string) ([]string, error) {
 	if len(args) == 0 {
 		return nil, nil
 	}
 	if args[0] != "--" {
 		return nil, commitUsage
 	}
-	return args[1:], nil
+	var out []string
+	for _, a := range args[1:] {
+		// :(top) や :! などの magic は、銘のファイルを外す指定や、今いるフォルダからという決まりを
+		// すり抜けられるので受け付けない。
+		if strings.HasPrefix(a, ":") {
+			return nil, loref("刻むものを指定できません", "%s のような : で始まる指定（pathspec の magic）は使えません。今いるフォルダからのパスで指定してください", ui.EscapeLine(a))
+		}
+		p := a
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(cwd, p)
+		}
+		rel, err := filepath.Rel(root, filepath.Clean(p))
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return nil, loref("刻むものを指定できません", "%s はプロジェクトの外を指しています。%s（パスは今いるフォルダから）", ui.EscapeLine(a), commitUsage)
+		}
+		out = append(out, path.Clean(filepath.ToSlash(rel)))
+	}
+	return out, nil
 }
 
 // commitCmd は sigil commit（設計書 17 章）。コンテナが用意した銘で、利用者の確認のうえ、
@@ -38,8 +58,8 @@ func commitArgs(args []string) ([]string, error) {
 //   - ホストではフックを実行しない（コンテナで実行する）
 //   - 先に tree を確定して見せ、その tree をコミットする（確認のあいだの変更を混ぜない）
 //   - コンテナが書いた文字列は、画面に出す前に Escape する（ui が行う）
-func commitCmd(d Deps, u *ui.UI, p project.Project, args []string) error {
-	pathspec, err := commitArgs(args)
+func commitCmd(d Deps, u *ui.UI, p project.Project, cwd string, args []string) error {
+	pathspec, err := commitArgs(args, p.Root, cwd)
 	if err != nil {
 		return err
 	}
@@ -67,7 +87,7 @@ func commitCmd(d Deps, u *ui.UI, p project.Project, args []string) error {
 		return lore("銘を読めません", err)
 	}
 	if _, err := g.Out(nil, "ls-files", "--error-unmatch", "--", gitcommit.MessageFile); err == nil {
-		info(d, "注意: %s が git で追跡されています。コミットには含めませんが、.gitignore に入れてください", gitcommit.MessageFile)
+		info(d, "注意: %s が git で追跡されています。コミットには含めませんが、刻印のあとに消すので、作業ツリーには追跡されたファイルの削除が残ります。git rm --cached してから .gitignore に入れてください", gitcommit.MessageFile)
 	}
 
 	h := hookRunner{d: d, p: p, r: r, hooks: hooks}
@@ -166,7 +186,10 @@ func pushFlow(d Deps, u *ui.UI, g gitcommit.Git, r gitcommit.Repo, h hookRunner,
 			ui.EscapeLine(strings.TrimPrefix(r.Branch, "refs/heads/")))
 		return nil
 	}
-	u.PushPrompt(ui.PushView{Remote: up.Remote, URL: up.URL, Branch: up.MergeRef, Ahead: up.Ahead})
+	// URL に入りうる認証情報（insteadOf で足されたトークンなど）は、画面にもコンテナにも出さない。
+	// 本物の push はリモートの名前で行うので、取り除いた URL は表示とフックの引数にだけ使う。
+	url := gitcommit.RedactURL(up.URL)
+	u.PushPrompt(ui.PushView{Remote: up.Remote, URL: url, Branch: up.MergeRef, Ahead: up.Ahead})
 	if !ui.IsYes(ui.ReadAnswer(br)) {
 		info(d, "解き放ちませんでした。コミットは残っています")
 		return nil
@@ -174,7 +197,7 @@ func pushFlow(d Deps, u *ui.UI, g gitcommit.Git, r gitcommit.Repo, h hookRunner,
 	if h.hooks.Present[gitcommit.PrePush] {
 		stages := []ui.Stage{{Label: "試練に挑む", Note: gitcommit.PrePush}}
 		err := u.Ritual("試練に挑みます", "コンテナで hooks を実行しています", stages, func(w io.Writer) error {
-			_, err := h.run(w, gitcommit.PrePush, []string{up.Remote, up.URL}, up.PrePushInput(r, r.Head),
+			_, err := h.run(w, gitcommit.PrePush, []string{up.Remote, url}, up.PrePushInput(r, r.Head),
 				"push していません。コミットは残っています")
 			return err
 		})
@@ -206,7 +229,8 @@ func commitErr(err error) error {
 	case errors.Is(err, gitcommit.ErrNothing):
 		return loref("刻むものがありません", "コミットする変更がありません")
 	case errors.Is(err, gitcommit.ErrMoved):
-		return lore("刻印は果たされませんでした", fmt.Errorf("確認のあいだにブランチが動いたので、コミットしていません（%w）", err))
+		// ErrMoved の文言が説明と対処を兼ねているので、そのまま 2 行目にする
+		return lore("刻印は果たされませんでした", err)
 	}
 	return lore("刻印できません", err)
 }

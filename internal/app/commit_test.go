@@ -292,7 +292,7 @@ func TestCommitWarnsTrackedMessageFile(t *testing.T) {
 	if code := c.run("commit"); code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, c.stderr.String())
 	}
-	if !strings.Contains(c.stderr.String(), ".gitignore") {
+	if se := c.stderr.String(); !strings.Contains(se, ".gitignore") || !strings.Contains(se, "削除") {
 		t.Errorf("追跡されている注意がない: %s", c.stderr.String())
 	}
 	if got := c.git("show", "HEAD:"+gitcommit.MessageFile); got != "old\n" {
@@ -683,5 +683,128 @@ func TestCommitHooksFancy(t *testing.T) {
 		if !strings.Contains(se, "刻印しました") {
 			t.Errorf("stderr = %q", tail(se))
 		}
+	}
+}
+
+// -- の後ろのパスは、git と同じく今いるフォルダから。
+func TestCommitPathsRelativeToCwd(t *testing.T) {
+	c := newCommitEnv(t)
+	c.write("sub/a.txt", "sub\n")
+	c.write("a.txt", "two\n")
+	c.write(gitcommit.MessageFile, "fix: sub\n")
+	c.cwd = filepath.Join(c.proj, "sub")
+	c.tty = "y\n"
+	if code := c.run("commit", "--", "a.txt"); code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, c.stderr.String())
+	}
+	if got := c.git("show", "HEAD:sub/a.txt"); got != "sub\n" {
+		t.Errorf("HEAD:sub/a.txt = %q", got)
+	}
+	if got := c.git("show", "HEAD:a.txt"); got != "one\n" {
+		t.Errorf("最上位の a.txt がコミットされた: %q", got)
+	}
+	if !strings.Contains(c.stderr.String(), "sub/a.txt") {
+		t.Errorf("画面の対象に sub/a.txt がない: %s", c.stderr.String())
+	}
+}
+
+func TestCommitPathArgsRejected(t *testing.T) {
+	for _, arg := range []string{"../../x", ":(top)x", ":!a.txt"} {
+		t.Run(arg, func(t *testing.T) {
+			c := newCommitEnv(t)
+			mustMkdir(t, filepath.Join(c.proj, "sub"))
+			c.write("a.txt", "two\n")
+			c.write(gitcommit.MessageFile, "fix: a\n")
+			c.cwd = filepath.Join(c.proj, "sub")
+			c.tty = "y\n"
+			if code := c.run("commit", "--", arg); code != 1 {
+				t.Fatalf("code = %d", code)
+			}
+			if !strings.HasPrefix(c.stderr.String(), "sigil: 刻むものを指定できません\n") {
+				t.Errorf("stderr = %s", c.stderr.String())
+			}
+			c.noCommitTree()
+			if c.ttyOpened != 0 {
+				t.Error("tty を開いた")
+			}
+		})
+	}
+}
+
+// push の URL に入った認証情報（全体設定の insteadOf などで入りうる）を、コンテナにも画面にも出さない。
+func TestCommitPushURLRedacted(t *testing.T) {
+	c := newCommitEnv(t)
+	c.git("remote", "add", "origin", "https://user:SECRET@example.invalid/o/r.git")
+	c.git("config", "branch.main.remote", "origin")
+	c.git("config", "branch.main.merge", "refs/heads/main")
+	c.hook(".git/hooks/pre-push")
+	c.container("running", "")
+	// pre-push を失敗させ、本物の push には進ませない
+	c.cmd.hooks["pre-push"] = func(_ string, _ []string, _, _ io.Writer) error { return errors.New("exit status 1") }
+	c.write("a.txt", "two\n")
+	c.write(gitcommit.MessageFile, "fix: a\n")
+	c.tty = "y\ny\n"
+	if code := c.run("commit"); code != 1 {
+		t.Fatalf("code = %d, stderr = %s", code, c.stderr.String())
+	}
+	execs := c.dockerExecs()
+	if len(execs) != 1 {
+		t.Fatalf("docker exec = %v", execs)
+	}
+	if strings.Contains(execs[0].String(), "SECRET") || strings.Contains(execs[0].String(), "user") {
+		t.Errorf("認証情報がフックの引数に出た: %v", execs[0].args[11:])
+	}
+	if got := execs[0].args[len(execs[0].args)-1]; got != "https://example.invalid/o/r.git" {
+		t.Errorf("URL = %q", got)
+	}
+	if se := c.stderr.String(); strings.Contains(se, "SECRET") || !strings.Contains(se, "https://example.invalid/o/r.git") {
+		t.Errorf("stderr = %s", se)
+	}
+}
+
+// 確認のあいだに別の場所でコミットされたら、刻印しない。説明は 1 つにまとめる。
+func TestCommitBranchMovedDuringPrompt(t *testing.T) {
+	c := newCommitEnv(t)
+	c.write("a.txt", "two\n")
+	c.write(gitcommit.MessageFile, "fix: a\n")
+	c.beforeAnswer = func() { c.git("commit", "-q", "--allow-empty", "-m", "elsewhere") }
+	c.tty = "y\n"
+	if code := c.run("commit"); code != 1 {
+		t.Fatalf("code = %d", code)
+	}
+	se := c.stderr.String()
+	if !strings.Contains(se, "sigil: 刻印は果たされませんでした\n") || strings.Contains(se, "））") {
+		t.Errorf("stderr = %s", se)
+	}
+	if strings.Count(se, "コミットしていません")+strings.Count(se, "刻印されたようです") != 1 {
+		t.Errorf("説明が重なっている: %s", se)
+	}
+	if _, err := os.Stat(c.msgFile()); err != nil {
+		t.Error(".sigil-commit が消えた")
+	}
+}
+
+// HookExecArgs が拒否したときも、フックの場所は Escape して出す。
+func TestHookRunnerOutsideRootEscaped(t *testing.T) {
+	root := realTemp(t)
+	h := hookRunner{p: project.New(root), r: gitcommit.Repo{Root: root},
+		hooks: gitcommit.Hooks{Dir: "/elsewhere/\x1b[31mhooks"}}
+	_, err := h.run(io.Discard, gitcommit.PreCommit, nil, "", "コミットしていません")
+	var le *loreError
+	if !errors.As(err, &le) {
+		t.Fatalf("lore ではない: %v", err)
+	}
+	if strings.Contains(err.Error(), "\x1b") || !strings.Contains(err.Error(), "^[[31m") {
+		t.Errorf("err = %q", err)
+	}
+}
+
+// commit の説明は次の行に回し、ほかの行と説明の桁をそろえる。
+func TestUsageCommitAligned(t *testing.T) {
+	col := strings.Index(usage, "プロジェクトのコンテナに入る")
+	start := strings.LastIndex(usage[:col], "\n") + 1
+	want := "  sigil commit [-- <path>...]\n" + strings.Repeat(" ", len(usage[start:col])) + "コンテナで用意した銘で"
+	if !strings.Contains(usage, want) {
+		t.Errorf("usage の commit の行がそろっていない:\n%s", usage)
 	}
 }

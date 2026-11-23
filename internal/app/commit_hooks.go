@@ -67,7 +67,9 @@ func (h hookRunner) ready() error {
 func (h hookRunner) run(w io.Writer, name string, extra []string, stdin, after string) ([]byte, error) {
 	args, err := gitcommit.HookExecArgs(h.p.ContainerName, h.p.ContainerPath, h.r.Root, h.hooks.Dir, name, extra)
 	if err != nil {
-		return nil, err
+		// FindHooks が先に拒否しているはずなので、ここに来るのは呼び出しの誤り。
+		// HookExecArgs の文言はフックの場所を生のまま含むので使わず、Escape して出し直す。
+		return nil, loref("刻印できません", "フックの場所（%s）がプロジェクトの外にあり、領域から実行できません", ui.EscapeLine(h.hooks.Dir))
 	}
 	log := &capBuffer{max: hookLogMax}
 	// msg のときの標準出力は銘そのもの。上限を 1 バイト超えるまでためれば、Normalize が「大きすぎる」と判断できる。

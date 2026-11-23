@@ -30,7 +30,8 @@ const usage = `使い方:
   sigil ls                sigil のコンテナの一覧〔展開中の領域〕
   sigil check             隔離が効いているか、コンテナ内で確認〔結界の点検〕
   sigil build [args...]   イメージを作る（追加の引数は docker build へ）〔紋章の鋳造〕
-  sigil commit [-- <path>...]  コンテナで用意した銘で、確認してコミット・push〔刻印の儀〕
+  sigil commit [-- <path>...]
+                          コンテナで用意した銘で、確認してコミット・push〔刻印の儀〕
   sigil help              この説明
 
 設定:
@@ -127,7 +128,12 @@ func run(args []string, d Deps) error {
 	case "stop":
 		return stop(d, client, p)
 	case "commit":
-		return commitCmd(d, u, p, args[1:])
+		// -- の後ろのパスは今いるフォルダから読むので、Root と同じくリンクを解いた cwd を渡す
+		realCwd, err := filepath.EvalSymlinks(cwd)
+		if err != nil {
+			realCwd = cwd
+		}
+		return commitCmd(d, u, p, realCwd, args[1:])
 	}
 
 	cmd := args

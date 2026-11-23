@@ -175,3 +175,25 @@ func TestPushSkipsPrePushHook(t *testing.T) {
 		t.Fatal("pre-push フックが実行されました")
 	}
 }
+
+func TestRedactURL(t *testing.T) {
+	cases := map[string]string{
+		"https://user:pass@github.com/o/r.git": "https://github.com/o/r.git",
+		"https://TOKEN@github.com/o/r.git":     "https://github.com/o/r.git",
+		"https://a:b@c@host:8443/x?q=1#f":      "https://host:8443/x?q=1#f",
+		"ssh://git@host/x":                     "ssh://host/x",
+		"git@github.com:o/r.git":               "git@github.com:o/r.git",
+		"/srv/git/r.git":                       "/srv/git/r.git",
+		"./a@b/r.git":                          "./a@b/r.git",
+		"https://github.com/o/r.git":           "https://github.com/o/r.git",
+		"https://host/path/with@at":            "https://host/path/with@at",
+		"":                                     "",
+		"://x@y":                               "://x@y",
+		"1http://u@h/":                         "1http://u@h/",
+	}
+	for in, want := range cases {
+		if got := RedactURL(in); got != want {
+			t.Errorf("RedactURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

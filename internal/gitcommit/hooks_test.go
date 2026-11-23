@@ -2,6 +2,7 @@ package gitcommit
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"errors"
 	"os"
 	"os/exec"
@@ -134,6 +135,9 @@ func runScript(t *testing.T, root string, stdin string, args ...string) (string,
 
 func readOnly(t *testing.T, dir string) {
 	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root では読み取り専用にならない")
+	}
 	t.Cleanup(func() {
 		_ = exec.Command("chmod", "-R", "u+w", dir).Run()
 	})
@@ -156,14 +160,6 @@ func TestHookScriptReadOnlyGit(t *testing.T) {
 			if withHead {
 				write(t, root, "old.txt", "old\n")
 				commitAll(t, g, "first")
-				// 本物の index に、別の（コミット済みでない）変更を積んでおく
-				write(t, root, "staged.txt", "s\n")
-				if _, err := g.Out(nil, "add", "staged.txt"); err != nil {
-					t.Fatal(err)
-				}
-				if _, err := g.Out(nil, "reset", "-q"); err != nil {
-					t.Fatal(err)
-				}
 			}
 			write(t, root, "new.txt", "n\n")
 			outFile := filepath.Join(t.TempDir(), "out")
@@ -171,10 +167,14 @@ func TestHookScriptReadOnlyGit(t *testing.T) {
 			writeExec(t, hook, "#!/bin/sh\ngit add new.txt && git diff --cached --name-only > \""+outFile+"\"\n", 0o755)
 			readOnly(t, filepath.Join(root, ".git"))
 
+			before := indexHash(t, root)
 			args := append([]string{PreCommit, hook}, effectivePathspec(nil)...)
 			_, se, err := runScript(t, root, "", args...)
 			if err != nil {
 				t.Fatalf("%v: %s", err, se)
+			}
+			if after := indexHash(t, root); after != before {
+				t.Error("本物の index が変わった")
 			}
 			b, _ := os.ReadFile(outFile)
 			if !strings.Contains(string(b), "new.txt") {
@@ -198,9 +198,13 @@ func TestHookScriptMsg(t *testing.T) {
 		// 標準出力に出したものはメッセージに混ざってはならない
 		writeExec(t, hook, "#!/bin/sh\necho NOISE\nprintf X >> \"$1\"\n", 0o755)
 		readOnly(t, filepath.Join(root, ".git"))
+		before := indexHash(t, root)
 		so, se, err := runScript(t, root, "msg", "msg", hook)
 		if err != nil {
 			t.Fatalf("%v: %s", err, se)
+		}
+		if indexHash(t, root) != before {
+			t.Error("本物の index が変わった")
 		}
 		if so != "msgX" {
 			t.Errorf("withHead=%v stdout=%q", withHead, so)
@@ -208,5 +212,30 @@ func TestHookScriptMsg(t *testing.T) {
 		if !strings.Contains(se, "NOISE") {
 			t.Errorf("フックの出力は標準エラーへ: %q", se)
 		}
+	}
+}
+
+func indexHash(t *testing.T, root string) [32]byte {
+	t.Helper()
+	b, _ := os.ReadFile(filepath.Join(root, ".git", "index")) // 無ければ空
+	return sha256.Sum256(b)
+}
+
+func TestHookScriptUnknownMode(t *testing.T) {
+	root, _ := newRepo(t)
+	_, se, err := runScript(t, root, "", "bogus", "/bin/true")
+	if err == nil || !strings.Contains(se, "unknown mode") {
+		t.Errorf("err=%v stderr=%q", err, se)
+	}
+}
+
+func TestHookScriptCDPATH(t *testing.T) {
+	root, _ := newRepo(t)
+	write(t, root, "a", "a")
+	hook := filepath.Join(t.TempDir(), "hook")
+	writeExec(t, hook, "#!/bin/sh\ntrue\n", 0o755)
+	t.Setenv("CDPATH", t.TempDir())
+	if _, se, err := runScript(t, root, "", PreCommit, hook, "."); err != nil {
+		t.Fatalf("%v: %s", err, se)
 	}
 }

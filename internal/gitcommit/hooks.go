@@ -59,11 +59,13 @@ func FindHooks(r Repo) (Hooks, error) {
 // 一時 index は、コミットがあるときだけ本物の index を写す。最初のコミットでは空から始める
 // （ホスト側のスナップショットと同じ）。
 // 引数なしの git reset は ORIG_HEAD と reflog を .git に書いて失敗するので、パスを付けた形にする。
+// 知らない mode は失敗で終わらせる（検査を黙って飛ばさない）。
+// common は CDPATH に左右されない git の絶対パス指定で求める。
 // フックの標準出力は標準エラーへ回す。msg モードでは標準出力がメッセージそのものになるため。
 const hookScript = `set -eu
 mode="$1"; hook="$2"; shift 2
 gitdir="$(git rev-parse --absolute-git-dir)"
-common="$(cd "$(git rev-parse --git-common-dir)" && pwd)"
+common="$(git rev-parse --path-format=absolute --git-common-dir)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir "$tmp/objects"
@@ -82,6 +84,8 @@ msg)
   cat "$tmp/MSG" ;;
 pre-push)
   "$hook" "$@" >&2 ;;
+*)
+  echo "sigil: unknown mode" >&2; exit 2 ;;
 esac
 `
 

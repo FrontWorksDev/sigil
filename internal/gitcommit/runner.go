@@ -61,11 +61,16 @@ func (g Git) Out(stdin io.Reader, args ...string) (string, error) {
 	return g.run(stdin, &errb, &errb, args)
 }
 
-// Interactive は Out と同じ安全な設定で実行するが、標準エラーを stderr にそのままつなぐ。
-// 署名のパスフレーズ入力など、git が端末に出す問い合わせを利用者に見せるため。
+// Interactive は Out と同じ安全な設定で実行するが、標準エラーを stderr にも流す。
+// 署名の進み具合など、git が出す表示を利用者に見せるため。
+// 流すときは ui.Escape を通す。git の出力にはコンテナが作った文字列（ファイル名など）が
+// 混じりうるので、制御文字で画面を操作されないようにする。
+// パスフレーズや pinentry の問い合わせは /dev/tty に出るので、これで損なわれない。
+// 失敗時のエラー文には、Out と同じく標準エラーの内容（Escape 済み）を含める。
 // 標準出力は取り込んで返す。
 func (g Git) Interactive(stdin io.Reader, stderr io.Writer, args ...string) (string, error) {
-	return g.run(stdin, stderr, nil, args)
+	var errb bytes.Buffer
+	return g.run(stdin, io.MultiWriter(ui.NewEscapeWriter(stderr), &errb), &errb, args)
 }
 
 // run は git を実行する。errb が nil でなければ、失敗時のエラー文に標準エラーの内容を使う。

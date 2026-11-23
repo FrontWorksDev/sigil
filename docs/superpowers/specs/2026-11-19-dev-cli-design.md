@@ -484,7 +484,7 @@ issue #13。コンテナの `.git` は読み取り専用（8 章）なので、�
 5. **tree を確定する**。本人だけが読める一時フォルダ（`$TMPDIR/sigil-commit-*`、0700）に、本物の index を写し（更新時刻も引き継ぐ。最初のコミットで HEAD がないときは写さず、空の index から始める。利用者が add 済みの別のファイルが紛れ込まないように）、`GIT_INDEX_FILE` でそれを指して、`git reset -q HEAD -- :/`（HEAD にそろえる。ファイルの状態の記録は残るので、全部を読み直さずに済む。パスを付ける形にするのは、付けない `git reset` が本物の `ORIG_HEAD` と reflog に書くため）→ `git add -A -- <pathspec>` → `git write-tree` を行う。pre-commit のフックが作業ツリーを整形していれば、整形後の内容がここで入る。
 6. **prepare-commit-msg / commit-msg の試練**: フックがあれば、コンテナで実行する。フックが銘を書き換えたら、3 と同じ検査をやり直す。
 7. **確認の画面を出す**（下の「確認の画面」）。答えは `y` / `n` / `d`。`d` なら全差分をページャーで見せ、もう一度聞く。`y` / `Y` / `yes` / `YES` 以外は中止（コミットしない）。
-8. **刻印する**。`git commit-tree <tree> [-p HEAD] -F -`（銘は標準入力から渡す）で commit を作り、`git update-ref -m "commit (sigil): <件名>" HEAD <新> <旧>` で、HEAD が 1 のときから動いていないことを条件にブランチを進める。動いていれば（別の端末でコミットされたなど）、エラーにして index も変えない。そのあと本物の index で `git reset -q -- <pathspec>` を行い、コミットした分を HEAD にそろえる（pathspec の外の、利用者が add してあった状態は残す）。
+8. **刻印する**。`git commit-tree <tree> [-p HEAD] -F -`（銘は標準入力から渡す）で commit を作り、`git update-ref -m "commit (sigil): <件名>" <ブランチ（refs/heads/<name>）> <新> <旧>` で、HEAD が 1 のときから動いていないことを条件にブランチを進める。動いていれば（別の端末でコミットされたなど）、エラーにして index も変えない。そのあと本物の index で `git reset -q -- <pathspec>` を行い、コミットした分を HEAD にそろえる（pathspec の外の、利用者が add してあった状態は残す）。
 9. **銘のファイルを消す**。
 10. **push を確かめる**（下の「push」）。
 

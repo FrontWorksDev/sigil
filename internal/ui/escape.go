@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"unicode"
 )
@@ -36,4 +37,17 @@ func Escape(s string) string {
 // ファイル名のように 1 行で出すもの用。
 func EscapeLine(s string) string {
 	return strings.NewReplacer("\n", "^J", "\t", "^I").Replace(Escape(s))
+}
+
+type escapeWriter struct{ w io.Writer }
+
+// NewEscapeWriter は、書かれたものに Escape をかけて w に流す Writer を返す。
+// ESC は 1 バイトなので、Write ごとに独立して直してよい。
+func NewEscapeWriter(w io.Writer) io.Writer { return escapeWriter{w} }
+
+func (e escapeWriter) Write(p []byte) (int, error) {
+	if _, err := io.WriteString(e.w, Escape(string(p))); err != nil {
+		return 0, err
+	}
+	return len(p), nil
 }

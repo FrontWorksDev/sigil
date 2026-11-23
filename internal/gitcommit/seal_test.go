@@ -2,6 +2,7 @@ package gitcommit
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +42,7 @@ func gitOut(t *testing.T, g Git, args ...string) string {
 func TestSealCommitsSnapshotNotWorktree(t *testing.T) {
 	root, g, r, s := sealSetup(t, nil, func(root string) { write(t, root, "a.txt", "two\n") })
 	write(t, root, "a.txt", "tampered\n")
-	c, err := Seal(g, r, s, "msg", nil)
+	c, err := Seal(g, r, s, "msg", nil, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,13 +59,20 @@ func TestSealCommitsSnapshotNotWorktree(t *testing.T) {
 
 func TestSealMessageExact(t *testing.T) {
 	_, g, r, s := sealSetup(t, nil, func(root string) { write(t, root, "a.txt", "two\n") })
-	if _, err := Seal(g, r, s, "feat: x\n\n# keep", nil); err != nil {
+	if _, err := Seal(g, r, s, "feat: x\n\n# keep", nil, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	got := strings.TrimSuffix(gitOut(t, g, "log", "-1", "--format=%B"), "\n")
 	got = strings.TrimSuffix(got, "\n")
 	if got != "feat: x\n\n# keep" {
 		t.Errorf("message = %q", got)
+	}
+	raw := gitOut(t, g, "cat-file", "commit", "HEAD")
+	if _, body, _ := strings.Cut(raw, "\n\n"); body != "feat: x\n\n# keep\n" {
+		t.Errorf("commit body = %q", body)
+	}
+	if _, err := os.Stat(filepath.Join(g.Root, ".git", "ORIG_HEAD")); err == nil {
+		t.Error("ORIG_HEAD ができました")
 	}
 	if rl := gitOut(t, g, "reflog", "-1", "--format=%gs"); !strings.Contains(rl, "commit (sigil): feat: x") {
 		t.Errorf("reflog = %q", rl)
@@ -83,7 +91,7 @@ func TestSealInitialCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Cleanup()
-	c, err := Seal(g, r, s, "first", nil)
+	c, err := Seal(g, r, s, "first", nil, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +112,7 @@ func TestSealMovedHead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = Seal(g, r, s, "msg", nil)
+	_, err = Seal(g, r, s, "msg", nil, io.Discard)
 	if !errors.Is(err, ErrMoved) {
 		t.Fatalf("err = %v, want ErrMoved", err)
 	}
@@ -121,18 +129,17 @@ func TestSealMovedHead(t *testing.T) {
 }
 
 func TestSealKeepsOtherStaged(t *testing.T) {
-	root, g, r, s := sealSetup(t, []string{"a.txt"}, func(root string) {
+	_, g, r, s := sealSetup(t, []string{"a.txt"}, func(root string) {
 		write(t, root, "a.txt", "two\n")
 		write(t, root, "b.txt", "bee\n")
 	})
 	gitOut(t, g, "add", "b.txt")
-	if _, err := Seal(g, r, s, "msg", []string{"a.txt"}); err != nil {
+	if _, err := Seal(g, r, s, "msg", []string{"a.txt"}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.TrimSpace(gitOut(t, g, "diff", "--cached", "--name-only")); got != "b.txt" {
 		t.Errorf("staged = %q, want b.txt", got)
 	}
-	_ = root
 }
 
 func TestSealDoesNotRunHooks(t *testing.T) {
@@ -159,7 +166,7 @@ func TestSealDoesNotRunHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Cleanup()
-	if _, err := Seal(g, r, s, "msg", nil); err != nil {
+	if _, err := Seal(g, r, s, "msg", nil, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(mark); err == nil {
@@ -169,5 +176,51 @@ func TestSealDoesNotRunHooks(t *testing.T) {
 	gitOut(t, g, "-c", "core.hooksPath=.husky", "commit", "-q", "--allow-empty", "-m", "x")
 	if _, err := os.Stat(mark); err != nil {
 		t.Fatal("素の git commit でも hook が動きません（テストの準備が誤り）")
+	}
+}
+
+func TestSealInitialCommitRace(t *testing.T) {
+	root, g := newRepo(t)
+	write(t, root, "a.txt", "one\n")
+	r, err := Inspect(g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := TakeSnapshot(g, r, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Cleanup()
+	commitAll(t, g, "raced")
+	raced := strings.TrimSpace(gitOut(t, g, "rev-parse", "HEAD"))
+	_, err = Seal(g, r, s, "msg", nil, io.Discard)
+	if !errors.Is(err, ErrMoved) {
+		t.Fatalf("err = %v, want ErrMoved", err)
+	}
+	if got := strings.TrimSpace(gitOut(t, g, "rev-parse", "HEAD")); got != raced {
+		t.Errorf("ブランチが動きました: %s", got)
+	}
+}
+
+// stderrRunner は、stderr に固定の文字列を書いて失敗する偽の Runner。
+type stderrRunner struct{ text string }
+
+func (f stderrRunner) Run(name string, args []string, o RunOpts) error {
+	_, _ = io.WriteString(o.Stderr, f.text)
+	return errors.New("exit 1")
+}
+
+func TestInteractiveEscapesStderr(t *testing.T) {
+	g := Git{R: stderrRunner{"\x1b[2J"}, Root: "/x"}
+	var w strings.Builder
+	_, err := g.Interactive(nil, &w, "commit-tree")
+	if err == nil {
+		t.Fatal("エラーになるはず")
+	}
+	if w.String() != "^[[2J" || strings.Contains(w.String(), "\x1b") {
+		t.Errorf("stderr = %q", w.String())
+	}
+	if !strings.Contains(err.Error(), "^[[2J") || strings.Contains(err.Error(), "\x1b") {
+		t.Errorf("err = %q", err.Error())
 	}
 }

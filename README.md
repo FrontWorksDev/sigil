@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/FrontWorksDev/sigil/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/FrontWorksDev/sigil/actions/workflows/ci.yml)
 [![vulncheck](https://github.com/FrontWorksDev/sigil/actions/workflows/vulncheck.yml/badge.svg?branch=main)](https://github.com/FrontWorksDev/sigil/actions/workflows/vulncheck.yml)
-[![codecov](https://codecov.io/gh/FrontWorksDev/sigil/graph/badge.svg)](https://codecov.io/gh/FrontWorksDev/sigil)
+[![codecov](https://codecov.io/gh/FrontWorksDev/sigil/graph/badge.svg?token=BTQeGQWhDY)](https://codecov.io/gh/FrontWorksDev/sigil)
 
 > seal your code, guard your keys
 

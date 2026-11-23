@@ -1,0 +1,111 @@
+package gitcommit
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"path"
+	"path/filepath"
+)
+
+// フックの名前。
+const (
+	PreCommit        = "pre-commit"
+	PrepareCommitMsg = "prepare-commit-msg"
+	CommitMsg        = "commit-msg"
+	PrePush          = "pre-push"
+)
+
+var hookNames = []string{PreCommit, PrepareCommitMsg, CommitMsg, PrePush}
+
+// Hooks は、リポジトリにあるフック。
+type Hooks struct {
+	Dir     string
+	Present map[string]bool
+}
+
+// Any は、names のどれかがあるかを返す。
+func (h Hooks) Any(names ...string) bool {
+	for _, n := range names {
+		if h.Present[n] {
+			return true
+		}
+	}
+	return false
+}
+
+// FindHooks は、実行できるフックを探す。
+// フックはプロジェクトのコードなのでホストでは動かさず、コンテナの中で動かす。
+// コンテナにはプロジェクトのフォルダしか見えないので、その外にあるフックは動かせない。
+// 動かせないものを黙って飛ばすと、検査が抜けたままコミットされるため、拒否する。
+func FindHooks(r Repo) (Hooks, error) {
+	h := Hooks{Dir: r.HooksDir, Present: map[string]bool{}}
+	for _, n := range hookNames {
+		fi, err := os.Stat(filepath.Join(r.HooksDir, n))
+		if err == nil && fi.Mode().IsRegular() && fi.Mode().Perm()&0o111 != 0 {
+			h.Present[n] = true
+		}
+	}
+	if len(h.Present) > 0 && !lexWithin(r.Root, r.HooksDir) {
+		return h, refuse(fmt.Sprintf("フックがプロジェクトの外（%s）にあり、領域から実行できません。手動でコミットしてください", r.HooksDir))
+	}
+	return h, nil
+}
+
+// hookScript は、コンテナの中でフックを動かす固定のシェルスクリプト。
+// フックのパスや pathspec は位置引数で受け取り、この文字列には埋め込まない
+// （ファイル名などにシェルの記号があっても、コマンドとして解釈されないようにするため）。
+// コンテナでは .git が読み取り専用なので、index とオブジェクトの書き込み先を一時フォルダに向ける。
+// 一時 index は、コミットがあるときだけ本物の index を写す。最初のコミットでは空から始める
+// （ホスト側のスナップショットと同じ）。
+// 引数なしの git reset は ORIG_HEAD と reflog を .git に書いて失敗するので、パスを付けた形にする。
+// フックの標準出力は標準エラーへ回す。msg モードでは標準出力がメッセージそのものになるため。
+const hookScript = `set -eu
+mode="$1"; hook="$2"; shift 2
+gitdir="$(git rev-parse --absolute-git-dir)"
+common="$(cd "$(git rev-parse --git-common-dir)" && pwd)"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+mkdir "$tmp/objects"
+export GIT_INDEX_FILE="$tmp/index" GIT_OBJECT_DIRECTORY="$tmp/objects" GIT_ALTERNATE_OBJECT_DIRECTORIES="$common/objects"
+if git rev-parse -q --verify HEAD >/dev/null; then
+  cp "$gitdir/index" "$tmp/index" 2>/dev/null || true
+  git reset -q HEAD -- :/
+fi
+case "$mode" in
+pre-commit)
+  git add -A -- "$@"
+  "$hook" </dev/null >&2 ;;
+msg)
+  cat >"$tmp/MSG"
+  "$hook" "$tmp/MSG" "$@" </dev/null >&2
+  cat "$tmp/MSG" ;;
+pre-push)
+  "$hook" "$@" >&2 ;;
+esac
+`
+
+// HookExecArgs は、フックをコンテナで動かす docker exec の引数を作る。
+// フックのパスは hostRoot を containerRoot に読み替える。hooksDir が hostRoot の外なら、
+// FindHooks が先に拒否しているはずなので、プログラムの誤りとしてエラーを返す。
+func HookExecArgs(container, containerRoot, hostRoot, hooksDir, name string, extra []string) ([]string, error) {
+	rel, err := filepath.Rel(hostRoot, filepath.Join(hooksDir, name))
+	if err != nil || !lexWithin(hostRoot, hooksDir) {
+		return nil, fmt.Errorf("フックの場所 %s がプロジェクトの外にあります", hooksDir)
+	}
+	mode := "msg"
+	switch name {
+	case PreCommit:
+		mode = "pre-commit"
+	case PrePush:
+		mode = "pre-push"
+	}
+	inContainer := path.Join(containerRoot, filepath.ToSlash(rel))
+	args := []string{"exec", "-i", "-w", containerRoot, container, "sh", "-c", hookScript, "sh", mode, inContainer}
+	return append(args, extra...), nil
+}
+
+// RunHook は docker を実行する。
+func RunHook(r Runner, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	return r.Run("docker", args, RunOpts{Stdin: stdin, Stdout: stdout, Stderr: stderr})
+}

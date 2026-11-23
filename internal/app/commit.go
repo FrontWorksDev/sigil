@@ -1,0 +1,212 @@
+package app
+
+import (
+	"bufio"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"sigil/internal/gitcommit"
+	"sigil/internal/project"
+	"sigil/internal/ui"
+)
+
+// commitUsage は sigil commit の引数が誤っているときのエラー。
+var commitUsage = errors.New("使い方: sigil commit [-- <path>...]")
+
+// commitArgs は sigil commit の後ろの引数から pathspec を取り出す。
+// 空ならすべて（nil）。-- の後ろは、端末の前の利用者が打ったものなので、そのまま信じてよい。
+// コンテナが指定したファイルの一覧は使わない（.github/workflows などを紛れ込ませられないように）。
+func commitArgs(args []string) ([]string, error) {
+	if len(args) == 0 {
+		return nil, nil
+	}
+	if args[0] != "--" {
+		return nil, commitUsage
+	}
+	return args[1:], nil
+}
+
+// commitCmd は sigil commit（設計書 17 章）。コンテナが用意した銘で、利用者の確認のうえ、
+// ホストの git でコミットし、push するかを別に確かめる。
+//
+// 作業ツリーの中はすべてコンテナが書き換えられるので、
+//   - ホストではフックを実行しない（コンテナで実行する）
+//   - 先に tree を確定して見せ、その tree をコミットする（確認のあいだの変更を混ぜない）
+//   - コンテナが書いた文字列は、画面に出す前に Escape する（ui が行う）
+func commitCmd(d Deps, u *ui.UI, p project.Project, args []string) error {
+	pathspec, err := commitArgs(args)
+	if err != nil {
+		return err
+	}
+	// 1. 前提。確認の答えを端末から聞くので、端末でなければ始めない。
+	if !d.IsTerminal() {
+		return loref("刻印できません", "端末から実行してください（確認の画面を出して、答えを聞くため）")
+	}
+	g := gitcommit.Git{R: d.Cmd, Root: p.Root}
+	// 2. 拒否する条件（作業ツリーの中から読まれる設定、.git の形、進行中の操作、LFS、フックの場所）
+	r, err := gitcommit.Inspect(g)
+	if err != nil {
+		return commitErr(err)
+	}
+	hooks, err := gitcommit.FindHooks(r)
+	if err != nil {
+		return commitErr(err)
+	}
+	// 3. 銘。コミットするのは、ここで整形して画面に出した内容で、ファイルは読み直さない。
+	msgPath := filepath.Join(r.Root, gitcommit.MessageFile)
+	msg, err := gitcommit.ReadMessage(msgPath)
+	if err != nil {
+		if errors.Is(err, gitcommit.ErrNoMessage) {
+			return commitErr(err)
+		}
+		return lore("銘を読めません", err)
+	}
+	if _, err := g.Out(nil, "ls-files", "--error-unmatch", "--", gitcommit.MessageFile); err == nil {
+		info(d, "注意: %s が git で追跡されています。コミットには含めませんが、.gitignore に入れてください", gitcommit.MessageFile)
+	}
+
+	h := hookRunner{d: d, p: p, r: r, hooks: hooks}
+	if hooks.Any(gitcommit.PreCommit, gitcommit.PrepareCommitMsg, gitcommit.CommitMsg, gitcommit.PrePush) {
+		if err := h.ready(); err != nil {
+			return err
+		}
+	}
+
+	// 4〜6. pre-commit → tree の確定 → prepare-commit-msg / commit-msg
+	s, msg, ran, err := h.prepare(u, g, pathspec, msg)
+	if err != nil {
+		return err
+	}
+	defer s.Cleanup()
+
+	// 7. 確認の画面。確認と push の答えは、同じ tty の同じ bufio.Reader から読む
+	// （呼ぶたびに包み直すと、先読みした次の行を捨ててしまうため）。
+	view, err := commitView(g, r, s, pathspec, msg, ran)
+	if err != nil {
+		return err
+	}
+	tty, err := d.OpenTTY()
+	if err != nil {
+		return loref("刻印できません", "確認の答えを聞けない環境です。対話できるターミナルで実行してください")
+	}
+	defer tty.Close()
+	br := bufio.NewReader(tty)
+	if err := confirmCommit(d, u, g, s, view, br); err != nil {
+		return err
+	}
+
+	// 8. 刻印。署名の問い合わせ（pinentry など）が端末に出ることがあるので、描画しない。
+	commit, err := gitcommit.Seal(g, r, s, msg, pathspec, d.Stderr)
+	if commit == "" {
+		return commitErr(err)
+	}
+	// commit があってエラーもあるときは、コミットはできていて、本物の index の整理だけが失敗した。
+	// やり直すと二重にコミットされるので、やり直しは勧めず、先へ進む。
+	indexErr := err
+
+	// 9. 銘のファイルを消す（次のコミットで、同じ銘を使い回さないように）
+	if err := os.Remove(msgPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		info(d, "注意: %s を消せませんでした（%s）。次のコミットの前に書き直してください", gitcommit.MessageFile, ui.EscapeLine(err.Error()))
+	}
+	subject, _, _ := strings.Cut(msg, "\n")
+	u.Sealed("刻印しました",
+		"ブランチ  "+strings.TrimPrefix(r.Branch, "refs/heads/"),
+		"コミット  "+shortHash(g, commit),
+		"銘        "+subject)
+	if indexErr != nil {
+		info(d, "注意: コミットはできましたが、index を HEAD にそろえられませんでした。git status で確かめてください（%s）", indexErr)
+	}
+
+	// 10. push
+	r.Head = commit
+	return pushFlow(d, u, g, r, h, br)
+}
+
+// confirmCommit は確認の画面を出して答えを聞く。d なら全差分をページャーで見せて、画面から聞き直す。
+// y / Y / yes / YES 以外（読めなかったときも）は中止。
+func confirmCommit(d Deps, u *ui.UI, g gitcommit.Git, s gitcommit.Snapshot, v ui.CommitView, br *bufio.Reader) error {
+	for {
+		u.CommitScreen(v)
+		u.CommitPrompt()
+		ans := ui.ReadAnswer(br)
+		if ans == "d" || ans == "D" {
+			// textconv と外部の diff は、コンテナが書いた内容をホストのプログラムで処理することになるので止める。
+			// 見せるのは確定した tree の差分で、作業ツリーではない。
+			diff, err := g.Out(nil, "diff", "--no-color", "--no-ext-diff", "--no-textconv", s.Base, s.Tree)
+			if err != nil {
+				return lore("刻印を取りやめました", err)
+			}
+			if err := d.Pager(u.DiffPage(diff)); err != nil {
+				info(d, "注意: 差分を表示できませんでした（%s）", ui.EscapeLine(err.Error()))
+			}
+			continue
+		}
+		if !ui.IsYes(ans) {
+			return lore("刻印を取りやめました", errors.New("中止しました"))
+		}
+		return nil
+	}
+}
+
+// pushFlow は、upstream があれば push 先を見せて聞き、承認されたら pre-push を経て push する。
+// ここまで来たらコミットはできているので、断られても失敗しても、コミットは残す。
+func pushFlow(d Deps, u *ui.UI, g gitcommit.Git, r gitcommit.Repo, h hookRunner, br *bufio.Reader) error {
+	up, ok, err := gitcommit.FindUpstream(g, r)
+	if err != nil {
+		return lore("解き放てませんでした", fmt.Errorf("push 先を調べられませんでした。コミットは残っています（%w）", err))
+	}
+	if !ok {
+		// push 先は推測しない（違うリモートへ送らないように）
+		info(d, "upstream がないので解き放ちません。git push -u <remote> %s を手動で実行してください",
+			ui.EscapeLine(strings.TrimPrefix(r.Branch, "refs/heads/")))
+		return nil
+	}
+	u.PushPrompt(ui.PushView{Remote: up.Remote, URL: up.URL, Branch: up.MergeRef, Ahead: up.Ahead})
+	if !ui.IsYes(ui.ReadAnswer(br)) {
+		info(d, "解き放ちませんでした。コミットは残っています")
+		return nil
+	}
+	if h.hooks.Present[gitcommit.PrePush] {
+		stages := []ui.Stage{{Label: "試練に挑む", Note: gitcommit.PrePush}}
+		err := u.Ritual("試練に挑みます", "コンテナで hooks を実行しています", stages, func(w io.Writer) error {
+			_, err := h.run(w, gitcommit.PrePush, []string{up.Remote, up.URL}, up.PrePushInput(r, r.Head),
+				"push していません。コミットは残っています")
+			return err
+		})
+		if err != nil {
+			return err
+		}
+	}
+	// SSH のパスフレーズなどを端末で聞かれることがあるので、描画せずに git の出力をそのまま流す。
+	// 標準出力と標準エラーは別々に渡す。Push は標準エラーだけを Escape して包むので、同じ先を渡すと、
+	// 2 つの Writer が同じ先へ同時に書くことになる。
+	if err := gitcommit.Push(g, up, d.Stdout, d.Stderr); err != nil {
+		return lore("解き放てませんでした", fmt.Errorf("%w。コミットは残っています", err))
+	}
+	info(d, "解き放ちました（%s %s）", ui.EscapeLine(up.Remote), ui.EscapeLine(up.MergeRef))
+	return nil
+}
+
+// commitErr は gitcommit のエラーに世界観の言葉を添える。2 行目は普通の言葉での説明と対処。
+func commitErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	var ref *gitcommit.Refusal
+	switch {
+	case errors.As(err, &ref):
+		return lore(ref.Lore, errors.New(ref.Msg))
+	case errors.Is(err, gitcommit.ErrNoMessage):
+		return loref("銘がありません", "コミットメッセージがありません。プロジェクトの最上位の %s に書いてください（コンテナの Claude Code に頼めます）", gitcommit.MessageFile)
+	case errors.Is(err, gitcommit.ErrNothing):
+		return loref("刻むものがありません", "コミットする変更がありません")
+	case errors.Is(err, gitcommit.ErrMoved):
+		return lore("刻印は果たされませんでした", fmt.Errorf("確認のあいだにブランチが動いたので、コミットしていません（%w）", err))
+	}
+	return lore("刻印できません", err)
+}

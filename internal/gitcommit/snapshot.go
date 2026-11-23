@@ -56,6 +56,10 @@ func effectivePathspec(pathspec []string) []string {
 	return append(append([]string(nil), pathspec...), ":(exclude,top)"+MessageFile)
 }
 
+// EffectivePathspec は effectivePathspec を外から使うためのもの。
+// コンテナの pre-commit のフックにも、ホストと同じ範囲を add させるため。
+func EffectivePathspec(pathspec []string) []string { return effectivePathspec(pathspec) }
+
 // TakeSnapshot は、本物の index に触れずに、作業ツリーの今の状態から tree を確定する。
 // 確認のあとで git add をすると、そのあいだにコンテナが書いた変更が紛れ込むため、
 // 先に tree を作って見せ、その tree をコミットする。

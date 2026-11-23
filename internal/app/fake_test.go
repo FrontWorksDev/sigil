@@ -10,8 +10,16 @@ import (
 	"testing"
 	"time"
 
+	"sigil/internal/gitcommit"
 	"sigil/internal/project"
 )
+
+// noCmd は、sigil commit 以外のテストの Deps.Cmd。呼ばれたら失敗させ、git や docker を本当に動かさない。
+type noCmd struct{}
+
+func (noCmd) Run(name string, args []string, _ gitcommit.RunOpts) error {
+	return errors.New("Deps.Cmd は使わないはず: " + name + " " + strings.Join(args, " "))
+}
 
 type call struct {
 	name string
@@ -146,6 +154,8 @@ func newEnv(t *testing.T) *testEnv {
 
 	e.d = Deps{
 		Runner: e.runner,
+		Cmd:    noCmd{},
+		Pager:  func(string) error { return errors.New("Deps.Pager は使わないはず") },
 		Exec: func(argv0 string, argv, env []string) error {
 			e.order = append(e.order, "exec")
 			e.stderrAtExec = append(e.stderrAtExec, e.stderr.String())

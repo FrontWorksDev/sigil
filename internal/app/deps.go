@@ -5,18 +5,26 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
 
 	sigilimage "sigil/image"
 	"sigil/internal/docker"
+	"sigil/internal/gitcommit"
 )
 
 // Deps は、外部とのやりとりをまとめたもの。
 // テストではすべて偽物に差し替え、docker・git・op・端末がなくても動くようにする。
 type Deps struct {
 	Runner docker.Runner
+
+	// Cmd は sigil commit が使う git と docker の実行。環境変数と標準入力を渡せる
+	// （一時の index を指す GIT_INDEX_FILE と、銘を標準入力で渡すため）。
+	Cmd gitcommit.Runner
+	// Pager は、sigil commit の全差分を見せる。content は sigil が Escape して色を付けたもの。
+	Pager func(content string) error
 
 	// Exec は現在のプロセスを argv0 で置き換える。本物（syscall.Exec）は成功すると戻らない。
 	// 偽物は nil を返して戻ってくるので、呼んだ側は直後に必ず return すること。
@@ -57,6 +65,8 @@ type Deps struct {
 func DefaultDeps() Deps {
 	return Deps{
 		Runner:      docker.ExecRunner{},
+		Cmd:         gitcommit.ExecRunner{},
+		Pager:       pager,
 		Exec:        syscall.Exec,
 		LookPath:    exec.LookPath,
 		LookupEnv:   os.LookupEnv,
@@ -87,6 +97,25 @@ func DefaultDeps() Deps {
 		Stdout:            os.Stdout,
 		Stderr:            os.Stderr,
 	}
+}
+
+// pager は content を less -R -S で見せる。less がなければ、そのまま標準エラーに出す。
+// -R（エスケープをそのまま通す）を付けてよいのは、content に残るエスケープが、
+// sigil が付けた色だけだから（ui.DiffPage が行ごとに Escape してから色を付ける）。
+// LESSSECURE=1 は、less の中からシェルや編集を起動したり、LESSOPEN の前処理を
+// 動かしたりできなくする。差分はコンテナが書いた内容なので、ホストで何も実行させないため。
+func pager(content string) error {
+	less, err := exec.LookPath("less")
+	if err != nil {
+		_, err := io.WriteString(os.Stderr, content)
+		return err
+	}
+	cmd := exec.Command(less, "-R", "-S")
+	cmd.Stdin = strings.NewReader(content)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	cmd.Env = append(os.Environ(), "LESSSECURE=1")
+	return cmd.Run()
 }
 
 // isCharDevice は f が端末かを返す。標準ライブラリだけで判定するため、文字デバイスかどうかで見る。

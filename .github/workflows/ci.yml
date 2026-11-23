@@ -25,6 +25,8 @@ jobs:
         # 本番は macOS。大文字小文字を区別しないファイルシステムなど、macOS でしか意味を持たないテストがある。
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    # テストは FIFO や git を使うので、止まったときに既定の 360 分までランナーを使い続けないようにする。
+    timeout-minutes: 15
     steps:
       # 後の手順（テストのコードを含む）にトークンを残さない。
       - uses: actions/checkout@v7.0.1
@@ -54,7 +56,10 @@ jobs:
           fi
 
       # フォークからの PR では CODECOV_TOKEN が空になり、トークンなしの送信（公開リポジトリ向け）になる。
+      # Dependabot の PR も CODECOV_TOKEN が空だが、フォークではないのでトークンなしの送信に切り替わらず、
+      # Codecov に断られる（fail_ci_if_error: false なので CI は通る）。Actions の更新だけなのでカバレッジは要らない。
       # action は実行時に Codecov の CLI をダウンロードする。これはロックファイルで固定されないので、版を固定する。
+      # この版は Dependabot では上がらないので、手で上げる（四半期に 1 回を目安）。
       - name: Codecov
         if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v7.1.1
@@ -67,6 +72,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
         with:

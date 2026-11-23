@@ -8,3 +8,6 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # 出てから 7 日たった版だけを提案させる。乗っ取られたリリースが、知られる前に取り込まれないようにするため。
+    cooldown:
+      default-days: 7

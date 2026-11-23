@@ -598,14 +598,15 @@ issue #5。sigil はホストで動く唯一の信頼された道具なので、
   - `-race` は cgo を使うが、テストのときだけ。sigil 本体のビルドは `CGO_ENABLED=0` のまま（3 章）。
 - **ci.yml の build**: Linux のランナーから `CGO_ENABLED=0 GOOS=darwin GOARCH=arm64` と `amd64` で `go build -trimpath` する。
 - **外部モジュールがないこと**: `go list -m all` の出力が `sigil` だけであることを確かめる。`go.mod` を grep するより、Go 自身の解釈で見るほうが確実なため。
-- **Codecov**: ubuntu の `coverage.out` だけを送る。`CODECOV_TOKEN` は Secrets に入れる。フォークからの PR には Secrets が渡らないので、トークンなしでの送信（公開リポジトリで使える tokenless upload）に任せる。`pull_request_target` は使わない（フォークのコードに Secrets を渡すため）。codecov-action は実行時に Codecov の CLI を別にダウンロードし、これはロックファイルで固定されないので、action の入力で CLI の版も固定する。README にバッジを付ける。
-- **govulncheck**: `go install golang.org/x/vuln/cmd/govulncheck@<版>` で版を固定して入れ（`@latest` にしない）、`govulncheck ./...` が脆弱性を見つけたら失敗させる。ランナーの中だけで使い、ホストにも `go.mod` にも入れない（外部モジュールを入れない方針は sigil 本体のコードの話で、CI の道具は当たらない）。対処は `.tool-versions` と `go.mod` の Go の版を上げること。脆弱性はコードを変えなくても後から公表されるので、定期実行でも動かす。govulncheck の版は Dependabot では拾えないので、手で上げる（四半期に 1 回を目安にする）。
+- **Codecov**: ubuntu の `coverage.out` だけを送る。`CODECOV_TOKEN` は Secrets に入れる。フォークからの PR には Secrets が渡らないので、トークンなしでの送信（公開リポジトリで使える tokenless upload）に任せる。`pull_request_target` は使わない（フォークのコードに Secrets を渡すため）。Dependabot の PR も `CODECOV_TOKEN` が空になるが、フォークではないのでトークンなしの送信に切り替わらず、Codecov に断られる。Actions の更新だけなので、カバレッジは要らないものとし、`fail_ci_if_error: false` で CI は通す。codecov-action は実行時に Codecov の CLI を別にダウンロードし、これはロックファイルで固定されないので、action の入力で CLI の版も固定する。この版は Dependabot では上がらないので、手で上げる（四半期に 1 回を目安にする）。README にバッジを付ける（公開リポジトリなので、表示用のトークンは付けない）。
+- **govulncheck**: `go install golang.org/x/vuln/cmd/govulncheck@<版>` で版を固定して入れ（`@latest` にしない）、`govulncheck ./...` が脆弱性を見つけたら失敗させる。darwin/arm64・darwin/amd64・linux を対象に調べる（アーキテクチャごとのコードにだけある脆弱性を取りこぼさないため）。ランナーの中だけで使い、ホストにも `go.mod` にも入れない（外部モジュールを入れない方針は sigil 本体のコードの話で、CI の道具は当たらない）。対処は `.tool-versions` と `go.mod` の Go の版を上げること。脆弱性はコードを変えなくても後から公表されるので、定期実行でも動かす。govulncheck の版は Dependabot では拾えないので、手で上げる（四半期に 1 回を目安にする）。
 - **Go の版**: `actions/setup-go` に `go-version-file: .tool-versions` を渡し、手元と同じ版にする。`GOTOOLCHAIN=local` にして、`go.mod` を理由に別の版のツールチェーンをダウンロードさせない。
 
 ### 守ること
 
 - **`permissions: contents: read`** をワークフローの先頭に書き、書き込み権限を渡さない。
 - `actions/checkout` は `persist-credentials: false` にする（後の手順にトークンを残さない）。
+- どのジョブにも `timeout-minutes: 15` を付ける（テストが FIFO や git の入力待ちで止まったときに、既定の 360 分までランナーを使い続けないため）。
 - 使う Actions は `actions/checkout`、`actions/setup-go`、`codecov/codecov-action` に限る。別のリポジトリの再利用ワークフローとコンテナイメージは使わない（ロックファイルで固定されないため）。
 
 ### Actions の固定（gh-actions-lock）
@@ -617,7 +618,7 @@ GitHub 公式の gh の拡張 `github/gh-actions-lock` で、ワークフロー�
 - **CI では拡張を入れない**（`--verify` のワークフローを作らない）。実行を止めるのは、ジョブの開始時のランナー側の確認で、CI の `--verify` は、それより先に分かりやすく落とすだけの補助になるため。
 - ロックファイルに載っていないワークフローの実行は、リポジトリのポリシー「Require lockfile」（Settings → Actions → Policies）で止める。個人のアカウントの公開リポジトリで使えるかは、ドキュメントに書かれていないので、設定画面で確かめる。使えず、ロックされたコミットで動くことも確かめられなければ、YAML の `uses:` もコミットの SHA で固定する（`actions/checkout@<40 文字の SHA> # v7.0.1`）。
 - **ロックファイルの差分は必ず読む**。`v4` のような動くタグが古いコミットに戻されても検出されない（gh-actions-lock の Limitations）。`--accept-moved` は使わない。
-- 更新は Dependabot（`github-actions` だけ）に PR を作らせる。Dependabot は、ロックファイルに載ったワークフローのエントリも更新する（ドキュメントによる）。取り込む前にロックファイルの差分を読む。更新されていなければ、その PR のブランチで、ホストで `gh actions-lock --relock` を実行する。
+- 更新は Dependabot（`github-actions` だけ）に PR を作らせる。`cooldown`（`default-days: 7`）で、出てから 7 日たった版だけを提案させる。Dependabot は、ロックファイルに載ったワークフローのエントリも更新する（ドキュメントによる）。取り込む前にロックファイルの差分を読む。更新されていなければ、その PR のブランチで、ホストで `gh actions-lock --relock` を実行する。
 
 ### GitHub 側の設定（利用者が行う）
 
@@ -711,3 +712,4 @@ GitHub 公式の gh の拡張 `github/gh-actions-lock` で、ワークフロー�
 | 2026-11-23 | `sigil commit` の `d` は、ホストに delta があれば delta で差分を整形する。事前に制御文字を置き換え、`--no-gitconfig --paging=never --line-numbers` で呼び、なければ・失敗したら組み込みの表示に戻す。Plain / Mono では使わない | 読みやすさのための利用者の判断（issue #13）。差分はコンテナの内容なので、delta に生の制御文字を渡さず（出力は delta 自身の SGR と `ESC[K` だけになり `less -R` に渡せる）、`[delta]` の設定を読ませず、環境変数 `DELTA_FEATURES` は子プロセスにだけ空で渡して上書きする（`DELTA_FEATURES=hyperlinks` は `--no-gitconfig` でも OSC 8 を戻す。実機で確認）（hyperlinks で、コンテナが決めたファイル名が OSC 8 のクリックできるリンクになり、`.command` の実行につながるため）。受け入れる危険: 利用者が入れた delta（git や less と同じ立場）が信頼できない内容を解釈するので、delta 自身の不具合は残る。軽減は、事前の置き換え・`--no-gitconfig`・フォールバック |
 | 2026-11-23 | CI を ci.yml（テスト・静的検査・ビルド・Codecov）と vulncheck.yml（govulncheck。定期実行も）に分ける | issue #5。定期実行は govulncheck だけでよく、ファイルを分ければ `if:` でほかのジョブを止める必要がない |
 | 2026-11-23 | Actions は gh-actions-lock で固定する。拡張はホストに版を固定して入れ、ロックファイルは手元で作る。CI では拡張を入れず `--verify` も回さない。止めるのはランナー側の確認（ロックされたコミットで動くことと、ポリシー「Require lockfile」）に任せ、どちらも確かめられなければ YAML も SHA で固定する | issue #5。公式で、間接的に使う Actions も固定でき、ランナー側の確認と連動する（ほかの候補は pinact、unfunco/gh-pin、amenocal/gh-pin-actions）。拡張はほかのプロジェクトでも使うので、コンテナではなくホストに入れる（GitHub 公式で、gh 自体をすでにホストで信頼しているため。利用者の判断）。CI の `--verify` は、ロックファイルの誤りをランナーより先に知らせるだけの補助で、一人で開発するこのリポジトリでは、CI で拡張を入れて版を管理する手間に見合わない（利用者の判断） |
+| 2026-11-23 | Dependabot に `cooldown`（7 日）を付ける | issue #5 のコードレビュー。新しい版が出た当日に PR が来ると、乗っ取られたリリースが、それが知られる前に取り込まれうる。Actions の更新は急がないので、7 日待っても困らない |

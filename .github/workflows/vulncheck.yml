@@ -22,6 +22,7 @@ env:
 jobs:
   govulncheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -38,10 +39,14 @@ jobs:
           go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
-      # 本番は macOS なので、darwin として調べる（OS ごとの脆弱性を取りこぼさないため）。
+      # 本番は macOS なので、darwin として調べる。arm64 と amd64 の両方をビルドしているので、
+      # 片方のアーキテクチャのコード（アセンブリなど）にだけある脆弱性を取りこぼさないよう、両方を調べる。
       # govulncheck 自体は linux で動き、GOOS / GOARCH は解析の対象だけを変える。
-      - name: govulncheck（darwin）
+      - name: govulncheck（darwin/arm64）
         run: GOOS=darwin GOARCH=arm64 govulncheck ./...
+
+      - name: govulncheck（darwin/amd64）
+        run: GOOS=darwin GOARCH=amd64 govulncheck ./...
 
       - name: govulncheck（linux）
         run: govulncheck ./...

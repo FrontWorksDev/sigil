@@ -142,6 +142,24 @@ func TestSealKeepsOtherStaged(t *testing.T) {
 	}
 }
 
+// 刻印後の本物の index の reset も、パスをそのままの名前として読む（glob で ab.txt まで戻さない）。
+func TestSealResetLiteral(t *testing.T) {
+	_, g, r, s := sealSetup(t, []string{"a[b].txt"}, func(root string) {
+		write(t, root, "a[b].txt", "lit\n")
+		write(t, root, "ab.txt", "glob\n")
+	})
+	gitOut(t, g, "add", "ab.txt")
+	if _, err := Seal(g, r, s, "msg", []string{"a[b].txt"}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(gitOut(t, g, "diff", "--cached", "--name-only")); got != "ab.txt" {
+		t.Errorf("staged = %q, want ab.txt", got)
+	}
+	if got := strings.TrimSpace(gitOut(t, g, "ls-tree", "--name-only", "HEAD")); got != "a.txt\na[b].txt" {
+		t.Errorf("HEAD = %q", got)
+	}
+}
+
 func TestSealDoesNotRunHooks(t *testing.T) {
 	root, g := newRepo(t)
 	write(t, root, "a.txt", "one\n")

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+
+	"sigil/internal/ui"
 )
 
 // フックの名前。
@@ -47,7 +49,8 @@ func FindHooks(r Repo) (Hooks, error) {
 		}
 	}
 	if len(h.Present) > 0 && !lexWithin(r.Root, r.HooksDir) {
-		return h, refuse(fmt.Sprintf("フックがプロジェクトの外（%s）にあり、領域から実行できません。手動でコミットしてください", r.HooksDir))
+		// フックの場所は .git/config（利用者の設定）から来るが、制御文字で画面を操作されないよう Escape する。
+		return h, refuse(fmt.Sprintf("フックがプロジェクトの外（%s）にあり、領域から実行できません。手動でコミットしてください", ui.EscapeLine(r.HooksDir)))
 	}
 	return h, nil
 }

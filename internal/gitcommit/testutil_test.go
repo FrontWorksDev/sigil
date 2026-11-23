@@ -42,6 +42,26 @@ func write(t *testing.T, root, rel, content string) {
 	}
 }
 
+// commitSubmodule は、root の下の rel に入れ子のリポジトリを作り、gitlink として HEAD にコミットする。
+func commitSubmodule(t *testing.T, root string, g Git, rel string) {
+	t.Helper()
+	write(t, root, rel+"/f.txt", "s\n")
+	sg := Git{R: ExecRunner{}, Root: filepath.Join(root, rel), Env: g.Env}
+	for _, args := range [][]string{
+		{"init", "-q", "-b", "main"}, {"config", "user.name", "t"}, {"config", "user.email", "t@example.com"},
+		{"add", "-A"}, {"commit", "-q", "-m", "s"},
+	} {
+		if _, err := sg.Out(nil, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{{"add", "--", rel}, {"commit", "-q", "-m", "add submodule"}} {
+		if _, err := g.Out(nil, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func commitAll(t *testing.T, g Git, msg string) {
 	t.Helper()
 	if _, err := g.Out(nil, "add", "-A"); err != nil {

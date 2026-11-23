@@ -142,7 +142,8 @@ func commitCmd(d Deps, u *ui.UI, p project.Project, cwd string, args []string) e
 		info(d, "注意: コミットはできましたが、index を HEAD にそろえられませんでした。git status で確かめてください（%s）", indexErr)
 	}
 
-	// 10. push
+	// 10. push。件数・pre-push の入力・push するものは、すべて刻印したコミット（r.Head）にそろえる。
+	// HEAD はこのあとも動きうるので読まない（利用者が見ていないコミットを送らないように）。
 	r.Head = commit
 	return pushFlow(d, u, g, r, h, br)
 }
@@ -208,7 +209,7 @@ func pushFlow(d Deps, u *ui.UI, g gitcommit.Git, r gitcommit.Repo, h hookRunner,
 	// SSH のパスフレーズなどを端末で聞かれることがあるので、描画せずに git の出力をそのまま流す。
 	// 標準出力と標準エラーは別々に渡す。Push は標準エラーだけを Escape して包むので、同じ先を渡すと、
 	// 2 つの Writer が同じ先へ同時に書くことになる。
-	if err := gitcommit.Push(g, up, d.Stdout, d.Stderr); err != nil {
+	if err := gitcommit.Push(g, up, r.Head, d.Stdout, d.Stderr); err != nil {
 		return lore("解き放てませんでした", fmt.Errorf("%w。コミットは残っています", err))
 	}
 	info(d, "解き放ちました（%s %s）", ui.EscapeLine(up.Remote), ui.EscapeLine(up.MergeRef))

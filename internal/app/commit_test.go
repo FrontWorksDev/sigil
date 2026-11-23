@@ -373,7 +373,7 @@ func TestCommitHooksInContainer(t *testing.T) {
 			t.Errorf("フック %d = %s, want %s", i, got, want)
 		}
 	}
-	if got := execs[0].args[11:]; strings.Join(got, " ") != ". :(exclude,top).sigil-commit" {
+	if got := execs[0].args[11:]; strings.Join(got, " ") != ":(top) :(exclude,top).sigil-commit" {
 		t.Errorf("pre-commit の pathspec = %v", got)
 	}
 	if got := c.body(); got != "feat: changed\n" {
@@ -796,6 +796,133 @@ func TestHookRunnerOutsideRootEscaped(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "\x1b") || !strings.Contains(err.Error(), "^[[31m") {
 		t.Errorf("err = %q", err)
+	}
+}
+
+// HEAD にサブモジュールがあると、git add がその中で git を動かし、コンテナが書ける入れ子の設定の
+// filter をホストで実行してしまう。tty を開く前に拒否し、filter は一度も動かない。
+func TestCommitRefusesExistingSubmodule(t *testing.T) {
+	c := newCommitEnv(t)
+	sub := gitcommit.Git{R: gitcommit.ExecRunner{}, Root: filepath.Join(c.proj, "sub"), Env: gitIsolation}
+	c.write("sub/f.txt", "s\n")
+	for _, a := range [][]string{{"init", "-q", "-b", "main"}, {"add", "-A"},
+		{"-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "s"}} {
+		if _, err := sub.Out(nil, a...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c.git("add", "--", "sub")
+	c.git("commit", "-q", "-m", "add submodule")
+
+	// コンテナがしうる細工: 入れ子の設定に filter を置き、サブモジュールの中を変える
+	marker := filepath.Join(realTemp(t), "PWNED")
+	if _, err := sub.Out(nil, "config", "filter.evil.clean", "sh -c 'touch "+marker+"; cat'"); err != nil {
+		t.Fatal(err)
+	}
+	c.write("sub/.gitattributes", "* filter=evil\n")
+	// 大きさを変えない書き換え。git は中身を確かめるために、ファイルを filter に通す。
+	c.write("sub/f.txt", "x\n")
+	c.write("a.txt", "two\n")
+	c.write(gitcommit.MessageFile, "fix: a\n")
+	c.tty = "y\n"
+	if code := c.run("commit"); code != 1 {
+		t.Fatalf("code = %d, stderr = %s", code, c.stderr.String())
+	}
+	if c.ttyOpened != 0 {
+		t.Error("tty を開いた")
+	}
+	c.noCommitTree()
+	if n := len(c.cmd.find("git", " add ")); n != 0 {
+		t.Errorf("git add を %d 回呼んだ", n)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("入れ子の設定の filter がホストで実行された")
+	}
+	if se := c.stderr.String(); !strings.Contains(se, "サブモジュール（gitlink）") || !strings.Contains(se, "sub") {
+		t.Errorf("stderr = %s", se)
+	}
+
+	// 対照: Inspect を飛ばして TakeSnapshot（SafeConfig 付きの add）に進むと filter が動く。
+	// 細工が有効で、拒否がなければ実行されていたことの証明。
+	r := gitcommit.Repo{Root: c.proj, GitDir: filepath.Join(c.proj, ".git"), Branch: "refs/heads/main", Head: c.head()}
+	s, _ := gitcommit.TakeSnapshot(c.g, r, nil)
+	s.Cleanup()
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("対照で filter が動いていません: %v", err)
+	}
+}
+
+// -- の後ろのパスは glob ではなく、そのままの名前。画面にも magic を付けずに出す。
+func TestCommitPathLiteral(t *testing.T) {
+	c := newCommitEnv(t)
+	c.write("a[b].txt", "lit\n")
+	c.write("ab.txt", "glob\n")
+	c.write(gitcommit.MessageFile, "fix: lit\n")
+	c.tty = "y\n"
+	if code := c.run("commit", "--", "a[b].txt"); code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, c.stderr.String())
+	}
+	if got := c.git("show", "HEAD:a[b].txt"); got != "lit\n" {
+		t.Errorf("HEAD:a[b].txt = %q", got)
+	}
+	if _, err := c.g.Out(nil, "cat-file", "-e", "HEAD:ab.txt"); err == nil {
+		t.Error("指定していない ab.txt がコミットされた")
+	}
+	se := c.stderr.String()
+	if !strings.Contains(se, "a[b].txt") || strings.Contains(se, ":(top") {
+		t.Errorf("stderr = %s", se)
+	}
+}
+
+// pre-commit のフックにも、ホストと同じ top / literal の pathspec を渡す。
+func TestCommitHookPathspecLiteral(t *testing.T) {
+	c := newCommitEnv(t)
+	c.hook(".git/hooks/pre-commit")
+	c.container("running", "")
+	c.write("a[b].txt", "lit\n")
+	c.write(gitcommit.MessageFile, "fix: lit\n")
+	c.tty = "y\n"
+	if code := c.run("commit", "--", "a[b].txt"); code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, c.stderr.String())
+	}
+	execs := c.dockerExecs()
+	if len(execs) != 1 {
+		t.Fatalf("docker exec = %v", execs)
+	}
+	if got := strings.Join(execs[0].args[11:], " "); got != ":(top,literal)a[b].txt :(exclude,top).sigil-commit" {
+		t.Errorf("pre-commit の pathspec = %q", got)
+	}
+}
+
+// push するのは刻印したコミット。pre-push のあいだに HEAD が動いても、そのコミットは送らない。
+func TestCommitPushesSealedCommit(t *testing.T) {
+	c := newCommitEnv(t)
+	bare := c.withUpstream()
+	c.hook(".git/hooks/pre-push")
+	c.container("running", "")
+	var sealed string
+	c.cmd.hooks["pre-push"] = func(stdin string, _ []string, _, _ io.Writer) error {
+		sealed = c.head()
+		// 利用者がホストで別のコミットを足した
+		c.git("commit", "-q", "--allow-empty", "-m", "later")
+		return nil
+	}
+	c.write("a.txt", "two\n")
+	c.write(gitcommit.MessageFile, "fix: a\n")
+	c.tty = "y\ny\n"
+	if code := c.run("commit"); code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, c.stderr.String())
+	}
+	if sealed == "" || sealed == c.head() {
+		t.Fatalf("sealed = %q, head = %q", sealed, c.head())
+	}
+	if got := bareHead(t, bare); got != sealed {
+		t.Errorf("bare の main = %s, want %s（刻印したコミット）", got, sealed)
+	}
+	push := c.cmd.find("git", " push ")
+	if len(push) != 1 || !strings.Contains(push[0].String(), "--recurse-submodules=no") ||
+		!strings.Contains(push[0].String(), sealed+":refs/heads/main") {
+		t.Errorf("push = %v", push)
 	}
 }
 

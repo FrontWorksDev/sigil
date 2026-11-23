@@ -83,6 +83,40 @@ func TestSnapshotPathspec(t *testing.T) {
 	}
 }
 
+// 利用者のパスは glob ではなく、そのままの名前として読む。
+func TestSnapshotPathspecLiteral(t *testing.T) {
+	root, g := newRepo(t)
+	write(t, root, "a[b].txt", "1")
+	write(t, root, "ab.txt", "2")
+	s := snap(t, g, "a[b].txt")
+	if len(s.Changes) != 1 || s.Changes[0].Path != "a[b].txt" {
+		t.Errorf("%+v", s.Changes)
+	}
+}
+
+func TestEffectivePathspec(t *testing.T) {
+	got := strings.Join(EffectivePathspec(nil), " ")
+	if got != ":(top) :(exclude,top).sigil-commit" {
+		t.Errorf("既定 = %q", got)
+	}
+	got = strings.Join(EffectivePathspec([]string{"a[b].txt", "d/*", "."}), " ")
+	if got != ":(top,literal)a[b].txt :(top,literal)d/* :(top) :(exclude,top).sigil-commit" {
+		t.Errorf("指定 = %q", got)
+	}
+}
+
+// 最上位で -- . と指定したとき（commitArgs は "." を返す）も、全体が入る。
+func TestSnapshotPathspecDot(t *testing.T) {
+	root, g := newRepo(t)
+	write(t, root, "a.txt", "a")
+	write(t, root, "d/b.txt", "b")
+	write(t, root, MessageFile, "m")
+	s := snap(t, g, ".")
+	if len(s.Changes) != 2 {
+		t.Errorf("%+v", s.Changes)
+	}
+}
+
 func TestSnapshotInitialCommit(t *testing.T) {
 	root, g := newRepo(t)
 	write(t, root, "a.txt", "a")
@@ -334,6 +368,27 @@ func TestSnapshotLFS(t *testing.T) {
 		write(t, root, "sub/.gitattributes", lfsAttrs)
 		write(t, root, "sub/x.bin", "x")
 		refuses(t, g)
+	})
+	// add のあとで作業ツリーの .gitattributes が書き換えられても、確定した tree の属性で調べる。
+	t.Run("tree attributes", func(t *testing.T) {
+		root, g := newRepo(t)
+		write(t, root, ".gitattributes", lfsAttrs)
+		write(t, root, "x.bin", "x")
+		commitAll(t, g, "c1")
+		tree := strings.TrimSpace(gitOut(t, g, "rev-parse", "HEAD^{tree}"))
+		write(t, root, ".gitattributes", "*.txt text\n")
+		err := checkLFS(g, tree, []Change{{Status: 'A', Path: "x.bin"}})
+		var ref *Refusal
+		if !errors.As(err, &ref) {
+			t.Fatalf("Refusal を期待しましたが %v でした", err)
+		}
+		// 対照: どちらにも lfs がなければ拒否しない
+		write(t, root, ".gitattributes", "*.txt text\n")
+		commitAll(t, g, "c2")
+		tree = strings.TrimSpace(gitOut(t, g, "rev-parse", "HEAD^{tree}"))
+		if err := checkLFS(g, tree, []Change{{Status: 'A', Path: "x.bin"}}); err != nil {
+			t.Fatal(err)
+		}
 	})
 	t.Run("not in commit", func(t *testing.T) {
 		root, g := newRepo(t)

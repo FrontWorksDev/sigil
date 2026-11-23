@@ -341,7 +341,7 @@ Docker・git・op・端末がなくても `go test ./...` が通ること。少�
 - `sigil commit`（17 章）:
   - メッセージのファイル: シンボリックリンク・特殊なファイル・大きすぎるファイル・不正な UTF-8・双方向の書式文字を拒否し、リンク先を読まない。制御文字は取り除かれ、画面にもコミットにも残らない
   - 作業ツリーの中を指す `core.hooksPath` があっても、その hook はホストで実行されない（一時フォルダに作った本物の git リポジトリで、hook が印のファイルを作らないことを確かめる）
-  - 作業ツリーの中から読み込まれる git の設定、進行中のマージなど、gitlink の追加・変更、LFS があれば拒否し、コミットしない
+  - 作業ツリーの中から読み込まれる git の設定、進行中のマージなど、HEAD のサブモジュール、gitlink の追加・変更、LFS があれば拒否し、コミットしない（サブモジュールの拒否は、入れ子の設定の filter がホストで実行されないことまで確かめる）
   - 確認の画面を出したあとで作業ツリーが変わっても、コミットされるのは画面に出した tree である
   - `n` → コミットしない、端末なし → 中止、HEAD が途中で動いた → コミットしない（index も変えない）
   - upstream がなければ push を聞かない。push を断ればしない
@@ -490,8 +490,8 @@ issue #13。コンテナの `.git` は読み取り専用（8 章）なので、�
 
 ### コマンドの引数
 
-- `sigil commit`: 変更のあるものすべて（追跡していない、無視されていないファイルを含む）をコミットする。pathspec は `.` と `:(exclude,top).sigil-commit`。
-- `sigil commit -- <path>...`: 指定したものだけ。pathspec は `<path>...` と `:(exclude,top).sigil-commit`。これは端末の前にいる利用者が打つものなので、信じてよい。**コンテナが指定したファイルの一覧は使わない**（`.github/workflows` などを紛れ込ませられないように）。
+- `sigil commit`: 変更のあるものすべて（追跡していない、無視されていないファイルを含む）をコミットする。pathspec は `:(top)`（最上位の全体）と `:(exclude,top).sigil-commit`。`top` を付けるのは、コンテナの pre-commit で `add` するときも、cwd に左右されないため（`:(top).` は `.` という名前として読まれ、何にも一致しないので使わない）。
+- `sigil commit -- <path>...`: 指定したものだけ。pathspec は `:(top,literal)<path>...` と `:(exclude,top).sigil-commit`（最上位からのパスが `.` なら `:(top)`）。`literal` を付け、glob として読まない（`a[b].txt` が `ab.txt` まで拾うと、確認の画面の範囲と違うファイルが入るため）。ホストの `add`、刻印後の本物の index の `reset`、コンテナの pre-commit の `add` のすべてで同じものを使う。確認の画面には magic を付けない素のパスを出す。これは端末の前にいる利用者が打つものなので、信じてよい。**コンテナが指定したファイルの一覧は使わない**（`.github/workflows` などを紛れ込ませられないように）。
 - `<path>` は git と同じく、今いるフォルダ（リンクを解いたもの）からのパスとして読み、最上位からのパスに直して使う（ホストの git は `-C <root>` で呼ぶため）。プロジェクトの外を指すもの（`../..` など）はエラー。
 - `:` で始まる指定（pathspec の magic、`:(top)` や `:!` など）は受け付けない。銘のファイルを外す指定や、今いるフォルダからという決まりをすり抜けられるため。
 - 銘のファイルは、どちらの場合も必ずコミットから外す。追跡されていたら注意を出す（刻印のあとに消すので、作業ツリーに追跡されたファイルの削除が残ることも添える）。
@@ -516,8 +516,9 @@ git -C <root> -c core.hooksPath=/dev/null -c core.fsmonitor=false -c submodule.r
 - **作業ツリーの中から読み込まれる設定がある**。`git config --show-origin --list` の読み込み元に、作業ツリーの中（`.git` の外）のファイルがあれば拒否する（`[include] path = ../.gitconfig` など）。コンテナが設定を書き換えられると、`core.sshCommand`、`gpg.program`、`credential.helper` などで、ホストでコードを実行できる。`-c` で 1 つずつ打ち消すことはできない。`include.path` と `includeIf.*.path` は、値を解決して（先頭の `~/` はホーム、相対パスは書かれたファイルのあるフォルダから）、作業ツリーの中（`.git` の外）を指すなら、ファイルがまだなくても拒否する（のちに作られると読み込まれるため）。見かけのパスと、リンクを解いたパスのどちらかが中なら拒否する。
 - **`.git` が `<Root>/.git` の本物のフォルダでない**。GitDir と CommonDir がどちらも `<Root>/.git`（リンクを解いて比べる）で、それが `lstat` でフォルダ（リンクや gitfile でない）でなければ拒否する。リンクされた worktree と `--separate-git-dir` は対応しない（手動でコミットしてもらう）。`.git` が作業ツリーの中を指す gitfile だと、「`.git` の中の設定は安全」という前提が崩れるため。Root が `git rev-parse --show-toplevel` と違うときは、呼び出しの誤りとしてエラーにする。
 - **進行中の操作がある**。`MERGE_HEAD`、`CHERRY_PICK_HEAD`、`REVERT_HEAD`、`rebase-merge/`、`rebase-apply/` があれば拒否する。`commit-tree` では、マージの親などを正しく残せないため。
-- **gitlink の追加・変更がある**。確定した tree と HEAD の差分に mode 160000 の追加・変更があれば拒否する。コンテナが作った入れ子のリポジトリ（`sub/.git/config`）は、のちにホストの git が中の設定（fsmonitor など）を読むきっかけになる。変更のない既存のサブモジュールはかまわない。
-- **LFS を使っている**。確定した tree に入るパス（削除を除く）を `git check-attr -z --stdin filter`（一時の index を指して）に渡し、`lfs` になるものがあるか、作業ツリーの最上位に `.lfsconfig` があれば、「LFS のリポジトリには対応していません。手動でコミット・push してください」と出して終了する。LFS の実体は pre-push のフック（ホストの `git lfs`）で送られるので、フックを止めると届かない。ホストで `git lfs push` を呼ぶと、作業ツリーの `.lfsconfig` を読むことになる。
+- **HEAD にサブモジュール（gitlink）がある**。2 の段階で、`add` より前に `git ls-tree -r -z --full-tree HEAD` を調べ、mode 160000 のものが 1 つでもあれば、変更がなくても「サブモジュール（gitlink）を含むリポジトリには対応していません。手動でコミットしてください」と出して拒否する。5 の `git add -A` は、サブモジュールの作業ツリーを調べるために、その中で git（`status`）を動かす。その子の git は入れ子のリポジトリの設定と `.gitattributes` を読むが、それはコンテナが書ける場所にある（`sub/.git/config` を書く、`sub/.git` の gitfile を差し替える）。`filter.<x>.clean` などがホストで実行され、`-c` の上書きでは防げない（キーの名前をコンテナが決められるため。git 2.56.1 で再現した）。
+- **gitlink の追加・変更がある**。確定した tree と HEAD の差分に mode 160000 の追加・変更があれば拒否する。コンテナが作った入れ子のリポジトリ（`sub/.git/config`）は、のちにホストの git が中の設定（fsmonitor など）を読むきっかけになる。
+- **LFS を使っている**。確定した tree に入るパス（削除を除く）を `git check-attr -z --stdin filter` に渡し、`lfs` になるものがあるか、作業ツリーの最上位に `.lfsconfig` があれば、「LFS のリポジトリには対応していません。手動でコミット・push してください」と出して終了する。LFS の実体は pre-push のフック（ホストの `git lfs`）で送られるので、フックを止めると届かない。ホストで `git lfs push` を呼ぶと、作業ツリーの `.lfsconfig` を読むことになる。`check-attr` は 2 回呼び、どちらかが `lfs` なら拒否する。1 回目は `--source=<確定した tree>` で、tree に入っている属性を読む（`add` のあとにコンテナが作業ツリーの `.gitattributes` を書き換えても、コミットする tree で判断するため）。2 回目は作業ツリー（と一時の index）で読む（`.gitignore` 済みで tree に入らない `.gitattributes` も、`add` のときには git が従っていたため）。
 - **フックの場所がプロジェクトの外にある**（下の「フック」）。
 - **コミットするものがない**（確定した tree が HEAD と同じ）。「刻むものがありません」と出して終了コード 1。
 
@@ -574,7 +575,8 @@ git -C <root> -c core.hooksPath=/dev/null -c core.fsmonitor=false -c submodule.r
 - upstream（`@{u}`）がなければ聞かない。「upstream がないので解き放ちません。`git push -u <remote> <branch>` を手動で実行してください」と案内する。push 先を推測しない。
 - あれば、push 先を見せる: リモート名、push の URL（`git remote get-url --push`。制御文字を処理する）、ブランチ（`branch.<name>.merge`）、送る commit の数。
 - `sigil: 外界へ解き放つ（push する）なら y を入力してください [y/N]`。`/dev/tty` から読む。
-- `y` なら、pre-push のフックがあればコンテナで実行し、失敗したら push しない。続けて `git ... push --no-verify <remote> HEAD:<merge の ref>` を実行する。SSH のパスフレーズなどを端末で聞かれることがあるので、描画はせず、git の出力はそのまま流す（相手は利用者が設定したリモートで、コンテナではない）。
+- 送る commit の数、pre-push の標準入力の local sha、push するものは、すべて刻印したコミットの id にそろえる（HEAD は読まない）。
+- `y` なら、pre-push のフックがあればコンテナで実行し、失敗したら push しない。続けて `git ... push --no-verify --recurse-submodules=no <remote> <刻印したコミットの id>:<merge の ref>` を実行する。`HEAD` を送ると、確認や pre-push のあいだに HEAD が動いたとき、利用者が見ていないコミットまで送ってしまうため。`--recurse-submodules=no` は、利用者の全体設定（`push.recurseSubmodules`）があっても、サブモジュールの中で git を動かさないため。SSH のパスフレーズなどを端末で聞かれることがあるので、描画はせず、git の出力はそのまま流す（相手は利用者が設定したリモートで、コンテナではない）。
 - 断られたら push せず、コミットは残す。push に失敗しても、コミットは残し、その旨を出して終了コード 1。
 
 ## 決定事項
@@ -654,3 +656,7 @@ git -C <root> -c core.hooksPath=/dev/null -c core.fsmonitor=false -c submodule.r
 | 2026-11-23 | `sigil commit -- <path>` のパスは、今いるフォルダからのパスとして読み、プロジェクトの外を指せばエラーにする | git と同じ読み方でないと、サブフォルダで打ったパスが最上位から解釈され、意図しないファイルが対象になる（確認の画面には出るが、紛らわしい） |
 | 2026-11-23 | `sigil commit -- <path>` で、`:` で始まる指定（pathspec の magic）を拒否する | `:(top)` や `:!` で、今いるフォルダからという決まりや、銘のファイルを外す指定をすり抜けられるため |
 | 2026-11-23 | push の URL は、画面に出すときと pre-push のフックに渡すときに、URL の形なら userinfo を取り除く（scp の形の user は残す） | `remote get-url --push` は全体設定の `insteadOf` を反映するので、`https://user:TOKEN@host/...` のような認証情報が入りうる。そのままだとコンテナに渡り、docker exec の引数として `ps` にも見え、画面にも出る。セキュリティレビューで指摘された |
+| 2026-11-23 | HEAD にサブモジュール（mode 160000）が 1 つでもあれば、変更がなくても `sigil commit` は拒否する（`add` より前に `ls-tree` で調べる）。「変更のない既存のサブモジュールはかまわない」を取り消す | `git add -A` はサブモジュールの中で `git status` を動かし、その子の git はコンテナが書ける入れ子の設定（`sub/.git/config`、差し替えた gitfile の先）と `.gitattributes` を読む。`filter.<x>.clean` がホストで実行されることを git 2.56.1 で再現した。キーの名前をコンテナが決められるので `-c` では防げない。最終レビューで Critical として指摘された |
+| 2026-11-23 | push は `HEAD` ではなく刻印したコミットの id を送り（`<id>:<merge の ref>`）、件数と pre-push の入力もその id で求める。`--recurse-submodules=no` を付ける | 確認や pre-push のあいだに HEAD が動くと、利用者が見ていないコミットまで送ってしまうため。全体設定の `push.recurseSubmodules` で、サブモジュールの中の git を動かさないため |
+| 2026-11-23 | `sigil commit -- <path>` のパスは `:(top,literal)<path>` として渡し、glob として読まない。既定は `:(top)` | `a[b].txt` が `ab.txt` まで拾うと、確認の画面の範囲と違うファイルが入る。`top` は、コンテナの pre-commit の cwd に左右されないため。`:(top).` は何にも一致しないので使わない |
+| 2026-11-23 | LFS の `check-attr` は、確定した tree（`--source`）と作業ツリーの両方で調べ、どちらかが `lfs` なら拒否する | tree だけだと、`.gitignore` 済みで tree に入らないが `add` のときには効いていた `.gitattributes` を取りこぼす。作業ツリーだけだと、`add` のあとにコンテナが `.gitattributes` を書き換えると、コミットする tree と違う属性で判断してしまう |

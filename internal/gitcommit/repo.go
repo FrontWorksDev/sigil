@@ -155,7 +155,39 @@ func Inspect(g Git) (Repo, error) {
 	if _, err := os.Lstat(filepath.Join(root, ".lfsconfig")); err == nil {
 		return r, lfsRefusal()
 	}
+
+	// 5. サブモジュール（gitlink）。HEAD に gitlink があると、スナップショットの git add が
+	// その作業ツリーを調べるために、サブモジュールの中で git（status）を動かす。その子の git は
+	// 入れ子のリポジトリの設定と .gitattributes を読むが、それはコンテナが書ける場所にある
+	// （sub/.git/config を書く、sub/.git の gitfile を差し替える）。filter.<x>.clean などが
+	// ホストで実行され、-c の上書きでは防げない（キーの名前をコンテナが決められるため）。
+	// 変更がなくても add の前に必ず拒否する。新しく足された gitlink は TakeSnapshot が拒否する。
+	if r.Head != "" {
+		if p, err := findGitlink(g, r.Head); err != nil {
+			return r, err
+		} else if p != "" {
+			return r, refuse("サブモジュール（gitlink）を含むリポジトリには対応していません。手動でコミットしてください（" +
+				ui.EscapeLine(p) + "。サブモジュールの中の設定はコンテナが書き換えられ、ホストの git がそれを読んでしまうため）")
+		}
+	}
 	return r, nil
+}
+
+// findGitlink は、commit の tree にある最初の gitlink（mode 160000）のパスを返す。なければ空。
+// ls-tree は tree のオブジェクトを読むだけで、作業ツリーやサブモジュールの中には入らない。
+// 書式: <mode> SP <type> SP <object> TAB <path>\0
+func findGitlink(g Git, commit string) (string, error) {
+	out, err := g.Out(nil, "ls-tree", "-r", "-z", "--full-tree", commit)
+	if err != nil {
+		return "", err
+	}
+	for _, e := range strings.Split(out, "\x00") {
+		meta, p, ok := strings.Cut(e, "\t")
+		if ok && strings.HasPrefix(meta, "160000 ") {
+			return p, nil
+		}
+	}
+	return "", nil
 }
 
 func lfsRefusal() *Refusal {

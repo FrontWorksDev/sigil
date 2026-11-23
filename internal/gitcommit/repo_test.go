@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -49,6 +50,11 @@ func TestInspectRefuses(t *testing.T) {
 		"lfsconfig": func(t *testing.T, root string, g Git) {
 			write(t, root, ".lfsconfig", "[lfs]\n\turl = https://example.com\n")
 		},
+		"submodule in HEAD": func(t *testing.T, root string, g Git) {
+			write(t, root, "a.txt", "a")
+			commitAll(t, g, "c1")
+			commitSubmodule(t, root, g, "sub")
+		},
 	}
 	for name, setup := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -63,6 +69,24 @@ func TestInspectRefuses(t *testing.T) {
 				t.Errorf("Msg / Lore が空です: %+v", ref)
 			}
 		})
+	}
+}
+
+// HEAD にある gitlink は、変更がなくても拒否する。git add がサブモジュールの中で git を動かし、
+// コンテナが書ける入れ子の設定（filter など）をホストで読むため。パスは Escape して出す。
+func TestInspectRefusesSubmoduleInHEAD(t *testing.T) {
+	root, g := newRepo(t)
+	write(t, root, "a.txt", "a")
+	commitAll(t, g, "c1")
+	commitSubmodule(t, root, g, "d/s\x1bub")
+	_, err := Inspect(g)
+	var ref *Refusal
+	if !errors.As(err, &ref) {
+		t.Fatalf("Refusal を期待しましたが %v でした", err)
+	}
+	if !strings.Contains(ref.Msg, "サブモジュール（gitlink）を含むリポジトリには対応していません。手動でコミットしてください") ||
+		!strings.Contains(ref.Msg, "d/s^[ub") || strings.Contains(ref.Msg, "\x1b") {
+		t.Errorf("Msg=%q", ref.Msg)
 	}
 }
 

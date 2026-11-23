@@ -46,14 +46,27 @@ func (s Snapshot) Cleanup() {
 	}
 }
 
-// effectivePathspec は、add と reset が使う pathspec を作る。空なら "." にし、
-// メッセージのファイルは利用者に見せていないので、必ず除く。
-// 刻印後の reset でも同じものを使い、add したものと reset するものをそろえる。
+// effectivePathspec は、add と reset が使う pathspec を作る。pathspec は最上位からの素のパス
+// （画面にもそのまま出す）。空なら最上位の全体にし、メッセージのファイルは利用者に見せていないので、必ず除く。
+// 刻印後の reset でも、コンテナの pre-commit でも同じものを使い、add したものと reset するものをそろえる。
+//   - top: どこで実行しても（コンテナの cwd が違っても）最上位から読む
+//   - literal: 利用者のパスを glob として読まない。a[b].txt が ab.txt まで拾うと、
+//     確認した範囲と違うファイルが入るため
+//
+// 最上位の全体は、パスを空にした :(top) で表す（:(top). は "." という名前として読まれ、何にも一致しない）。
 func effectivePathspec(pathspec []string) []string {
 	if len(pathspec) == 0 {
-		pathspec = []string{"."}
+		return []string{":(top)", ":(exclude,top)" + MessageFile}
 	}
-	return append(append([]string(nil), pathspec...), ":(exclude,top)"+MessageFile)
+	out := make([]string, 0, len(pathspec)+1)
+	for _, p := range pathspec {
+		if p == "." {
+			out = append(out, ":(top)")
+			continue
+		}
+		out = append(out, ":(top,literal)"+p)
+	}
+	return append(out, ":(exclude,top)"+MessageFile)
 }
 
 // EffectivePathspec は effectivePathspec を外から使うためのもの。
@@ -146,7 +159,7 @@ func TakeSnapshot(g Git, r Repo, pathspec []string) (s Snapshot, err error) {
 
 	// LFS は、コミットに入るパスの filter 属性で調べる。.gitattributes のファイルを
 	// 自分で読むと、読む間の差し替えや、.gitignore 済みのファイルを取りこぼす。
-	if err = checkLFS(gi, changes); err != nil {
+	if err = checkLFS(gi, tree, changes); err != nil {
 		return Snapshot{}, err
 	}
 
@@ -283,7 +296,12 @@ func fillBlobInfo(g Git, cs []Change) error {
 
 // checkLFS は、コミットに入るパスのどれかが filter=lfs なら *Refusal を返す。
 // パスは標準入力で渡す（引数の長さの上限を避ける）。
-func checkLFS(g Git, cs []Change) error {
+// 属性は 2 か所から調べ、どちらかが lfs なら拒否する。
+//   - 確定した tree（--source）: add のあとにコンテナが作業ツリーの .gitattributes を
+//     書き換えても、コミットする tree に入っている属性で判断するため
+//   - 作業ツリー（と一時 index）: .gitignore 済みで tree に入らない .gitattributes も、
+//     add のときには git が従っていた（filter=lfs として扱われた）ため
+func checkLFS(g Git, tree string, cs []Change) error {
 	var in strings.Builder
 	for _, c := range cs {
 		if c.Status != 'D' {
@@ -294,15 +312,18 @@ func checkLFS(g Git, cs []Change) error {
 	if in.Len() == 0 {
 		return nil
 	}
-	out, err := g.Out(strings.NewReader(in.String()), "check-attr", "-z", "--stdin", "filter")
-	if err != nil {
-		return err
-	}
-	// 書式: <パス>\0<属性>\0<値>\0 の繰り返し
-	toks := strings.Split(out, "\x00")
-	for i := 0; i+2 < len(toks); i += 3 {
-		if toks[i+2] == "lfs" {
-			return lfsRefusal()
+	for _, src := range [][]string{{"--source=" + tree}, nil} {
+		args := append(append([]string{"check-attr"}, src...), "-z", "--stdin", "filter")
+		out, err := g.Out(strings.NewReader(in.String()), args...)
+		if err != nil {
+			return err
+		}
+		// 書式: <パス>\0<属性>\0<値>\0 の繰り返し
+		toks := strings.Split(out, "\x00")
+		for i := 0; i+2 < len(toks); i += 3 {
+			if toks[i+2] == "lfs" {
+				return lfsRefusal()
+			}
 		}
 	}
 	return nil

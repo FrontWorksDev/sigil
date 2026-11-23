@@ -63,6 +63,17 @@ func TestFindHooksOutside(t *testing.T) {
 	if !strings.Contains(ref.Msg, out) || !strings.Contains(ref.Msg, "手動でコミット") {
 		t.Errorf("Msg=%q", ref.Msg)
 	}
+
+	// フックの場所に制御文字があっても、画面を操作させない
+	odd := filepath.Join(t.TempDir(), "h\x1b[2J\nx")
+	writeExec(t, filepath.Join(odd, PreCommit), "#!/bin/sh\n", 0o755)
+	_, err = FindHooks(Repo{Root: root, HooksDir: odd})
+	if !errors.As(err, &ref) {
+		t.Fatalf("Refusal ではない: %v", err)
+	}
+	if strings.ContainsAny(ref.Msg, "\x1b\n") || !strings.Contains(ref.Msg, "h^[[2J^Jx") {
+		t.Errorf("Msg=%q", ref.Msg)
+	}
 }
 
 func TestHookExecArgs(t *testing.T) {

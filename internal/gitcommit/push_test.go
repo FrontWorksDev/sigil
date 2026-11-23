@@ -2,6 +2,7 @@ package gitcommit
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -85,7 +86,7 @@ func TestPushToBare(t *testing.T) {
 	}
 
 	var so, se bytes.Buffer
-	if err := Push(g, u, &so, &se); err != nil {
+	if err := Push(g, u, r.Head, &so, &se); err != nil {
 		t.Fatal(err, se.String())
 	}
 	got, err := bg.Out(nil, "rev-parse", "refs/heads/main")
@@ -168,11 +169,73 @@ func TestPushSkipsPrePushHook(t *testing.T) {
 	}
 
 	var so, se bytes.Buffer
-	if err := Push(g, u, &so, &se); err != nil {
+	if err := Push(g, u, r.Head, &so, &se); err != nil {
 		t.Fatal(err, se.String())
 	}
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("pre-push フックが実行されました")
+	}
+}
+
+// push するのは刻印したコミットで、そのあとに HEAD が動いても変わらない。Ahead も刻印したコミットで数える。
+func TestPushSealedCommitNotHEAD(t *testing.T) {
+	root, g := newRepo(t)
+	write(t, root, "a.txt", "a\n")
+	commitAll(t, g, "first")
+	_, bg := newBareOrigin(t, g)
+	if _, err := g.Out(nil, "push", "-q", "-u", "origin", "main"); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "a.txt", "b\n")
+	commitAll(t, g, "sealed")
+	r, err := Inspect(g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed := r.Head
+	// 刻印のあと、利用者がホストで別のコミットを足した
+	write(t, root, "a.txt", "c\n")
+	commitAll(t, g, "later")
+
+	u, ok, err := FindUpstream(g, r)
+	if err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	if u.Ahead != 1 {
+		t.Errorf("Ahead=%d", u.Ahead)
+	}
+	var so, se bytes.Buffer
+	if err := Push(g, u, sealed, &so, &se); err != nil {
+		t.Fatal(err, se.String())
+	}
+	got, err := bg.Out(nil, "rev-parse", "refs/heads/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(got) != sealed {
+		t.Errorf("bare=%s sealed=%s", got, sealed)
+	}
+}
+
+// pushRecorder は git の呼び出しを記録するだけの偽物。
+type pushRecorder struct{ args []string }
+
+func (p *pushRecorder) Run(_ string, args []string, _ RunOpts) error {
+	p.args = append([]string(nil), args...)
+	return nil
+}
+
+// push はサブモジュールに降りない（入れ子のリポジトリの設定を読まない）。
+func TestPushArgs(t *testing.T) {
+	rec := &pushRecorder{}
+	g := Git{R: rec, Root: "/r"}
+	u := Upstream{Remote: "origin", MergeRef: "refs/heads/main"}
+	if err := Push(g, u, "abc123", io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(rec.args, " ")
+	if !strings.HasSuffix(got, " push --no-verify --recurse-submodules=no origin abc123:refs/heads/main") {
+		t.Errorf("args = %q", got)
 	}
 }
 

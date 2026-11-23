@@ -58,11 +58,13 @@ func FindUpstream(g Git, r Repo) (Upstream, bool, error) {
 		n = len(r.Head)
 	}
 	u.RemoteSha = strings.Repeat("0", n)
+	// 数えるのは r.Head（呼び出し側が刻印したコミットを入れる）まで。HEAD はそのあとに
+	// 動いているかもしれず、push するのも r.Head なので、画面の件数をそろえる。
 	tracking := "refs/remotes/" + remote + "/" + strings.TrimPrefix(merge, "refs/heads/")
-	rev := []string{"rev-list", "--count", "HEAD"}
+	rev := []string{"rev-list", "--count", r.Head}
 	if sha, err := g.Out(nil, "rev-parse", "-q", "--verify", tracking+"^{commit}"); err == nil {
 		u.RemoteSha = strings.TrimSpace(sha)
-		rev = []string{"rev-list", "--count", u.RemoteSha + "..HEAD"}
+		rev = []string{"rev-list", "--count", u.RemoteSha + ".." + r.Head}
 	}
 	if r.Head != "" {
 		cnt, err := g.Out(nil, rev...)
@@ -87,9 +89,14 @@ func (u Upstream) PrePushInput(r Repo, head string) string {
 // 出力は利用者が設定したリモートから来るもので、コンテナが作るものではないので、
 // Out を通さずそのまま流す。SSH のパスフレーズの問い合わせは /dev/tty に出る。
 // 標準エラーは念のため Escape する。Stdin はつながない。
-func Push(g Git, u Upstream, stdout, stderr io.Writer) error {
+//
+// 送るのは commit（刻印したコミット）そのもの。HEAD を送ると、確認のあとに HEAD が動いたとき、
+// 利用者が見ていないコミットまで送ってしまう。
+// --recurse-submodules=no は、利用者の全体設定（push.recurseSubmodules）があっても、
+// サブモジュールの中で git を動かさない（入れ子の設定はコンテナが書き換えられる）ため。
+func Push(g Git, u Upstream, commit string, stdout, stderr io.Writer) error {
 	args := append([]string{"-C", g.Root}, SafeConfig...)
-	args = append(args, "push", "--no-verify", u.Remote, "HEAD:"+u.MergeRef)
+	args = append(args, "push", "--no-verify", "--recurse-submodules=no", u.Remote, commit+":"+u.MergeRef)
 	err := g.R.Run("git", args, RunOpts{Env: g.Env, Stdout: stdout, Stderr: ui.NewEscapeWriter(stderr)})
 	if err != nil {
 		return fmt.Errorf("git push に失敗しました: %s", ui.EscapeLine(err.Error()))

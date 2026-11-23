@@ -1,0 +1,101 @@
+# テスト・静的検査・ビルド・外部モジュールがないことの確認と、カバレッジの送信（設計書 18 章、issue #5）。
+# Actions は .github/workflows/actions.lock で固定している。uses: を変えたら、ホストで
+# `gh actions-lock` を実行し直し、ロックファイルの差分を読んでからコミットする。
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# 書き込み権限を渡さない。フォークからの PR に Secrets を渡さないため、pull_request_target は使わない。
+permissions:
+  contents: read
+
+env:
+  # go.mod を理由に、別の版のツールチェーンをダウンロードさせない（.tool-versions の版で動かす）。
+  GOTOOLCHAIN: local
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # 本番は macOS。大文字小文字を区別しないファイルシステムなど、macOS でしか意味を持たないテストがある。
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    # テストは FIFO や git を使うので、止まったときに既定の 360 分までランナーを使い続けないようにする。
+    timeout-minutes: 15
+    steps:
+      # 後の手順（テストのコードを含む）にトークンを残さない。
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      # キャッシュは使わない。外部モジュールがなく効果が薄いうえ、キャッシュを通じた汚染の入り口を増やさないため。
+      - uses: actions/setup-go@v7.1.0
+        with:
+          go-version-file: .tool-versions
+          cache: false
+
+      # -race は cgo を使うが、テストのときだけ。sigil 本体のビルドは CGO_ENABLED=0 のまま（build のジョブ）。
+      - name: go test
+        run: go test -race -coverprofile=coverage.out ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: gofmt
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then
+            echo "gofmt が必要なファイル:"
+            echo "$out"
+            exit 1
+          fi
+
+      # フォークからの PR では CODECOV_TOKEN が空になり、トークンなしの送信（公開リポジトリ向け）になる。
+      # Dependabot の PR も CODECOV_TOKEN が空だが、フォークではないのでトークンなしの送信に切り替わらず、
+      # Codecov に断られる（fail_ci_if_error: false なので CI は通る）。Actions の更新だけなのでカバレッジは要らない。
+      # action は実行時に Codecov の CLI をダウンロードする。これはロックファイルで固定されないので、版を固定する。
+      # この版は Dependabot では上がらないので、手で上げる（四半期に 1 回を目安）。
+      - name: Codecov
+        if: matrix.os == 'ubuntu-latest'
+        uses: codecov/codecov-action@v7.1.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          version: v11.3.2
+          files: coverage.out
+          disable_search: true
+          fail_ci_if_error: false
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7.1.0
+        with:
+          go-version-file: .tool-versions
+          cache: false
+
+      # sigil は外部モジュールを使わない（ホストで動くコードを増やさないため）。
+      # go.mod を grep するより、Go 自身の解釈で確かめる。
+      - name: 外部モジュールがないこと
+        run: |
+          mods="$(go list -m all)"
+          if [ "$mods" != "sigil" ]; then
+            echo "外部モジュールが入っています:"
+            echo "$mods"
+            exit 1
+          fi
+
+      - name: darwin/arm64 のビルド
+        run: CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -o /dev/null .
+
+      - name: darwin/amd64 のビルド
+        run: CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -o /dev/null .

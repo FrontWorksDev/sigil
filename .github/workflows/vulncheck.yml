@@ -1,0 +1,52 @@
+# Go 本体と標準ライブラリの既知の脆弱性を govulncheck で確かめる（設計書 18 章、issue #5）。
+# 脆弱性はコードを変えなくても後から公表されるので、定期実行でも動かす。
+# 見つかったら、.tool-versions と go.mod の Go の版を上げる。
+name: vulncheck
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 0 * * 1" # 毎週月曜 09:00（JST）
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+  # Dependabot では拾えないので、手で上げる（四半期に 1 回を目安）。@latest にしない。
+  GOVULNCHECK_VERSION: v1.10.0
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7.1.0
+        with:
+          go-version-file: .tool-versions
+          cache: false
+
+      # ランナーの中だけで使う。ホストにも go.mod にも入れない。
+      - name: govulncheck を入れる
+        run: |
+          go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      # 本番は macOS なので、darwin として調べる。arm64 と amd64 の両方をビルドしているので、
+      # 片方のアーキテクチャのコード（アセンブリなど）にだけある脆弱性を取りこぼさないよう、両方を調べる。
+      # govulncheck 自体は linux で動き、GOOS / GOARCH は解析の対象だけを変える。
+      - name: govulncheck（darwin/arm64）
+        run: GOOS=darwin GOARCH=arm64 govulncheck ./...
+
+      - name: govulncheck（darwin/amd64）
+        run: GOOS=darwin GOARCH=amd64 govulncheck ./...
+
+      - name: govulncheck（linux）
+        run: govulncheck ./...

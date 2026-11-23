@@ -1,5 +1,9 @@
 # sigil
 
+[![ci](https://github.com/FrontWorksDev/sigil/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/FrontWorksDev/sigil/actions/workflows/ci.yml)
+[![vulncheck](https://github.com/FrontWorksDev/sigil/actions/workflows/vulncheck.yml/badge.svg?branch=main)](https://github.com/FrontWorksDev/sigil/actions/workflows/vulncheck.yml)
+[![codecov](https://codecov.io/gh/FrontWorksDev/sigil/graph/badge.svg)](https://codecov.io/gh/FrontWorksDev/sigil)
+
 > seal your code, guard your keys
 
 npm / PyPI などのサプライチェーン攻撃や悪意あるリポジトリから、ホストの鍵を守るための CLI です。
@@ -174,4 +178,16 @@ make test     # go test ./...
 make vet      # go vet ./...
 make fmt      # gofmt の確認
 make build    # bin/sigil
+```
+
+### CI（GitHub Actions）
+
+PR と main への push で、テスト（Linux と macOS）・`go vet`・`gofmt`・darwin 向けのビルド・外部モジュールがないことの確認・govulncheck を実行します。govulncheck は週 1 回の定期実行でも動きます。詳細は設計書の 18 章です。
+
+ワークフローが使う Actions は、[gh-actions-lock](https://github.com/github/gh-actions-lock) で `.github/workflows/actions.lock` に固定しています。`uses:` を変えたときは、ホストで次を実行し、ロックファイルの差分を読んでからコミットしてください。
+
+```sh
+gh extension install github/gh-actions-lock --pin v0.5.1   # 初回だけ
+gh actions-lock               # ロックファイルを作り直す
+gh actions-lock --verify-local  # すべての uses: がロックファイルにあるか
 ```

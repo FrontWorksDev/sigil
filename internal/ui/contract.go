@@ -13,6 +13,18 @@ type ContractView struct {
 	Envs  []string
 	Ports []string
 	Refs  []ContractRef
+	// Mounts は、読み取り専用でマウントするフォルダ（20 章）。
+	Mounts []ContractMount
+}
+
+// ContractMount は、承認の画面に出す ro の 1 行。Host は解決したホスト側のパス。
+// .sigil に書かれた文字列ではなく、実際にマウントする場所を見せる（シンボリックリンクで別の場所を指させないため）。
+type ContractMount struct {
+	Host, Container string
+}
+
+func (m ContractMount) text() string {
+	return EscapeLine(m.Host) + " → " + EscapeLine(m.Container)
 }
 
 // ContractRef は、承認の画面に出す .env の 1 行。
@@ -33,6 +45,8 @@ const (
 	overriddenNote = "全体の設定が優先されるため使わない"
 	// sourceW は、提供元の列の幅（「キーチェーン」の全角 6 文字）。参照先の列をそろえるため。
 	sourceW = 12
+	// mountsNote は、写本の中も読めることの注意。.sigil の内容を混ぜない固定の文にする（画面を偽装させないため）。
+	mountsNote = "写本の中の .env なども、コンテナから読めます。"
 )
 
 // refText は、参照先の表示（空なら直接書かれた値であることを示す）。
@@ -69,8 +83,14 @@ func (u *UI) contractPlain(v ContractView, files string) {
 	for _, p := range v.Ports {
 		fmt.Fprintf(out, "       門（ポート）                      %s\n", p)
 	}
-	if len(v.Envs) == 0 && len(v.Ports) == 0 {
+	for _, m := range v.Mounts {
+		fmt.Fprintf(out, "       写本（読み取り専用のフォルダ）    %s\n", m.text())
+	}
+	if len(v.Envs) == 0 && len(v.Ports) == 0 && len(v.Mounts) == 0 {
 		fmt.Fprintln(out, "       （なし）")
+	}
+	if len(v.Mounts) > 0 {
+		fmt.Fprintln(out, "     "+mountsNote)
 	}
 	if len(v.Refs) > 0 {
 		fmt.Fprintf(out, "     禁書庫から召喚するもの（%s）:\n", refsMeans)
@@ -100,6 +120,18 @@ func (u *UI) contractBox(v ContractView, files string) {
 	}
 	if len(v.Ports) > 0 {
 		groups = append(groups, group{"◈", cyan, "門", "ポート", v.Ports})
+	}
+	if len(v.Mounts) > 0 {
+		var rows []string
+		for _, m := range v.Mounts {
+			// 1 行に収まらないときは、マウント先を次の行に回す（参照と同じ。切らない）
+			row := m.text()
+			if u.cols > 0 && Width(row) > u.avail(7)-6 {
+				row = EscapeLine(m.Host) + "\n→ " + EscapeLine(m.Container)
+			}
+			rows = append(rows, row)
+		}
+		groups = append(groups, group{"▣", green, "写本", "読み取り専用のフォルダ", rows})
 	}
 	if len(v.Refs) > 0 {
 		var rows []string
@@ -148,6 +180,9 @@ func (u *UI) contractBox(v ContractView, files string) {
 				lines = append(lines, wrapItem(first, "        ", EscapeLine(part), w, same)...)
 			}
 		}
+	}
+	if len(v.Mounts) > 0 {
+		lines = append(lines, wrapItem("  ", "  ", mountsNote, w, u.dim)...)
 	}
 	lines = append(lines, "")
 	lines = append(lines, wrapItem("", "", "このほか、全体設定（~/.config/sigil/config）の分も渡されます。", w, u.dim)...)

@@ -8,3 +8,7 @@ env WAKATIME_API_KEY
 
 # キーチェーンから読むときの専用キーチェーン（この全体設定でだけ書ける。~/Library/Keychains/ の直下に置く）
 # keychain ~/Library/Keychains/sigil.keychain-db
+
+# .sigil の ro（読み取り専用のマウント）で指してよい範囲（この全体設定でだけ書ける）
+# 他人のコードに見せてよいリポジトリの置き場だけを書く
+# ro_root ~/src

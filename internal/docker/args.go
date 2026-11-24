@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"sigil/internal/config"
+	"sigil/internal/project"
 )
 
 const (
@@ -34,6 +35,9 @@ type RunSpec struct {
 	// RunArgs は使わない。値をコマンドライン（ps で誰でも見える）に載せず、
 	// Envs の "-e NAME" で docker がこの環境から値を読む。
 	SecretEnv []string
+	// ReadOnly は、.sigil の ro で読み取り専用にマウントするフォルダ（20 章）。
+	// Host は project.ResolveMounts で確かめ、シンボリックリンクを解決したもの。
+	ReadOnly []project.Mount
 }
 
 // RunArgs は docker run の引数を返す。
@@ -56,6 +60,11 @@ func RunArgs(s RunSpec) []string {
 		// .git には、ホストの git が実行する hooks や config がある。
 		// コンテナから書き換えられると、ホストで git を使ったときに任意のコードが動くので読み取り専用にする。
 		args = append(args, "-v", s.ProjectRoot+"/.git:"+s.ContainerPath+"/.git:ro")
+	}
+	for _, m := range s.ReadOnly {
+		// 別のリポジトリを参照のために読ませるだけなので、書き込めないようにする。
+		// 解決したパスを渡し、途中のシンボリックリンクを docker にたどらせない
+		args = append(args, "-v", m.Host+":"+m.Container+":ro")
 	}
 	if s.HasNvimConfig {
 		// Neovim の設定はホストの Neovim も読むので、コンテナから書き換えさせない。

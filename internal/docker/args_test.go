@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"sigil/internal/config"
+	"sigil/internal/project"
 )
 
 func sampleSpec() RunSpec {
@@ -196,5 +197,29 @@ func TestParseLs(t *testing.T) {
 	rows := ParseLs(out)
 	if len(rows) != 2 || rows[0] != (LsRow{"sigil-a-1", "running", "Up 2 hours", "/src/a"}) || rows[1].State != "exited" {
 		t.Errorf("rows = %v", rows)
+	}
+}
+
+func TestRunArgsReadOnlyMounts(t *testing.T) {
+	s := sampleSpec()
+	s.ReadOnly = []project.Mount{
+		{Host: "/Users/k/src/lib", Container: "/workspace/lib"},
+		{Host: "/opt/src/other", Container: "/workspace/other"},
+	}
+	vols := flagValues(RunArgs(s), "-v")
+	var ro []string
+	for _, v := range vols {
+		if strings.HasPrefix(v, "/Users/k/src/lib") || strings.HasPrefix(v, "/opt/") {
+			ro = append(ro, v)
+		}
+	}
+	// 解決したパスを読み取り専用で、書かれた順に
+	want := []string{"/Users/k/src/lib:/workspace/lib:ro", "/opt/src/other:/workspace/other:ro"}
+	if !reflect.DeepEqual(ro, want) {
+		t.Errorf("ro = %v, want %v", ro, want)
+	}
+	// ro がなければ何も足さない
+	if got := len(flagValues(RunArgs(sampleSpec()), "-v")); got != len(vols)-2 {
+		t.Errorf("ro なしの -v の数 = %d", got)
 	}
 }

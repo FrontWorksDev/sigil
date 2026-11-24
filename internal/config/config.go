@@ -36,6 +36,19 @@ type Config struct {
 	// Keychain は、シークレットを置く専用キーチェーンのパス（書かれたまま。~/ は展開しない）。
 	// 全体設定でだけ書ける。
 	Keychain string
+	// ReadOnly は、読み取り専用でマウントするフォルダ（書かれた順）。プロジェクトの .sigil でだけ書ける。
+	// パスの確かめと解決は project.ResolveMounts で行う（ここではファイルシステムに触れない）。
+	ReadOnly []ReadOnly
+	// ReadOnlyRoots は、ro でマウントしてよい範囲（全体設定でだけ書ける）。
+	// .sigil は信頼できないので、拒否する場所の一覧だけでは防ぎきれない（~/.kube、別のプロジェクトの .env など）。
+	// 範囲は、1Password と同じく、ホストの信頼できる側で決める。
+	ReadOnlyRoots []ReadOnly
+}
+
+// ReadOnly は、.sigil の ro の 1 行。Line はエラーメッセージに行番号を出すために持つ。
+type ReadOnly struct {
+	Path string // 書かれたまま（~/ は展開しない）
+	Line int
 }
 
 var (
@@ -149,6 +162,11 @@ func parse(filename string, r io.Reader, global bool) (Config, error) {
 			// エディタによっては先頭に UTF-8 の BOM が付くので取り除く
 			text = strings.TrimPrefix(text, "\ufeff")
 		}
+		// 承認のハッシュ（approval.Fingerprint）は NUL で区切るので、NUL を入れて区切りをずらせないようにする。
+		// コメントの中も対象（ハッシュには .sigil 全体が入るため）
+		if strings.ContainsRune(text, 0) {
+			return Config{}, fmt.Errorf("%s:%d: NUL 文字は書けません", filename, n)
+		}
 		line, _, _ := strings.Cut(text, "#")
 		// strings.Fields はタブや CRLF の \r も区切りとして扱う
 		words := strings.Fields(line)
@@ -195,8 +213,20 @@ func parse(filename string, r io.Reader, global bool) (Config, error) {
 				return fail("keychain が 2 回書かれています")
 			}
 			c.Keychain = val
+		case "ro":
+			// 全体設定に書くと、すべてのプロジェクト（信頼できないものを含む）のコードから
+			// そのフォルダが読めてしまうので、プロジェクトの .sigil（承認の対象）でだけ書ける
+			if global {
+				return fail("ro はプロジェクトの .sigil でだけ書けます")
+			}
+			c.ReadOnly = append(c.ReadOnly, ReadOnly{Path: val, Line: n})
+		case "ro_root":
+			if !global {
+				return fail("ro_root は全体設定（~/.config/sigil/config）でだけ書けます")
+			}
+			c.ReadOnlyRoots = append(c.ReadOnlyRoots, ReadOnly{Path: val, Line: n})
 		default:
-			return fail("不明な指定です: %s（env / port / keychain のみ）", kind)
+			return fail("不明な指定です: %s（env / port / keychain / ro / ro_root のみ）", kind)
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -222,6 +252,8 @@ func Merge(cs ...Config) Config {
 			}
 		}
 		out.Ports = append(out.Ports, c.Ports...)
+		out.ReadOnly = append(out.ReadOnly, c.ReadOnly...)
+		out.ReadOnlyRoots = append(out.ReadOnlyRoots, c.ReadOnlyRoots...)
 		if out.Keychain == "" {
 			out.Keychain = c.Keychain
 		}

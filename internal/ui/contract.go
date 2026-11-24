@@ -46,7 +46,8 @@ func (r ContractRef) refText() string {
 // ContractScreen は、承認の画面を出す。
 //
 // セキュリティ上の判断をしてもらう画面なので、演出より読みやすさを優先する（16 章）。
-// Plain は、approval.Ask が出していた文言と 1 文字も違えない（スクリプトや記憶に頼る人のため）。
+// Plain は飾りのない文面にし、TestContractScreenPlainGolden で 1 文字単位で固定する（スクリプトや
+// 記憶に頼る人のため、変えるときは意図して変える）。#25 で提供元の列と、使わない組の注記を足した。
 // それ以外は、枠と、区分ごとの印・色で飾る。どちらも、用語には実際の意味を添える。
 func (u *UI) ContractScreen(v ContractView) {
 	files := strings.Join(v.Files, " と ")

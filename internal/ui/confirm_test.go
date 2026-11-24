@@ -273,7 +273,7 @@ const askEmpty = "sigil: 契約の確認 ── .sigil の内容が新しいか�
 	"     このほか、全体設定（~/.config/sigil/config）の分も渡されます。\n" +
 	"sigil: この契約を結ぶ（この設定で承認する）なら y を入力してください [y/N] "
 
-func TestContractScreenPlainUnchanged(t *testing.T) {
+func TestContractScreenPlainGolden(t *testing.T) {
 	u, buf := newTest(Plain, 0, 0)
 	u.ContractScreen(ContractView{
 		Files: []string{".sigil", ".env"},

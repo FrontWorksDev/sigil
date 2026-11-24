@@ -26,8 +26,9 @@ const MaxSecretSize = 64 << 10
 // CheckKeychainPath は、キーチェーンのパスが「ホスト直下の専用キーチェーン」であることを確かめ、
 // リンクを解いたパスを返す。
 //
-// .env はリポジトリが書けるので、そこから来たパスでログインキーチェーンなどを
-// 読まされないよう、解いた結果だけを判断の根拠にする（入力の文字列は信用しない）。
+// パスはホストの全体設定からしか来ない（.env や .sigil では指定できない）が、多層防御として、
+// シンボリックリンクや設定の誤りでログインキーチェーンなどを読まないよう、
+// 解いた結果だけを判断の根拠にする（入力の文字列は信用しない）。
 // 条件: 絶対パス、解いた結果が <home>/Library/Keychains の直下、通常のファイル、
 // 持ち主が uid、ログインキーチェーンではない。
 func CheckKeychainPath(path, home string, uid int) (string, error) {
@@ -61,6 +62,8 @@ func CheckKeychainPath(path, home string, uid int) (string, error) {
 	}
 	// ハードリンクなど名前では見分けられない場合に備え、本物のログインキーチェーンと同一ファイルか調べる。
 	// （確認から使用までの間の差し替えは、同じユーザーのプロセスにしかできず、脅威の範囲外。）
+	// ログインキーチェーンのファイルを調べられないとき（ない・名前が違う）のエラーは、わざと無視する。
+	// 比べる相手がいないだけなので、それを理由に正しい専用キーチェーンまで拒否しないため。
 	for _, name := range []string{"login.keychain-db", "login.keychain"} {
 		if lfi, err := os.Stat(filepath.Join(resolvedHome, "Library", "Keychains", name)); err == nil && os.SameFile(fi, lfi) {
 			return "", fmt.Errorf("ログインキーチェーンは使えません。専用のキーチェーンを作ってください: %s", resolved)

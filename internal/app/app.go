@@ -280,8 +280,8 @@ func loadSettings(p project.Project, dd dirs) (settings, error) {
 		}
 		for _, e := range entries {
 			switch {
-			case e.Ref == "":
-				// アプリの設定。sigil は扱わない
+			case e.Scheme != secret.Op:
+				// アプリの設定。sigil は扱わない（キーチェーンの参照も、いまは扱わない）
 			case config.Denied(e.Name):
 				s.warnings = append(s.warnings, fmt.Sprintf("注意: .env の %s は渡せない名前なので、禁書庫から読み込みません", e.Name))
 			case !listed[e.Name]:

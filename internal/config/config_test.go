@@ -87,7 +87,7 @@ func TestParseErrors(t *testing.T) {
 		{"port 70000\n", "/p/.sigil:1: ポート番号は 1〜65535 です: 70000"},
 		{"port 8080:0\n", "/p/.sigil:1: ポート番号は 1〜65535 です: 8080:0"},
 		{"run rm -rf /\n", "/p/.sigil:1: 余分な値があります: run rm -rf /"},
-		{"run x\n", "/p/.sigil:1: 不明な指定です: run（env / port のみ）"},
+		{"run x\n", "/p/.sigil:1: 不明な指定です: run（env / port / keychain のみ）"},
 		{"# ok\nenv OK\nenv $(id)\n", "/p/.sigil:3: 環境変数名が不正です: $(id)"},
 	}
 	for _, tc := range cases {
@@ -190,5 +190,43 @@ func TestLoad(t *testing.T) {
 	}
 	if _, _, err := Load(p); err == nil || !strings.HasPrefix(err.Error(), p+":1: ") {
 		t.Errorf("エラーにファイル名と行番号がない: %v", err)
+	}
+}
+
+func TestParseKeychain(t *testing.T) {
+	c, err := Parse("/g/config", strings.NewReader("keychain ~/Library/Keychains/s.keychain-db\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Keychain != "~/Library/Keychains/s.keychain-db" {
+		t.Errorf("Keychain = %q", c.Keychain)
+	}
+}
+
+func TestParseKeychainTwice(t *testing.T) {
+	_, err := Parse("/g/config", strings.NewReader("keychain /a\nkeychain /b\n"))
+	if err == nil || !strings.Contains(err.Error(), "/g/config:2: keychain が 2 回書かれています") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestParseProjectRejectsKeychain(t *testing.T) {
+	_, err := ParseProject("/p/.sigil", strings.NewReader("env A\nkeychain /x\n"))
+	if err == nil || !strings.Contains(err.Error(), ":2: keychain は全体設定") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestExpandHome(t *testing.T) {
+	for in, want := range map[string]string{"~/a": "/h/a", "/abs": "/abs"} {
+		got, err := ExpandHome(in, "/h")
+		if err != nil || got != want {
+			t.Errorf("ExpandHome(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"~", "~bob/a", "rel/a", ""} {
+		if got, err := ExpandHome(in, "/h"); err == nil {
+			t.Errorf("ExpandHome(%q) = %q, エラーにならない", in, got)
+		}
 	}
 }

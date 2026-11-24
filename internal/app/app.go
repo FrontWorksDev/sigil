@@ -254,7 +254,7 @@ func loadSettings(p project.Project, dd dirs) (settings, error) {
 	}
 	if s.sigil != nil {
 		// 承認の画面に出す内容と、記録するハッシュを、同じ読み込みから作る
-		if s.projCfg, err = config.Parse(s.sigilPath, bytes.NewReader(s.sigil)); err != nil {
+		if s.projCfg, err = config.ParseProject(s.sigilPath, bytes.NewReader(s.sigil)); err != nil {
 			return s, err
 		}
 	}

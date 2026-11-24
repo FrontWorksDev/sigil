@@ -56,6 +56,10 @@ func TestParseEnvKeychain(t *testing.T) {
 	if got[0].Service() != "wakatime" || got[1].Service() != "gh.work" || got[2].Service() != "x_y-1" {
 		t.Errorf("Service = %q %q %q", got[0].Service(), got[1].Service(), got[2].Service())
 	}
+	// キーチェーン以外の参照からは service を作らない（op の参照を security に渡さないように）
+	if s := (Entry{Name: "A", Ref: "op://v/i/f", Scheme: Op}).Service(); s != "" {
+		t.Errorf("op の参照の Service = %q", s)
+	}
 	if got[1].Ref != "keychain://gh.work" {
 		t.Errorf("Ref = %q", got[1].Ref)
 	}

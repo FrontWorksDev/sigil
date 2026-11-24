@@ -1,12 +1,33 @@
 package docker
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+// TestExecRunnerRunEnvLaterWins は、本物のプロセスで、extraEnv が sigil 自身の環境の同じ名前に勝つことを確かめる。
+// キーチェーンの値がホストのシェルの同じ名前に負けないための前提なので、偽物の Runner ではなく実際に実行する
+// （docker の代わりに env を実行する。docker は要らない）。
+func TestExecRunnerRunEnvLaterWins(t *testing.T) {
+	t.Setenv("SIGIL_TEST_RUNENV", "host")
+	var out bytes.Buffer
+	if err := (ExecRunner{}).RunEnv("/usr/bin/env", nil, []string{"SIGIL_TEST_RUNENV=keychain"}, &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, line := range strings.Split(out.String(), "\n") {
+		if strings.HasPrefix(line, "SIGIL_TEST_RUNENV=") {
+			got = append(got, line)
+		}
+	}
+	if !reflect.DeepEqual(got, []string{"SIGIL_TEST_RUNENV=keychain"}) {
+		t.Errorf("子プロセスの環境 = %v", got)
+	}
+}
 
 type call struct {
 	name string

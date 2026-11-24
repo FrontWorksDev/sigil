@@ -149,6 +149,36 @@ func TestKeychainFailureStops(t *testing.T) {
 	}
 }
 
+func TestKeychainRelativePathStops(t *testing.T) {
+	// 全体設定の keychain が相対パスなら、作業フォルダに左右されないよう、security を呼ばずに止める
+	e, _ := keychainEnv(t, false)
+	e.globalConfig("keychain Library/Keychains/s.keychain-db\nenv WAKATIME_API_KEY\n")
+	if code := e.run(); code != 1 {
+		t.Fatalf("code = %d", code)
+	}
+	if len(e.sec.calls) != 0 || len(e.runner.find("docker run")) != 0 {
+		t.Errorf("相対パスなのに進んだ: sec=%v", e.sec.calls)
+	}
+	if !strings.Contains(e.stderr.String(), "全体設定の keychain") {
+		t.Errorf("stderr = %q", e.stderr.String())
+	}
+}
+
+func TestKeychainBadValueStops(t *testing.T) {
+	// 環境変数に入れられない値（NUL を含む）は、切り詰めて渡さずに止める。値は表示しない
+	e, kc := keychainEnv(t, true)
+	e.sec.on(secret.SecurityArgs("w", kc), "SECRETx\x00y\n", "", nil)
+	if code := e.run(); code != 1 {
+		t.Fatalf("code = %d", code)
+	}
+	if len(e.runner.find("docker run")) != 0 {
+		t.Error("不正な値なのにコンテナを作った")
+	}
+	if strings.Contains(e.stderr.String(), "SECRET") {
+		t.Errorf("値を表示した: %q", e.stderr.String())
+	}
+}
+
 func TestKeychainBadPathStops(t *testing.T) {
 	e, _ := keychainEnv(t, false)
 	e.write(filepath.Join(e.home, "x.keychain-db"), "")
@@ -267,6 +297,8 @@ func TestKeychainFailureReason(t *testing.T) {
 		{"時間切れ", "", fmt.Errorf("x: %w", context.DeadlineExceeded), "（時間切れ）"},
 		// 時間切れまでに標準エラーに何か出ていても、時間切れだったことを隠さない
 		{"時間切れと標準エラー", "waiting\n", fmt.Errorf("x: %w", context.DeadlineExceeded), "（waiting（時間切れ））"},
+		// 起動できなかったときなど、終了コードも時間切れもないときは、エラーの文を整えて出す
+		{"起動の失敗", "", errors.New("fork/exec failed\x1b[2J"), "（fork/exec failed[2J）"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e, kc := keychainEnv(t, true)

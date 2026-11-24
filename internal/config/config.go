@@ -222,7 +222,8 @@ func parse(filename string, r io.Reader, global bool) (Config, error) {
 			c.ReadOnly = append(c.ReadOnly, ReadOnly{Path: val, Line: n})
 		case "ro_root":
 			if !global {
-				return fail("ro_root は全体設定（~/.config/sigil/config）でだけ書けます")
+				// 全体設定の場所は XDG_CONFIG_HOME で変わるので、パスは書かない
+				return fail("ro_root は全体設定でだけ書けます（.sigil には書けません）")
 			}
 			c.ReadOnlyRoots = append(c.ReadOnlyRoots, ReadOnly{Path: val, Line: n})
 		default:

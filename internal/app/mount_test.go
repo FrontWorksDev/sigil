@@ -139,3 +139,26 @@ func TestReadOnlyMountRecheckedBeforeRun(t *testing.T) {
 		t.Errorf("stderr = %s", e.stderr.String())
 	}
 }
+
+func TestReadOnlyMountMissingBeforeRunIsNotCalledRewritten(t *testing.T) {
+	// 承認のあとでフォルダが消えただけなら、「書き換えられた」とは言わない
+	e := roEnv(t)
+	e.write(".sigil", "ro ~/src/lib-v2\n")
+	e.tty = "y\n"
+	e.runner.onFunc("docker image inspect", func() (string, error) {
+		if err := os.Remove(filepath.Join(e.home, "src", "lib-v2")); err != nil {
+			t.Fatal(err)
+		}
+		return "", nil
+	})
+	if code := e.run(); code != 1 {
+		t.Fatalf("code = %d, %s", code, e.stderr.String())
+	}
+	if len(e.runner.find("docker run")) != 0 {
+		t.Error("消えたフォルダで作成した")
+	}
+	out := e.stderr.String()
+	if !strings.Contains(out, "写本の在り処を確かめられません") || strings.Contains(out, "書き換えられました") {
+		t.Errorf("stderr = %s", out)
+	}
+}

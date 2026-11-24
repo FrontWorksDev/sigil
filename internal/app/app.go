@@ -692,11 +692,12 @@ func recheckMounts(s settings) error {
 		return nil
 	}
 	now, err := project.ResolveMounts(s.mountInput)
-	if err == nil && !slices.Equal(now, s.mounts) {
-		err = fmt.Errorf("承認したあとで、ro のフォルダの場所が変わりました。もう一度実行してください")
-	}
 	if err != nil {
-		return loref("写本が書き換えられました", "%w", err)
+		// 消された・名前が変わったなど。差し替えられたとは限らないので、loadSettings と同じ見出しにする
+		return loref("写本の在り処を確かめられません", "%w", err)
+	}
+	if !slices.Equal(now, s.mounts) {
+		return loref("写本が書き換えられました", "承認したあとで、ro のフォルダの場所が変わりました。もう一度実行してください")
 	}
 	return nil
 }

@@ -129,7 +129,8 @@ func TestResolveMountsRejects(t *testing.T) {
 		roots []string
 		want  string
 	}{
-		{"ro_root がない", "~/src/lib", nil, ":1: ro でマウントしてよい範囲"},
+		// 案内する全体設定は、実際に読むパス（XDG_CONFIG_HOME で変わる）
+		{"ro_root がない", "~/src/lib", nil, ":1: ro でマウントしてよい範囲が決まっていません。全体設定（/g/config）に ro_root"},
 		{"ro_root の外", "~/.kube", []string{"~/src"}, "ro_root の中にありません"},
 		{"名前が前方一致するだけの別フォルダ", "~/srcx/lib", []string{"~/src"}, "ro_root の中にありません"},
 		{"ro_root の外へのリンク", "~/src/out", []string{"~/src"}, "ro_root の中にありません"},
@@ -140,8 +141,12 @@ func TestResolveMountsRejects(t *testing.T) {
 		{"存在しない", "~/src/nope", []string{"~/src"}, "存在しません"},
 		{"フォルダではない", "~/src/file", []string{"~/src"}, "フォルダではありません"},
 		{"~/.ssh を指すリンク（ro_root の外）", "~/src/tossh", []string{"~/src"}, "ro_root の中にありません"},
-		{"~/.ssh（ro_root がホームの中を広く含む）", "~/.ssh", []string{"~/.ssh"}, "秘密情報"},
-		{"大文字小文字の違うホーム", upperHome, []string{"~/src"}, ""},
+		{"~/.ssh そのもの（ro_root の外）", "~/.ssh", []string{"~/src"}, "ro_root の中にありません"},
+		// 大文字小文字を区別しないファイルシステムでは ro_root の外として、区別するものでは存在しないとして拒否される。
+		// CheckSafe の大文字小文字の扱いは TestResolveMountCheckSafeDefenceInDepth で確かめる
+		{"大文字小文字の違うホーム（ro_root の外か、存在しない）", upperHome, []string{"~/src"}, ""},
+		{"全角空白", "~/src/a\u3000b", []string{"~/src"}, "ASCII 以外の空白（U+3000）"},
+		{"NBSP", "~/src/a\u00a0b", []string{"~/src"}, "ASCII 以外の空白（U+00A0）"},
 		{": を含む", "~/src/a:b", []string{"~/src"}, `":"`},
 		{"プロジェクトそのもの", "~/src/app", []string{"~/src"}, "プロジェクト"},
 		{"プロジェクトを指すリンク", "~/src/proj", []string{"~/src"}, "プロジェクト"},
@@ -183,10 +188,11 @@ func TestResolveMountsRejectsProjectNameCollision(t *testing.T) {
 func TestResolveMountsRejectsBadRoot(t *testing.T) {
 	e := newMountEnv(t)
 	cases := map[string]string{
-		"ホーム":   "~/",
-		"存在しない": "~/nope",
-		"相対パス":  "src",
-		"秘密情報":  "~/.config",
+		"ホーム":    "~/",
+		"存在しない":  "~/nope",
+		"相対パス":   "src",
+		"秘密情報":   "~/.config",
+		"~/.ssh": "~/.ssh",
 	}
 	for name, root := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -195,5 +201,35 @@ func TestResolveMountsRejectsBadRoot(t *testing.T) {
 				t.Errorf("err = %v", err)
 			}
 		})
+	}
+}
+
+// resolveMount の中の CheckSafe は、ro_root がすでに CheckSafe を通っているので、ResolveMounts からは
+// 通常は届かない（多重の守り）。消されたり壊れたりしても気づけるよう、ro_root の判定を通る範囲
+// （CheckSafe をかけていない base）を直接渡して確かめる。
+func TestResolveMountCheckSafeDefenceInDepth(t *testing.T) {
+	e := newMountEnv(t)
+	in := MountInput{Project: e.proj, Extra: []string{filepath.Join(e.home, ".config", "sigil")}}
+	cases := []struct{ name, path, want string }{
+		{"ホーム", e.home, "全体はマウントできません"},
+		{"ホームを含む", e.base, "ホームディレクトリを含む"},
+		{"~/.ssh", filepath.Join(e.home, ".ssh"), "秘密情報を含む場所"},
+		{"守る場所（全体設定のフォルダ）", filepath.Join(e.home, ".config", "sigil"), "秘密情報を含む場所"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := resolveMount(c.path, e.home, e.home, []string{e.base}, in)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("err = %v, want %q を含む", err, c.want)
+			}
+		})
+	}
+	// 大文字小文字だけ違うホーム（大文字小文字を区別しないファイルシステムでだけ、同じ場所として確かめられる）
+	upper := filepath.Join(e.base, "HOME")
+	if _, err := os.Stat(upper); err == nil {
+		_, err := resolveMount(upper, e.home, e.home, []string{e.base}, in)
+		if err == nil || !strings.Contains(err.Error(), "全体はマウントできません") {
+			t.Errorf("大文字小文字の違うホーム: err = %v", err)
+		}
 	}
 }

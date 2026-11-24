@@ -50,7 +50,8 @@ func ResolveMounts(in MountInput) ([]Mount, error) {
 	}
 	if len(in.Roots) == 0 {
 		r := in.ReadOnly[0]
-		return nil, fmt.Errorf("%s:%d: ro でマウントしてよい範囲が決まっていません。全体設定（~/.config/sigil/config）に ro_root <フォルダ> を書いてください", in.SigilPath, r.Line)
+		// XDG_CONFIG_HOME で場所が変わるので、実際に読む全体設定のパスを案内する
+		return nil, fmt.Errorf("%s:%d: ro でマウントしてよい範囲が決まっていません。全体設定（%s）に ro_root <フォルダ> を書いてください", in.SigilPath, r.Line, in.GlobalPath)
 	}
 	var roots []string
 	for _, r := range in.Roots {
@@ -91,6 +92,9 @@ func resolveMount(written, rawHome, home string, roots []string, in MountInput) 
 	if !slices.ContainsFunc(roots, func(root string) bool { return within(host, root) }) {
 		return Mount{}, fmt.Errorf("%s は ro_root の中にありません（全体設定の ro_root で決めた範囲だけをマウントできます）", host)
 	}
+	// ro_root はすでに CheckSafe を通っているので、その中のフォルダが CheckSafe に掛かることは、通常はない
+	// （ro_root が秘密情報を含む場所を含めば、ro_root の時点で拒否される）。それでも、ro_root の判定に
+	// 不具合があったときのための多重の守りとして、マウントするフォルダそのものにもかける。
 	if err := CheckSafe(host, home, in.Extra...); err != nil {
 		return Mount{}, err
 	}
@@ -155,12 +159,18 @@ func resolveDir(written, rawHome string) (string, error) {
 	return resolved, nil
 }
 
+// checkPrintable は、表示されない文字と、ASCII 以外の空白を拒否する。
+// 全角空白（U+3000）や NBSP（U+00A0）も拒否するのは、承認の画面で普通の空白と見分けられず、
+// 別のフォルダと見誤らせうるため（unicode.IsPrint は ASCII の空白だけを表示できる文字とする）。
 func checkPrintable(p string) error {
 	if !utf8.ValidString(p) {
 		return fmt.Errorf("パスに不正な文字があります: %q", p)
 	}
 	for _, r := range p {
-		if !unicode.IsPrint(r) {
+		switch {
+		case r != ' ' && unicode.IsSpace(r):
+			return fmt.Errorf("パスに ASCII 以外の空白（U+%04X）があります。承認の画面で普通の空白と見分けられないので使えません: %q", r, p)
+		case !unicode.IsPrint(r):
 			return fmt.Errorf("パスに表示されない文字（U+%04X）があります: %q", r, p)
 		}
 	}

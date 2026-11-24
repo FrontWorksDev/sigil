@@ -33,6 +33,9 @@ func (p Port) Publish() string {
 type Config struct {
 	Envs  []string
 	Ports []Port
+	// Keychain は、シークレットを置く専用キーチェーンのパス（書かれたまま。~/ は展開しない）。
+	// 全体設定でだけ書ける。
+	Keychain string
 }
 
 var (
@@ -124,8 +127,18 @@ func ReadFile(path string, strict bool) ([]byte, bool, error) {
 	return b, true, nil
 }
 
-// Parse は設定を読む。エラーは "<filename>:<行番号>: <内容>" の形。
+// Parse は全体設定を読む。エラーは "<filename>:<行番号>: <内容>" の形。
 func Parse(filename string, r io.Reader) (Config, error) {
+	return parse(filename, r, true)
+}
+
+// ParseProject はプロジェクトの .sigil を読む。keychain は書けない。
+// リポジトリの持ち主に、どのキーチェーンを読むかを変えられてはいけないため。
+func ParseProject(filename string, r io.Reader) (Config, error) {
+	return parse(filename, r, false)
+}
+
+func parse(filename string, r io.Reader, global bool) (Config, error) {
 	var c Config
 	sc := bufio.NewScanner(r)
 	n := 0
@@ -174,8 +187,16 @@ func Parse(filename string, r io.Reader) (Config, error) {
 				return fail("ポート番号は 1〜65535 です: %s", val)
 			}
 			c.Ports = append(c.Ports, Port{Host: host, Container: cont})
+		case "keychain":
+			if !global {
+				return fail("keychain は全体設定（~/.config/sigil/config）でだけ書けます")
+			}
+			if c.Keychain != "" {
+				return fail("keychain が 2 回書かれています")
+			}
+			c.Keychain = val
 		default:
-			return fail("不明な指定です: %s（env / port のみ）", kind)
+			return fail("不明な指定です: %s（env / port / keychain のみ）", kind)
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -201,6 +222,9 @@ func Merge(cs ...Config) Config {
 			}
 		}
 		out.Ports = append(out.Ports, c.Ports...)
+		if out.Keychain == "" {
+			out.Keychain = c.Keychain
+		}
 	}
 	return out
 }
@@ -221,9 +245,26 @@ func load(path string, strict bool) (Config, bool, error) {
 	if err != nil || !ok {
 		return Config{}, false, err
 	}
-	c, err := Parse(path, bytes.NewReader(b))
+	parseFn := Parse
+	if strict {
+		parseFn = ParseProject
+	}
+	c, err := parseFn(path, bytes.NewReader(b))
 	if err != nil {
 		return Config{}, false, err
 	}
 	return c, true, nil
+}
+
+// ExpandHome は、~/x を home 配下に展開する。絶対パスはそのまま返す。
+// ~ だけ、~user/x、相対パスは、どこを指すか曖昧（実行場所で変わる）なのでエラーにする。
+// 文字列だけで処理し、ファイルシステムには触れない。
+func ExpandHome(p, home string) (string, error) {
+	switch {
+	case strings.HasPrefix(p, "~/"):
+		return home + p[1:], nil
+	case strings.HasPrefix(p, "/"):
+		return p, nil
+	}
+	return "", fmt.Errorf("パスは / か ~/ で始めてください: %q", p)
 }

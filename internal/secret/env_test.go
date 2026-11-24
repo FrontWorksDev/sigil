@@ -1,19 +1,10 @@
-package opwrap
+package secret
 
 import (
 	"reflect"
 	"strings"
 	"testing"
 )
-
-func TestHasOpRef(t *testing.T) {
-	if !HasOpRef([]byte("X=op://vault/item/field\n")) {
-		t.Error("op:// を見つけない")
-	}
-	if HasOpRef([]byte("Z=literal\n")) {
-		t.Error("op:// がないのに true")
-	}
-}
 
 func TestParseEnv(t *testing.T) {
 	in := strings.Join([]string{
@@ -30,14 +21,67 @@ func TestParseEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []Entry{
-		{Name: "DATABASE_URL", Ref: "op://dev/db/url"},
-		{Name: "STRIPE_KEY", Ref: "op://dev/stripe/secret"},
-		{Name: "PLAIN", Ref: ""}, // 参照ではない値は持たない
-		{Name: "SPACED", Ref: "op://dev/x/y"},
-		{Name: "CRLF", Ref: "op://dev/c/d"},
+		{Name: "DATABASE_URL", Ref: "op://dev/db/url", Scheme: Op},
+		{Name: "STRIPE_KEY", Ref: "op://dev/stripe/secret", Scheme: Op},
+		{Name: "PLAIN", Ref: "", Scheme: None}, // 参照ではない値は持たない
+		{Name: "SPACED", Ref: "op://dev/x/y", Scheme: Op},
+		{Name: "CRLF", Ref: "op://dev/c/d", Scheme: Op},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ParseEnv =\n%v\nwant\n%v", got, want)
+	}
+}
+
+func TestParseEnvOpUnchanged(t *testing.T) {
+	got, err := ParseEnv("/p/.env", []byte("A=op://v/i/f\n"))
+	if err != nil || len(got) != 1 || got[0].Scheme != Op || got[0].Ref != "op://v/i/f" {
+		t.Errorf("ParseEnv = %v, %v", got, err)
+	}
+}
+
+func TestParseEnvKeychain(t *testing.T) {
+	in := "A=keychain://wakatime\nexport B=\"keychain://gh.work\"\nC='keychain://x_y-1'\n"
+	got, err := ParseEnv("/p/.env", []byte(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("len = %d, want 3: %v", len(got), got)
+	}
+	for _, e := range got {
+		if e.Scheme != Keychain {
+			t.Errorf("%s: Scheme = %v, want Keychain", e.Name, e.Scheme)
+		}
+	}
+	if got[0].Service() != "wakatime" || got[1].Service() != "gh.work" || got[2].Service() != "x_y-1" {
+		t.Errorf("Service = %q %q %q", got[0].Service(), got[1].Service(), got[2].Service())
+	}
+	// キーチェーン以外の参照からは service を作らない（op の参照を security に渡さないように）
+	if s := (Entry{Name: "A", Ref: "op://v/i/f", Scheme: Op}).Service(); s != "" {
+		t.Errorf("op の参照の Service = %q", s)
+	}
+	if got[1].Ref != "keychain://gh.work" {
+		t.Errorf("Ref = %q", got[1].Ref)
+	}
+}
+
+func TestParseEnvKeychainRejects(t *testing.T) {
+	for _, svc := range []string{
+		"-oops", "a/b", "a b", "", "a\x1bb", "a\u202eb",
+		strings.Repeat("a", 129), "x  # comment",
+	} {
+		_, err := ParseEnv("/p/.env", []byte("FOO=keychain://"+svc+"\n"))
+		if err == nil {
+			t.Errorf("%q を受け付けた", svc)
+			continue
+		}
+		if err.Error() != "/p/.env:1: FOO のキーチェーンの参照に使えない文字があります" {
+			t.Errorf("%q: err = %q", svc, err.Error())
+		}
+	}
+	// 128 文字ちょうどは使える
+	if _, err := ParseEnv("/p/.env", []byte("FOO=keychain://"+strings.Repeat("a", 128)+"\n")); err != nil {
+		t.Errorf("128 文字: %v", err)
 	}
 }
 
@@ -79,8 +123,8 @@ func TestParseEnvRejectsUnsafeRef(t *testing.T) {
 
 func TestRenderEnv(t *testing.T) {
 	got := string(RenderEnv([]Entry{
-		{Name: "A", Ref: "op://v/i/f"},
-		{Name: "B", Ref: "op://個人/AWS ルート/password"},
+		{Name: "A", Ref: "op://v/i/f", Scheme: Op},
+		{Name: "B", Ref: "op://個人/AWS ルート/password", Scheme: Op},
 	}))
 	want := "A=\"op://v/i/f\"\nB=\"op://個人/AWS ルート/password\"\n"
 	if got != want {
@@ -88,6 +132,17 @@ func TestRenderEnv(t *testing.T) {
 	}
 	if RenderEnv(nil) != nil {
 		t.Error("空なら nil")
+	}
+}
+
+func TestRenderEnvMixed(t *testing.T) {
+	got := string(RenderEnv([]Entry{
+		{Name: "A", Ref: "op://v/i/f", Scheme: Op},
+		{Name: "B", Ref: "keychain://w", Scheme: Keychain},
+	}))
+	want := "A=\"op://v/i/f\"\nB=\"keychain://w\"\n"
+	if got != want {
+		t.Errorf("RenderEnv =\n%q\nwant\n%q", got, want)
 	}
 }
 
@@ -112,15 +167,5 @@ func TestParseEnvErrorsDoNotLeakValues(t *testing.T) {
 		if err != nil && strings.Contains(err.Error(), "secret") {
 			t.Errorf("値がエラーに出た: %v", err)
 		}
-	}
-}
-
-func TestArgv(t *testing.T) {
-	got := Argv("/abs/dev", []string{"/p/.env", "/c/secrets.env"}, []string{"nvim", "."})
-	want := []string{"op", "run", "--no-masking",
-		"--env-file=/p/.env", "--env-file=/c/secrets.env",
-		"--", "/abs/dev", "nvim", "."}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("Argv =\n%v\nwant\n%v", got, want)
 	}
 }

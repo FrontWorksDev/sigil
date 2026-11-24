@@ -1,12 +1,33 @@
 package docker
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+// TestExecRunnerRunEnvLaterWins は、本物のプロセスで、extraEnv が sigil 自身の環境の同じ名前に勝つことを確かめる。
+// キーチェーンの値がホストのシェルの同じ名前に負けないための前提なので、偽物の Runner ではなく実際に実行する
+// （docker の代わりに env を実行する。docker は要らない）。
+func TestExecRunnerRunEnvLaterWins(t *testing.T) {
+	t.Setenv("SIGIL_TEST_RUNENV", "host")
+	var out bytes.Buffer
+	if err := (ExecRunner{}).RunEnv("/usr/bin/env", nil, []string{"SIGIL_TEST_RUNENV=keychain"}, &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, line := range strings.Split(out.String(), "\n") {
+		if strings.HasPrefix(line, "SIGIL_TEST_RUNENV=") {
+			got = append(got, line)
+		}
+	}
+	if !reflect.DeepEqual(got, []string{"SIGIL_TEST_RUNENV=keychain"}) {
+		t.Errorf("子プロセスの環境 = %v", got)
+	}
+}
 
 type call struct {
 	name string
@@ -166,5 +187,65 @@ func TestSetupWakaTimeWritesFromContainerEnv(t *testing.T) {
 				t.Errorf("argv に値がある: %s", a)
 			}
 		}
+	}
+}
+
+// fakeEnvRunner は RunEnv も持つ Runner。RunEnv に渡された環境を記録する。
+type fakeEnvRunner struct {
+	fakeRunner
+	envCalls []call
+	envs     [][]string
+}
+
+func (f *fakeEnvRunner) RunEnv(name string, args, extraEnv []string, stdout, stderr io.Writer) error {
+	f.envCalls = append(f.envCalls, call{name, append([]string(nil), args...)})
+	f.envs = append(f.envs, append([]string(nil), extraEnv...))
+	return nil
+}
+
+func TestCreatePassesSecretEnvToEnvRunner(t *testing.T) {
+	f := &fakeEnvRunner{}
+	s := sampleSpec()
+	s.Envs = []string{"A"}
+	s.SecretEnv = []string{"A=v"}
+	if err := (Client{R: f}).Create(s); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.calls) != 0 || len(f.envCalls) != 1 {
+		t.Fatalf("Run = %v, RunEnv = %v", f.calls, f.envCalls)
+	}
+	if !reflect.DeepEqual(f.envs[0], []string{"A=v"}) {
+		t.Errorf("extraEnv = %v", f.envs[0])
+	}
+	args := f.envCalls[0].args
+	hasE := false
+	for i, a := range args {
+		// 値は環境で渡す。argv（ps で見える）には載せない
+		if a == "v" || strings.Contains(a, "A=v") {
+			t.Errorf("argv に値がある: %v", args)
+		}
+		if a == "-e" && i+1 < len(args) && args[i+1] == "A" {
+			hasE = true
+		}
+	}
+	if !hasE {
+		t.Errorf("-e A がない: %v", args)
+	}
+}
+
+func TestCreateSecretEnvNeedsEnvRunner(t *testing.T) {
+	f := &fakeRunner{}
+	s := sampleSpec()
+	s.Envs = []string{"A"}
+	s.SecretEnv = []string{"A=v"}
+	err := (Client{R: f}).Create(s)
+	if err == nil {
+		t.Fatal("エラーにならない")
+	}
+	if strings.Contains(err.Error(), "A=v") {
+		t.Errorf("エラーに値がある: %v", err)
+	}
+	if len(f.calls) != 0 {
+		t.Errorf("docker を呼んだ: %v", f.calls)
 	}
 }

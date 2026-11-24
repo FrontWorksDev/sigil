@@ -24,6 +24,7 @@ func (noCmd) Run(name string, args []string, _ gitcommit.RunOpts) error {
 type call struct {
 	name string
 	args []string
+	env  []string // RunEnv で渡された追加の環境（Run のときは nil）
 }
 
 func (c call) String() string { return c.name + " " + strings.Join(c.args, " ") }
@@ -56,7 +57,12 @@ func (f *fakeRunner) onFunc(prefix string, fn func() (string, error)) {
 }
 
 func (f *fakeRunner) Run(name string, args []string, stdout, stderr io.Writer) error {
-	c := call{name, append([]string(nil), args...)}
+	return f.RunEnv(name, args, nil, stdout, stderr)
+}
+
+// RunEnv は Run と同じ応答を返し、追加の環境も記録する（docker.EnvRunner）。
+func (f *fakeRunner) RunEnv(name string, args, extraEnv []string, stdout, stderr io.Writer) error {
+	c := call{name: name, args: append([]string(nil), args...), env: append([]string(nil), extraEnv...)}
 	f.calls = append(f.calls, c)
 	s := c.String()
 	for i := len(f.handlers) - 1; i >= 0; i-- {
@@ -88,6 +94,37 @@ func (f *fakeRunner) find(prefix string) []call {
 	return out
 }
 
+// securityResp は、偽の security が返す応答。
+type securityResp struct {
+	stdout, stderr string
+	err            error
+}
+
+// fakeSecurityCmd は Deps.Security の偽物。呼び出しを記録し、引数ごとに登録した応答を返す。
+// 本物の /usr/bin/security は決して動かさない。未登録の呼び出しはエラーにして、
+// 思いがけず security に届いたテストが黙って通らないようにする。
+type fakeSecurityCmd struct {
+	calls [][]string
+	resps map[string]securityResp
+}
+
+// on は、引数（空白でつないだもの）に対する応答を登録する。
+func (f *fakeSecurityCmd) on(args []string, stdout, stderr string, err error) {
+	if f.resps == nil {
+		f.resps = map[string]securityResp{}
+	}
+	f.resps[strings.Join(args, " ")] = securityResp{stdout, stderr, err}
+}
+
+func (f *fakeSecurityCmd) run(args []string) ([]byte, []byte, error) {
+	f.calls = append(f.calls, append([]string(nil), args...))
+	r, ok := f.resps[strings.Join(args, " ")]
+	if !ok {
+		return nil, nil, errors.New("偽の security に未登録の呼び出し: " + strings.Join(args, " "))
+	}
+	return []byte(r.stdout), []byte(r.stderr), r.err
+}
+
 type execCall struct {
 	argv0 string
 	argv  []string
@@ -99,6 +136,7 @@ type testEnv struct {
 	t      *testing.T
 	d      Deps
 	runner *fakeRunner
+	sec    *fakeSecurityCmd
 	execs  []execCall
 	vars   map[string]string
 	stdout bytes.Buffer
@@ -137,6 +175,7 @@ func newEnv(t *testing.T) *testEnv {
 	e := &testEnv{
 		t:      t,
 		runner: &fakeRunner{},
+		sec:    &fakeSecurityCmd{},
 		home:   filepath.Join(base, "home"),
 		proj:   filepath.Join(base, "home", "src", "proj"),
 	}
@@ -153,9 +192,10 @@ func newEnv(t *testing.T) *testEnv {
 	e.runner.on("docker image inspect", "", nil)
 
 	e.d = Deps{
-		Runner: e.runner,
-		Cmd:    noCmd{},
-		Pager:  func(string) error { return errors.New("Deps.Pager は使わないはず") },
+		Runner:   e.runner,
+		Security: e.sec.run,
+		Cmd:      noCmd{},
+		Pager:    func(string) error { return errors.New("Deps.Pager は使わないはず") },
 		Exec: func(argv0 string, argv, env []string) error {
 			e.order = append(e.order, "exec")
 			e.stderrAtExec = append(e.stderrAtExec, e.stderr.String())

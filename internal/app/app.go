@@ -16,8 +16,8 @@ import (
 	"sigil/internal/approval"
 	"sigil/internal/config"
 	"sigil/internal/docker"
-	"sigil/internal/opwrap"
 	"sigil/internal/project"
+	"sigil/internal/secret"
 	"sigil/internal/ui"
 )
 
@@ -36,8 +36,8 @@ const usage = `使い方:
 
 設定:
   <project>/.sigil                このプロジェクトに渡す環境変数名とポート（変わるたびに確認）〔契約〕
-  <project>/.env                  値（1Password の op:// 参照）
-  ~/.config/sigil/config          全プロジェクト共通の環境変数名とポート
+  <project>/.env                  値（1Password の op:// 参照、キーチェーンの keychain:// 参照）
+  ~/.config/sigil/config          全プロジェクト共通の環境変数名とポート、読む専用キーチェーン
   ~/.config/sigil/secrets.env     全プロジェクト共通の値
 
 環境変数:
@@ -79,7 +79,7 @@ func run(args []string, d Deps) error {
 
 	// op run から起動し直された側では、op run に渡した一時ファイルはもう読まれているので消す。
 	// 中身は参照（op://...）だけで秘密の値ではないが、残しておく理由もない。
-	_, inner := d.LookupEnv(opwrap.InnerEnv)
+	_, inner := d.LookupEnv(secret.InnerEnv)
 	if inner {
 		if dir, ok := d.LookupEnv(opTempEnv); ok && dir != "" {
 			removeOpTemp(dir)
@@ -207,22 +207,33 @@ type settings struct {
 	projCfg   config.Config
 	globalCfg config.Config
 
-	envPath   string
-	opEntries []opwrap.Entry // .env のうち、1Password から読み込む名前と参照（確かめたもの）
-	opEnv     []byte         // opEntries から作った、op run に渡す env ファイルの中身（なければ nil）
-	warnings  []string
+	envPath string
+	// projEntries は、.env のうち、1Password・キーチェーンから読み込む名前と参照（確かめたもの。.env の順）。
+	// 優先順位を決める前のもので、承認の画面とハッシュに使う。
+	projEntries []secret.Entry
+	// approvalEnv は、projEntries から作った承認の対象（なければ nil）。
+	// 1Password の組だけのときは、改修前の op run の env ファイルと同じバイト列になり、既存の承認記録が使える。
+	approvalEnv []byte
+	// plan は、名前ごとに、全体の secrets.env とプロジェクトの .env のどちらから読むかを決めたもの。
+	plan secret.Plan
+	// opEnv は、plan で勝ったプロジェクトの 1Password の組から作った、op run に渡す env ファイルの中身（なければ nil）。
+	opEnv    []byte
+	warnings []string
 
-	secrets    []byte // 全体の secrets.env（なければ nil）
-	secretsPth string
+	secrets       []byte         // 全体の secrets.env（なければ nil）
+	globalEntries []secret.Entry // secrets.env の全行（生の値の行も、名前だけを持つ）
+	secretsPth    string
 }
 
-// loadSettings は設定を読み、.env から 1Password で読み込む名前と参照を選ぶ。
+// loadSettings は設定を読み、.env から 1Password・キーチェーンで読み込む名前と参照を選ぶ。
 //
 // op run は env ファイルの行をすべて、起動し直した sigil 自身の環境変数にする。
 // 利用者の .env をそのまま渡すと、DOCKER_HOST や PATH を書かれたときに、sigil が攻撃者の
 // docker に秘密を送ったり、偽の docker を実行したりしてしまう。そこで .env からは、
 // 設定（.sigil / 全体設定）で列挙した名前で、制御用ではなく、値が op:// 参照のものだけを選び、
 // それだけで作り直した env ファイルを op run に渡す（RenderEnv）。
+// keychain:// 参照も同じ規則で選ぶ（列挙していない名前のために、キーチェーンの解錠を求めないため。
+// 制御用の名前に、キーチェーンの値を入れさせないため）。
 // 参照ではない行（VITE_API_URL などのアプリの設定）は、アプリがコンテナ内で .env を直接読むので、sigil は扱わない。
 func loadSettings(p project.Project, dd dirs) (settings, error) {
 	s := settings{
@@ -254,7 +265,7 @@ func loadSettings(p project.Project, dd dirs) (settings, error) {
 	}
 	if s.sigil != nil {
 		// 承認の画面に出す内容と、記録するハッシュを、同じ読み込みから作る
-		if s.projCfg, err = config.Parse(s.sigilPath, bytes.NewReader(s.sigil)); err != nil {
+		if s.projCfg, err = config.ParseProject(s.sigilPath, bytes.NewReader(s.sigil)); err != nil {
 			return s, err
 		}
 	}
@@ -274,36 +285,40 @@ func loadSettings(p project.Project, dd dirs) (settings, error) {
 		listed[n] = true
 	}
 	if env != nil {
-		entries, err := opwrap.ParseEnv(s.envPath, env)
+		entries, err := secret.ParseEnv(s.envPath, env)
 		if err != nil {
 			return s, err
 		}
 		for _, e := range entries {
 			switch {
-			case e.Ref == "":
+			case e.Scheme == secret.None:
 				// アプリの設定。sigil は扱わない
 			case config.Denied(e.Name):
 				s.warnings = append(s.warnings, fmt.Sprintf("注意: .env の %s は渡せない名前なので、禁書庫から読み込みません", e.Name))
 			case !listed[e.Name]:
 				s.warnings = append(s.warnings, fmt.Sprintf("注意: .env の %s は .sigil にも全体設定にも列挙されていないので、禁書庫から読み込みません", e.Name))
 			default:
-				s.opEntries = append(s.opEntries, e)
+				s.projEntries = append(s.projEntries, e)
 			}
 		}
-		s.opEnv = opwrap.RenderEnv(s.opEntries)
+		// 承認の対象は、優先順位を決める前の組から作る。全体の secrets.env を編集しただけで、
+		// プロジェクトの承認が変わらないように
+		s.approvalEnv = secret.RenderEnv(s.projEntries)
 	}
 	if s.secrets != nil {
 		// 全体の secrets.env はホストのファイルだが、制御用の名前は同じ理由で拒否する
-		entries, err := opwrap.ParseEnv(s.secretsPth, s.secrets)
-		if err != nil {
+		if s.globalEntries, err = secret.ParseEnv(s.secretsPth, s.secrets); err != nil {
 			return s, err
 		}
-		for _, e := range entries {
+		for _, e := range s.globalEntries {
 			if config.Denied(e.Name) {
 				return s, loref("禁書庫の目録に、書けない名前があります", "%s: %s は書けません（sigil や docker の動作を変えられるため）", s.secretsPth, e.Name)
 			}
 		}
 	}
+	// 全体の secrets.env に同じ名前があれば、そちらを使う。op run に渡すプロジェクトの分は、勝った組だけにする
+	s.plan = secret.MakePlan(s.projEntries, s.globalEntries, listed)
+	s.opEnv = secret.RenderEnv(s.plan.OpProject)
 	return s, nil
 }
 
@@ -317,13 +332,13 @@ const (
 
 // needsOp は、op run で読み込むものがあるかを返す。
 func (s settings) needsOp() bool {
-	return s.opEnv != nil || (s.secrets != nil && opwrap.HasOpRef(s.secrets))
+	return s.opEnv != nil || (s.secrets != nil && secret.HasOpRef(s.secrets))
 }
 
 // writeOpFiles は op run に渡すファイルを、プロジェクト → 全体の順で返す。
 // op run は後のファイルを優先するので、プロジェクトの .env で全体のシークレットを上書きされないようにするため。
 //
-// プロジェクトの分は、確かめた組だけで作り直し、本人だけが読める一時フォルダに置く
+// プロジェクトの分は、確かめた組のうち全体の secrets.env に負けなかったものだけで作り直し、本人だけが読める一時フォルダに置く
 // （リポジトリやコンテナから差し替えられないように）。tmpDir は、起動し直した側で消す。
 func (s settings) writeOpFiles() (files []string, tmpDir string, err error) {
 	if s.opEnv != nil {
@@ -339,7 +354,7 @@ func (s settings) writeOpFiles() (files []string, tmpDir string, err error) {
 		}
 		files = append(files, p)
 	}
-	if s.secrets != nil && opwrap.HasOpRef(s.secrets) {
+	if s.secrets != nil && secret.HasOpRef(s.secrets) {
 		files = append(files, s.secretsPth)
 	}
 	return files, tmpDir, nil
@@ -372,7 +387,7 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 
 	// op run から起動し直された側（inner）では、確認も op run もしない（無限ループ防止）。
 	// ただし承認記録の照合は inner でも行う。SIGIL_INNER を外から設定されても、承認を回避できないように。
-	_, inner := d.LookupEnv(opwrap.InnerEnv)
+	_, inner := d.LookupEnv(secret.InnerEnv)
 	if !inner {
 		for _, w := range s.warnings {
 			fmt.Fprintf(d.Stderr, "sigil: %s\n", w)
@@ -396,13 +411,13 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 				return false, err
 			}
 			info(d, "禁書庫から召喚します")
-			env := append(d.Environ(), opwrap.InnerEnv+"=1")
+			env := append(d.Environ(), secret.InnerEnv+"=1")
 			if tmpDir != "" {
 				env = append(env, opTempEnv+"="+tmpDir)
 			}
 			// op run に置き換える前にも、端末を元に戻す（承認の画面のあとなので、念のため）
 			u.Restore()
-			if err := d.Exec(opPath, opwrap.Argv(self, files, args), env); err != nil {
+			if err := d.Exec(opPath, secret.Argv(self, files, args), env); err != nil {
 				if tmpDir != "" {
 					os.RemoveAll(tmpDir)
 				}
@@ -422,18 +437,57 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 	}
 	nvim, nvimErr := os.Stat(filepath.Join(home, ".config", "nvim"))
 
+	// キーチェーンは、承認と op run のあと、演出を始める前に読む。
+	// 解錠のダイアログを待つあいだに魔法陣を描かないため（17 章の刻印と同じ考え方）。
+	kcValues, kcSkipped, err := readKeychain(d, s, home)
+	if err != nil {
+		return false, err
+	}
+	fromKeychain := map[string]bool{}
+	for _, e := range s.plan.Keychain {
+		fromKeychain[e.Name] = true
+	}
+
+	// 全体の secrets.env の値が環境に入るのは、op run を経由し、そのとき secrets.env を渡した
+	// （op:// を含む。writeOpFiles）ときだけ。それ以外で LookupEnv を見ると、全体の値ではなく
+	// ホストのシェルの値になってしまう
+	globalLoaded := inner && s.secrets != nil && secret.HasOpRef(s.secrets)
+
 	cfg := config.Merge(s.projCfg, s.globalCfg)
 	var envs []string
 	passWaka := false
 	for _, name := range cfg.Envs {
-		// 空文字で設定されているものは「設定されている」とみなして渡す
-		if _, ok := d.LookupEnv(name); !ok {
+		if s.plan.Overridden[name] && !fromKeychain[name] && !globalLoaded {
+			// プロジェクトの .env の参照は、全体の secrets.env（生の値か op://）に負けて使わない。
+			// その全体の値を読み込めていないので、渡さない。LookupEnv は見ない（ホストのシェルの、
+			// 権限の広いトークンが、利用者の意図に反して代わりに渡らないように）。
+			// 全体の勝者がキーチェーンのとき（fromKeychain）は、下のキーチェーンの扱いになる。
+			info(d, "注意: %s は全体の secrets.env が優先されますが、その値を読み込めなかったので渡しません", name)
+			continue
+		}
+		if fromKeychain[name] {
+			// キーチェーンから読むと決めた名前は、読めた値があるときだけ渡す。LookupEnv は見ない。
+			// 読めなかったときに、ホストのシェルの（権限の広い）トークンや、op run が入れた
+			// keychain://... の文字列が代わりに渡らないように。
+			// 読まなかった（kcSkipped）ときの注意は readKeychain が出している。
+			if _, ok := kcValues[name]; !ok || kcSkipped[name] {
+				continue
+			}
+		} else if _, ok := d.LookupEnv(name); !ok {
+			// 空文字で設定されているものは「設定されている」とみなして渡す
 			info(d, "注意: 持ち込むもの %s がホスト側で設定されていないので、渡しません", name)
 			continue
 		}
 		envs = append(envs, name)
 		if name == "WAKATIME_API_KEY" {
 			passWaka = true
+		}
+	}
+	// 値は docker のコマンドの環境にだけ入れる（引数は -e NAME のまま）。順は plan の順
+	var secretEnv []string
+	for _, e := range s.plan.Keychain {
+		if v, ok := kcValues[e.Name]; ok {
+			secretEnv = append(secretEnv, e.Name+"="+v)
 		}
 	}
 
@@ -447,6 +501,7 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 		HasNvimConfig: nvimErr == nil && nvim.IsDir(),
 		Envs:          envs,
 		Ports:         cfg.Ports,
+		SecretEnv:     secretEnv,
 	}
 	if u.Fancy() {
 		u.Banner()
@@ -454,13 +509,9 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 		info(d, "領域 %s を展開します", p.ContainerName)
 	}
 	// 段階のうち、最後以外は、ここまでに済んでいる（待ち時間を足さないため、実際の処理に合わせる）
-	summon := ui.Stage{Label: "禁書庫から召喚する", Note: "1Password", State: ui.Skipped}
-	if inner {
-		summon.State = ui.Done
-	}
 	stages := []ui.Stage{
 		{Label: "契約を読み解く", Note: ".sigil / .env", State: ui.Done},
-		summon,
+		summonStage(inner, len(kcValues) > 0),
 		{Label: "禁忌の扉を閉ざす", Note: "~/.ssh ~/.aws docker.sock", State: ui.Done},
 		{Label: "権能を剥奪する", Note: "cap-drop=ALL", State: ui.Done},
 		{Label: "結界を張る", Note: "no-new-privileges", State: ui.Done},
@@ -576,13 +627,15 @@ func newUI(d Deps) *ui.UI {
 // 承認済みでなく ask のときは利用者に確認し、承認されたら記録する。ask でなければエラーにする。
 // どちらのファイルもなければ、確認は要らない（全体設定はホストのファイルなので確認しない）。
 //
-// .env については、生の内容ではなく、1Password から読み込む名前と参照の組（opEnv）を対象にする。
-// アプリの設定の行を変えただけで、確認し直さなくて済むように。
+// .env については、生の内容ではなく、1Password・キーチェーンから読み込む名前と参照の組（approvalEnv）を
+// 対象にする。アプリの設定の行を変えただけで、確認し直さなくて済むように。
+// キーチェーンの参照しかない .env でも確認を飛ばさない（.sigil がなくても、全体設定で列挙した名前の
+// 参照先を、リポジトリが勝手に選べてしまうため）。
 func approve(d Deps, store approval.Store, p project.Project, s settings, ask bool) error {
-	if s.sigil == nil && s.opEnv == nil {
+	if s.sigil == nil && s.approvalEnv == nil {
 		return nil
 	}
-	sum := approval.Fingerprint(s.sigil, s.opEnv)
+	sum := approval.Fingerprint(s.sigil, s.approvalEnv)
 	if store.IsApproved(p.Key, sum) {
 		return nil
 	}
@@ -590,7 +643,7 @@ func approve(d Deps, store approval.Store, p project.Project, s settings, ask bo
 	if s.sigil != nil {
 		files = append(files, s.sigilPath)
 	}
-	if s.opEnv != nil {
+	if s.approvalEnv != nil {
 		files = append(files, s.envPath)
 	}
 	if !ask {
@@ -601,7 +654,7 @@ func approve(d Deps, store approval.Store, p project.Project, s settings, ask bo
 		return loref("契約を確かめられません", "%s を確認できない環境です。対話できるターミナルで実行してください", strings.Join(files, " と "))
 	}
 	defer tty.Close()
-	if !approval.Ask(tty, newUI(d), files, s.projCfg, s.opEntries) {
+	if !approval.Ask(tty, newUI(d), files, s.projCfg, s.projEntries, s.plan.Overridden) {
 		return lore("契約は結ばれませんでした", errors.New("中止しました"))
 	}
 	return store.Record(p.Key, sum)

@@ -30,6 +30,10 @@ type RunSpec struct {
 	HasNvimConfig bool // <Home>/.config/nvim がある
 	Envs          []string
 	Ports         []config.Port
+	// SecretEnv は、docker のプロセスにだけ環境として渡す "NAME=値"（キーチェーンから読んだ値など）。
+	// RunArgs は使わない。値をコマンドライン（ps で誰でも見える）に載せず、
+	// Envs の "-e NAME" で docker がこの環境から値を読む。
+	SecretEnv []string
 }
 
 // RunArgs は docker run の引数を返す。

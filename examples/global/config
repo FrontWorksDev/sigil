@@ -2,6 +2,9 @@
 # 書き方はプロジェクトの .sigil と同じ（env / port）。
 # ホスト側のファイルなので、確認なしで使われます。
 #
-# 値は同じフォルダの secrets.env に 1Password の参照として書く。
+# 値は同じフォルダの secrets.env に 1Password かキーチェーンの参照として書く。
 
 env WAKATIME_API_KEY
+
+# キーチェーンから読むときの専用キーチェーン（この全体設定でだけ書ける。~/Library/Keychains/ の直下に置く）
+# keychain ~/Library/Keychains/sigil.keychain-db

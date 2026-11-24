@@ -1,4 +1,4 @@
-// Package approval は、プロジェクトの .sigil と、.env で 1Password から読み込むものを
+// Package approval は、プロジェクトの .sigil と、.env で 1Password・キーチェーンから読み込むものを
 // 利用者に確認し、その結果を記録する。
 //
 // リポジトリに勝手に置かれた .sigil によって、ホストの環境変数が黙って
@@ -14,7 +14,7 @@ import (
 	"strings"
 
 	"sigil/internal/config"
-	"sigil/internal/opwrap"
+	"sigil/internal/secret"
 	"sigil/internal/ui"
 )
 
@@ -26,7 +26,7 @@ func Sum(content []byte) string {
 
 // Fingerprint は、承認の対象（.sigil とプロジェクトの .env）のハッシュを返す。
 //
-// .env も対象にするのは、承認の画面で見せた名前が、どの 1Password 項目から
+// .env も対象にするのは、承認の画面で見せた名前が、どの 1Password・キーチェーンの項目から
 // 値を取るかを .env で後から差し替えられないようにするため。
 // 区切り（"\x00"）と見出しを入れて、.sigil と .env の境目をずらした別の組み合わせが、
 // 同じハッシュにならないようにしている。
@@ -74,20 +74,34 @@ func (s Store) Record(key, sum string) error {
 // 標準入力ではなく /dev/tty から読むのは、パイプなどで標準入力に "y" を流し込まれても
 // 承認されないようにするため（承認は、端末の前にいる人が行う）。
 //
-// files は対象のファイル（.sigil / .env）、c は .sigil の内容、refs は .env の内容。
-// .env については、名前ごとに 1Password のどの項目から値を取るか（参照）を見せる。値は見せない。
+// files は対象のファイル（.sigil / .env）、c は .sigil の内容、refs は .env から選んだ組。
+// .env については、名前ごとに提供元（1Password / キーチェーン）と、どの項目から値を取るか（参照）を
+// 見せる。値は見せない。overridden は、全体の secrets.env に負けて使われない名前。
+// 使われない組も承認の対象なので隠さず、使わないことが分かるように添える。
 //
 // セキュリティ上の判断をしてもらう画面なので、演出より読みやすさを優先する。
 // 決断の画面には色・枠・記号は付けるが、動きは付けない。用語（契約、持ち込むもの、門、禁書庫）には
-// 必ず実際の意味を添える。端末でないとき（Plain）は、従来と同じ文面になる。
-func Ask(tty io.Reader, u *ui.UI, files []string, c config.Config, refs []opwrap.Entry) bool {
+// 必ず実際の意味を添える。端末でないとき（Plain）は、飾りのない文面になる（提供元の列と、
+// 使わない組の注記を含む。文面は ui の golden テストで固定している）。
+func Ask(tty io.Reader, u *ui.UI, files []string, c config.Config, refs []secret.Entry, overridden map[string]bool) bool {
 	v := ui.ContractView{Files: files, Envs: c.Envs}
 	for _, p := range c.Ports {
 		v.Ports = append(v.Ports, p.Publish())
 	}
 	for _, r := range refs {
-		v.Refs = append(v.Refs, [2]string{r.Name, r.Ref})
+		v.Refs = append(v.Refs, ui.ContractRef{Name: r.Name, Ref: r.Ref, Source: sourceName(r.Scheme), Overridden: overridden[r.Name]})
 	}
 	u.ContractScreen(v)
 	return ui.IsYes(ui.ReadAnswer(tty))
+}
+
+// sourceName は、承認の画面に出す提供元の名前。
+func sourceName(s secret.Scheme) string {
+	switch s {
+	case secret.Op:
+		return "1Password"
+	case secret.Keychain:
+		return "キーチェーン"
+	}
+	return ""
 }

@@ -63,7 +63,7 @@ func TestParseEnvKeychain(t *testing.T) {
 
 func TestParseEnvKeychainRejects(t *testing.T) {
 	for _, svc := range []string{
-		"-oops", "a/b", "a b", "", "a\x1bb", "a‮b",
+		"-oops", "a/b", "a b", "", "a\x1bb", "a\u202eb",
 		strings.Repeat("a", 129), "x  # comment",
 	} {
 		_, err := ParseEnv("/p/.env", []byte("FOO=keychain://"+svc+"\n"))
@@ -73,11 +73,6 @@ func TestParseEnvKeychainRejects(t *testing.T) {
 		}
 		if err.Error() != "/p/.env:1: FOO のキーチェーンの参照に使えない文字があります" {
 			t.Errorf("%q: err = %q", svc, err.Error())
-		}
-		for _, leak := range []string{"oops", "a/b", "comment"} {
-			if strings.Contains(err.Error(), leak) {
-				t.Errorf("service がエラーに出た: %v", err)
-			}
 		}
 	}
 	// 128 文字ちょうどは使える
@@ -98,11 +93,11 @@ func TestParseEnvRejectsUnsafeRef(t *testing.T) {
 		"op://${VAULT}/i/f",
 		"op://v/i/f\rEVIL=op://a/b/c",
 		// 表示を並べ替えたり、見えなかったりする Unicode の書式文字・区切り文字
-		"op://v/‮fdrowssap/f", // RIGHT-TO-LEFT OVERRIDE
-		"op://v/i​/f",         // ZERO WIDTH SPACE
-		"op://v/i /f",         // LINE SEPARATOR
-		"op://v/i\ufeff/f",    // 途中の BOM
-		"op://v/i⁦x⁩/f",       // 双方向の分離
+		"op://v/\u202efdrowssap/f", // RIGHT-TO-LEFT OVERRIDE
+		"op://v/i\u200b/f",         // ZERO WIDTH SPACE
+		"op://v/i\u2028/f",         // LINE SEPARATOR
+		"op://v/i\ufeff/f",         // 途中の BOM
+		"op://v/i\u2066x\u2069/f",  // 双方向の分離
 	} {
 		_, err := ParseEnv("/p/.env", []byte("FOO="+val+"\n"))
 		if err == nil {

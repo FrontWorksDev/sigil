@@ -448,10 +448,23 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 		fromKeychain[e.Name] = true
 	}
 
+	// 全体の secrets.env の値が環境に入るのは、op run を経由し、そのとき secrets.env を渡した
+	// （op:// を含む。writeOpFiles）ときだけ。それ以外で LookupEnv を見ると、全体の値ではなく
+	// ホストのシェルの値になってしまう
+	globalLoaded := inner && s.secrets != nil && secret.HasOpRef(s.secrets)
+
 	cfg := config.Merge(s.projCfg, s.globalCfg)
 	var envs []string
 	passWaka := false
 	for _, name := range cfg.Envs {
+		if s.plan.Overridden[name] && !fromKeychain[name] && !globalLoaded {
+			// プロジェクトの .env の参照は、全体の secrets.env（生の値か op://）に負けて使わない。
+			// その全体の値を読み込めていないので、渡さない。LookupEnv は見ない（ホストのシェルの、
+			// 権限の広いトークンが、利用者の意図に反して代わりに渡らないように）。
+			// 全体の勝者がキーチェーンのとき（fromKeychain）は、下のキーチェーンの扱いになる。
+			info(d, "注意: %s は全体の secrets.env が優先されますが、その値を読み込めなかったので渡しません", name)
+			continue
+		}
 		if fromKeychain[name] {
 			// キーチェーンから読むと決めた名前は、読めた値があるときだけ渡す。LookupEnv は見ない。
 			// 読めなかったときに、ホストのシェルの（権限の広い）トークンや、op run が入れた

@@ -117,8 +117,12 @@ func TestKeychainNotConfiguredInnerLiteral(t *testing.T) {
 	if code := e.run(); code != 0 {
 		t.Fatal(e.stderr.String())
 	}
-	if c := e.runCall(); slices.Contains(c.args, "WAKATIME_API_KEY") {
-		t.Errorf("keychain:// の文字列を渡した: %v", c.args)
+	c := e.runCall()
+	if slices.Contains(c.args, "WAKATIME_API_KEY") || len(c.env) != 0 {
+		t.Errorf("keychain:// の文字列を渡した: args=%v env=%v", c.args, c.env)
+	}
+	if len(e.runner.find("docker exec")) != 0 {
+		t.Error("渡していないのに WakaTime を設定した")
 	}
 }
 
@@ -261,6 +265,8 @@ func TestKeychainFailureReason(t *testing.T) {
 		{"標準エラー", "bad\x1b[31m\n", ee, "（bad[31m）"},
 		{"終了コード", "", ee, fmt.Sprintf("（終了コード %d）", ee.ExitCode())},
 		{"時間切れ", "", fmt.Errorf("x: %w", context.DeadlineExceeded), "（時間切れ）"},
+		// 時間切れまでに標準エラーに何か出ていても、時間切れだったことを隠さない
+		{"時間切れと標準エラー", "waiting\n", fmt.Errorf("x: %w", context.DeadlineExceeded), "（waiting（時間切れ））"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e, kc := keychainEnv(t, true)
@@ -290,5 +296,110 @@ func TestSummonStageNote(t *testing.T) {
 		if s.Label != "禁書庫から召喚する" || s.Note != tc.note || s.State != tc.state {
 			t.Errorf("inner=%v keychain=%v: %+v", tc.inner, tc.keychain, s)
 		}
+	}
+}
+
+// ---- 全体の secrets.env に負けた名前（最終レビュー） ----
+
+const overriddenNote = "注意: X は全体の secrets.env が優先されますが、その値を読み込めなかったので渡しません"
+
+// overriddenEnv は、プロジェクトの .env に X=keychain://svc、全体の secrets.env に globalLine を書いた環境を返す。
+// ホストのシェルにも X がある（それが代わりに渡らないことを確かめるため）。
+func overriddenEnv(t *testing.T, globalLine string) *testEnv {
+	t.Helper()
+	e := newEnv(t)
+	e.d.Getuid = os.Getuid
+	e.write(filepath.Join(e.home, "Library", "Keychains", "s.keychain-db"), "")
+	e.globalConfig("keychain ~/Library/Keychains/s.keychain-db\n")
+	e.write(".sigil", "env X\n")
+	e.write(".env", "X=keychain://svc\n")
+	e.write(filepath.Join(e.home, ".config", "sigil", "secrets.env"), globalLine)
+	e.vars["X"] = "host"
+	e.tty = "y\n"
+	return e
+}
+
+// innerAfterApproval は、e で承認して op run に置き換えたあと、起動し直した側（inner）の環境を返す。
+func innerAfterApproval(t *testing.T, e *testEnv) *testEnv {
+	t.Helper()
+	e.opPath = "/opt/bin/op"
+	if code := e.run(); code != 0 {
+		t.Fatal(e.stderr.String())
+	}
+	if e.lastExec().argv0 != "/opt/bin/op" {
+		t.Fatal("op run に置き換えていない（テストの前提が崩れている）")
+	}
+	e2 := newEnvSharing(t, e)
+	e2.d.Getuid = os.Getuid
+	e2.opPath = "/opt/bin/op"
+	e2.vars["SIGIL_INNER"] = "1"
+	return e2
+}
+
+func (e *testEnv) assertXNotPassed() {
+	e.t.Helper()
+	c := e.runCall()
+	if slices.Contains(c.args, "X") || len(c.env) != 0 {
+		e.t.Errorf("読み込めなかった名前 X を渡した: args=%v env=%v", c.args, c.env)
+	}
+	if !strings.Contains(e.stderr.String(), overriddenNote) {
+		e.t.Errorf("注意が出ない: %q", e.stderr.String())
+	}
+	if len(e.sec.calls) != 0 {
+		e.t.Errorf("負けたキーチェーンの参照を読んだ: %v", e.sec.calls)
+	}
+}
+
+func TestOverriddenRawGlobalNotLoaded(t *testing.T) {
+	// 全体が生の値で op:// を含まないと、op run は secrets.env を読まない。ホストの X を代わりに渡さない
+	e := overriddenEnv(t, "X=raw\n")
+	e.opPath = "/opt/bin/op" // op があっても、読み込むものがないので op run はしない
+	if code := e.run(); code != 0 {
+		t.Fatal(e.stderr.String())
+	}
+	for _, x := range e.execs {
+		if x.argv0 == "/opt/bin/op" {
+			t.Fatalf("op run に置き換えた: %v", x.argv)
+		}
+	}
+	e.assertXNotPassed()
+}
+
+func TestOverriddenOpGlobalWithoutOp(t *testing.T) {
+	// 全体が op:// でも、op がなければ読み込めない
+	e := overriddenEnv(t, "X=op://v/i/f\n")
+	if code := e.run(); code != 0 {
+		t.Fatal(e.stderr.String())
+	}
+	e.assertXNotPassed()
+}
+
+func TestOverriddenRawGlobalInnerNoOpInSecrets(t *testing.T) {
+	// inner でも、secrets.env を op run に渡していなければ（op:// がなければ）、X はシェルの値
+	e := overriddenEnv(t, "X=raw\n")
+	e.write(".sigil", "env X\nenv A\n")
+	e.write(".env", "X=keychain://svc\nA=op://v/a/f\n")
+	e = innerAfterApproval(t, e)
+	e.vars["A"] = "from-op"
+	if code := e.run(); code != 0 {
+		t.Fatal(e.stderr.String())
+	}
+	e.assertXNotPassed()
+}
+
+func TestOverriddenGlobalLoadedInInner(t *testing.T) {
+	// secrets.env に op:// があり、op run に渡した inner では、全体の値が環境に入っているので渡す
+	e := overriddenEnv(t, "X=raw\nY=op://v/y/f\n")
+	e = innerAfterApproval(t, e)
+	e.vars["X"] = "raw"
+	if code := e.run(); code != 0 {
+		t.Fatal(e.stderr.String())
+	}
+	c := e.runCall()
+	if !slices.Contains(c.args, "X") || len(c.env) != 0 {
+		t.Errorf("全体の値を渡していない: args=%v env=%v", c.args, c.env)
+	}
+	if strings.Contains(e.stderr.String(), overriddenNote) {
+		t.Errorf("読み込めたのに注意を出した: %q", e.stderr.String())
 	}
 }

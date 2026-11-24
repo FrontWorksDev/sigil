@@ -65,6 +65,10 @@ func readKeychain(d Deps, s settings, home string) (values map[string]string, sk
 // 標準エラーは制御文字を取り除いてから使う（ESC などで端末の表示を乱されないように）。
 func securityFailure(stderr []byte, err error) string {
 	if s := secret.CleanStderr(stderr); s != "" {
+		// 時間切れまでに何か出ていても、時間切れで止めたことを隠さない
+		if errors.Is(err, context.DeadlineExceeded) {
+			s += "（時間切れ）"
+		}
 		return s
 	}
 	var ee *exec.ExitError

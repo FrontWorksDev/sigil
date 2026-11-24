@@ -49,12 +49,22 @@ func CheckKeychainPath(path, home string, uid int) (string, error) {
 		return "", fmt.Errorf("キーチェーンは ~/Library/Keychains の直下に置いてください: %s", resolved)
 	}
 	// ログインキーチェーンには、ほかの多くの秘密が入っている。専用のものだけを許す。
-	if strings.HasPrefix(filepath.Base(resolved), "login.keychain") {
+	// APFS は大文字小文字を区別せず、EvalSymlinks も大文字小文字を正規化しないので、
+	// 小文字にして比べる。パスワードのリセットで残る login_renamed_1.keychain-db のような
+	// 古いログインキーチェーンも同じ接頭辞で止める。
+	if strings.HasPrefix(strings.ToLower(filepath.Base(resolved)), "login") {
 		return "", fmt.Errorf("ログインキーチェーンは使えません。専用のキーチェーンを作ってください: %s", resolved)
 	}
 	fi, err := os.Stat(resolved)
 	if err != nil {
 		return "", fmt.Errorf("キーチェーンを調べられません: %s", resolved)
+	}
+	// ハードリンクなど名前では見分けられない場合に備え、本物のログインキーチェーンと同一ファイルか調べる。
+	// （確認から使用までの間の差し替えは、同じユーザーのプロセスにしかできず、脅威の範囲外。）
+	for _, name := range []string{"login.keychain-db", "login.keychain"} {
+		if lfi, err := os.Stat(filepath.Join(resolvedHome, "Library", "Keychains", name)); err == nil && os.SameFile(fi, lfi) {
+			return "", fmt.Errorf("ログインキーチェーンは使えません。専用のキーチェーンを作ってください: %s", resolved)
+		}
 	}
 	if !fi.Mode().IsRegular() {
 		return "", fmt.Errorf("キーチェーンが通常のファイルではありません: %s", resolved)

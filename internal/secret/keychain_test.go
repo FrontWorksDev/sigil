@@ -74,6 +74,14 @@ func TestCheckKeychainPathRejects(t *testing.T) {
 	writeFile(t, filepath.Join(sub, "s.keychain-db"))
 	writeFile(t, filepath.Join(kc, "login.keychain-db"))
 	writeFile(t, filepath.Join(kc, "login.keychain"))
+	// 大文字小文字違いと古いログインキーチェーンは、その名前のファイルを実際に作って試す（Linux でも成り立つ）。
+	writeFile(t, filepath.Join(kc, "Login.keychain-db"))
+	writeFile(t, filepath.Join(kc, "LOGIN.KEYCHAIN"))
+	writeFile(t, filepath.Join(kc, "login_renamed_1.keychain-db"))
+	// 別名のハードリンク（同一ファイル）。
+	if err := os.Link(filepath.Join(kc, "login.keychain-db"), filepath.Join(kc, "hard.keychain-db")); err != nil {
+		t.Fatal(err)
+	}
 	escape := filepath.Join(kc, "escape.keychain-db")
 	if err := os.Symlink(outside, escape); err != nil {
 		t.Fatal(err)
@@ -90,6 +98,10 @@ func TestCheckKeychainPathRejects(t *testing.T) {
 		"サブフォルダの下":          {filepath.Join(sub, "s.keychain-db"), os.Getuid()},
 		"login.keychain-db": {filepath.Join(kc, "login.keychain-db"), os.Getuid()},
 		"login.keychain":    {filepath.Join(kc, "login.keychain"), os.Getuid()},
+		"Login 大文字":         {filepath.Join(kc, "Login.keychain-db"), os.Getuid()},
+		"LOGIN.KEYCHAIN":    {filepath.Join(kc, "LOGIN.KEYCHAIN"), os.Getuid()},
+		"login_renamed":     {filepath.Join(kc, "login_renamed_1.keychain-db"), os.Getuid()},
+		"ハードリンク":            {filepath.Join(kc, "hard.keychain-db"), os.Getuid()},
 		"ホームの外":             {outside, os.Getuid()},
 		"外へのリンク":            {escape, os.Getuid()},
 		"フォルダ":              {filepath.Join(kc, "dir.keychain-db"), os.Getuid()},
@@ -144,9 +156,9 @@ func TestParseSecret(t *testing.T) {
 			t.Errorf("ParseSecret(%q) = %q, %v; want %q", in, got, err, want)
 		}
 	}
-	if _, err := ParseSecret([]byte("a\x00b")); err == nil {
+	if _, err := ParseSecret([]byte("SECRETx\x00y")); err == nil {
 		t.Error("NUL はエラーになるべき")
-	} else if strings.Contains(err.Error(), "a") && strings.Contains(err.Error(), "b\n") {
+	} else if strings.Contains(err.Error(), "SECRET") {
 		t.Errorf("エラーに値が含まれている: %v", err)
 	}
 	big := []byte(strings.Repeat("Z", MaxSecretSize+1))

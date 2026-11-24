@@ -1,4 +1,4 @@
-package opwrap
+package secret
 
 import (
 	"reflect"

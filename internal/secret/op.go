@@ -1,8 +1,9 @@
-// Package opwrap は、1Password CLI（op run）を経由して sigil を起動し直すための判定と argv を作る。
+// Package secret は、1Password とキーチェーンの参照を扱う。いまは 1Password CLI（op run）を経由して
+// sigil を起動し直すための判定と argv を作る。
 //
 // sigil 自身は秘密の値を扱わない。.env からはキー名と op:// 参照（どの項目か）だけを取り出し、
 // 値の解決は op run に任せ、環境変数として sigil に渡してもらう。
-package opwrap
+package secret
 
 import (
 	"bytes"

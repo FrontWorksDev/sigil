@@ -311,7 +311,7 @@ internal/
   project/   プロジェクトの特定、危険なパスの拒否、コンテナ名、コンテナ内パス、作業フォルダ
   docker/    run / exec / build / ls の引数組み立てと、終了コードによる状態判定
   approval/  承認記録の読み書きと確認
-  opwrap/    op run を使うかの判定と argv の組み立て（19 章で、キーチェーンも扱う形に広げる）
+  secret/    op run を使うかの判定と argv の組み立て（19 章で、キーチェーンも扱う形に広げる）
   gitcommit/ sigil commit（設定の点検、メッセージの読み込み、差分の分類、コミットと push の手順）
   ui/        演出と、確認の画面の描画
   app/       サブコマンドの振り分けと全体の流れ

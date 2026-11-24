@@ -14,7 +14,7 @@ import (
 	"strings"
 
 	"sigil/internal/config"
-	"sigil/internal/opwrap"
+	"sigil/internal/secret"
 	"sigil/internal/ui"
 )
 
@@ -80,7 +80,7 @@ func (s Store) Record(key, sum string) error {
 // セキュリティ上の判断をしてもらう画面なので、演出より読みやすさを優先する。
 // 決断の画面には色・枠・記号は付けるが、動きは付けない。用語（契約、持ち込むもの、門、禁書庫）には
 // 必ず実際の意味を添える。端末でないとき（Plain）は、従来と同じ文面になる。
-func Ask(tty io.Reader, u *ui.UI, files []string, c config.Config, refs []opwrap.Entry) bool {
+func Ask(tty io.Reader, u *ui.UI, files []string, c config.Config, refs []secret.Entry) bool {
 	v := ui.ContractView{Files: files, Envs: c.Envs}
 	for _, p := range c.Ports {
 		v.Ports = append(v.Ports, p.Publish())

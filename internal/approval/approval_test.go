@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"sigil/internal/config"
-	"sigil/internal/opwrap"
+	"sigil/internal/secret"
 	"sigil/internal/ui"
 )
 
@@ -89,7 +89,7 @@ func TestFingerprint(t *testing.T) {
 
 func TestAsk(t *testing.T) {
 	c := config.Config{Envs: []string{"DATABASE_URL"}, Ports: []config.Port{{Host: "8080", Container: "80"}}}
-	refs := []opwrap.Entry{{Name: "DATABASE_URL", Ref: "op://dev/db/url"}, {Name: "LITERAL", Ref: ""}}
+	refs := []secret.Entry{{Name: "DATABASE_URL", Ref: "op://dev/db/url"}, {Name: "LITERAL", Ref: ""}}
 	cases := map[string]bool{
 		"y\n": true, "Y\n": true, "yes\n": true, "YES\n": true, "y": true,
 		"n\n": false, "": false, "\n": false, "yes please\n": false, "Yes\n": false,

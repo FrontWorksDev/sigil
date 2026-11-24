@@ -16,8 +16,8 @@ import (
 	"sigil/internal/approval"
 	"sigil/internal/config"
 	"sigil/internal/docker"
-	"sigil/internal/opwrap"
 	"sigil/internal/project"
+	"sigil/internal/secret"
 	"sigil/internal/ui"
 )
 
@@ -79,7 +79,7 @@ func run(args []string, d Deps) error {
 
 	// op run から起動し直された側では、op run に渡した一時ファイルはもう読まれているので消す。
 	// 中身は参照（op://...）だけで秘密の値ではないが、残しておく理由もない。
-	_, inner := d.LookupEnv(opwrap.InnerEnv)
+	_, inner := d.LookupEnv(secret.InnerEnv)
 	if inner {
 		if dir, ok := d.LookupEnv(opTempEnv); ok && dir != "" {
 			removeOpTemp(dir)
@@ -208,7 +208,7 @@ type settings struct {
 	globalCfg config.Config
 
 	envPath   string
-	opEntries []opwrap.Entry // .env のうち、1Password から読み込む名前と参照（確かめたもの）
+	opEntries []secret.Entry // .env のうち、1Password から読み込む名前と参照（確かめたもの）
 	opEnv     []byte         // opEntries から作った、op run に渡す env ファイルの中身（なければ nil）
 	warnings  []string
 
@@ -274,7 +274,7 @@ func loadSettings(p project.Project, dd dirs) (settings, error) {
 		listed[n] = true
 	}
 	if env != nil {
-		entries, err := opwrap.ParseEnv(s.envPath, env)
+		entries, err := secret.ParseEnv(s.envPath, env)
 		if err != nil {
 			return s, err
 		}
@@ -290,11 +290,11 @@ func loadSettings(p project.Project, dd dirs) (settings, error) {
 				s.opEntries = append(s.opEntries, e)
 			}
 		}
-		s.opEnv = opwrap.RenderEnv(s.opEntries)
+		s.opEnv = secret.RenderEnv(s.opEntries)
 	}
 	if s.secrets != nil {
 		// 全体の secrets.env はホストのファイルだが、制御用の名前は同じ理由で拒否する
-		entries, err := opwrap.ParseEnv(s.secretsPth, s.secrets)
+		entries, err := secret.ParseEnv(s.secretsPth, s.secrets)
 		if err != nil {
 			return s, err
 		}
@@ -317,7 +317,7 @@ const (
 
 // needsOp は、op run で読み込むものがあるかを返す。
 func (s settings) needsOp() bool {
-	return s.opEnv != nil || (s.secrets != nil && opwrap.HasOpRef(s.secrets))
+	return s.opEnv != nil || (s.secrets != nil && secret.HasOpRef(s.secrets))
 }
 
 // writeOpFiles は op run に渡すファイルを、プロジェクト → 全体の順で返す。
@@ -339,7 +339,7 @@ func (s settings) writeOpFiles() (files []string, tmpDir string, err error) {
 		}
 		files = append(files, p)
 	}
-	if s.secrets != nil && opwrap.HasOpRef(s.secrets) {
+	if s.secrets != nil && secret.HasOpRef(s.secrets) {
 		files = append(files, s.secretsPth)
 	}
 	return files, tmpDir, nil
@@ -372,7 +372,7 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 
 	// op run から起動し直された側（inner）では、確認も op run もしない（無限ループ防止）。
 	// ただし承認記録の照合は inner でも行う。SIGIL_INNER を外から設定されても、承認を回避できないように。
-	_, inner := d.LookupEnv(opwrap.InnerEnv)
+	_, inner := d.LookupEnv(secret.InnerEnv)
 	if !inner {
 		for _, w := range s.warnings {
 			fmt.Fprintf(d.Stderr, "sigil: %s\n", w)
@@ -396,13 +396,13 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 				return false, err
 			}
 			info(d, "禁書庫から召喚します")
-			env := append(d.Environ(), opwrap.InnerEnv+"=1")
+			env := append(d.Environ(), secret.InnerEnv+"=1")
 			if tmpDir != "" {
 				env = append(env, opTempEnv+"="+tmpDir)
 			}
 			// op run に置き換える前にも、端末を元に戻す（承認の画面のあとなので、念のため）
 			u.Restore()
-			if err := d.Exec(opPath, opwrap.Argv(self, files, args), env); err != nil {
+			if err := d.Exec(opPath, secret.Argv(self, files, args), env); err != nil {
 				if tmpDir != "" {
 					os.RemoveAll(tmpDir)
 				}

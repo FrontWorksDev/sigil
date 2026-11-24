@@ -437,18 +437,44 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 	}
 	nvim, nvimErr := os.Stat(filepath.Join(home, ".config", "nvim"))
 
+	// キーチェーンは、承認と op run のあと、演出を始める前に読む。
+	// 解錠のダイアログを待つあいだに魔法陣を描かないため（17 章の刻印と同じ考え方）。
+	kcValues, kcSkipped, err := readKeychain(d, s, home)
+	if err != nil {
+		return false, err
+	}
+	fromKeychain := map[string]bool{}
+	for _, e := range s.plan.Keychain {
+		fromKeychain[e.Name] = true
+	}
+
 	cfg := config.Merge(s.projCfg, s.globalCfg)
 	var envs []string
 	passWaka := false
 	for _, name := range cfg.Envs {
-		// 空文字で設定されているものは「設定されている」とみなして渡す
-		if _, ok := d.LookupEnv(name); !ok {
+		if fromKeychain[name] {
+			// キーチェーンから読むと決めた名前は、読めた値があるときだけ渡す。LookupEnv は見ない。
+			// 読めなかったときに、ホストのシェルの（権限の広い）トークンや、op run が入れた
+			// keychain://... の文字列が代わりに渡らないように。
+			// 読まなかった（kcSkipped）ときの注意は readKeychain が出している。
+			if _, ok := kcValues[name]; !ok || kcSkipped[name] {
+				continue
+			}
+		} else if _, ok := d.LookupEnv(name); !ok {
+			// 空文字で設定されているものは「設定されている」とみなして渡す
 			info(d, "注意: 持ち込むもの %s がホスト側で設定されていないので、渡しません", name)
 			continue
 		}
 		envs = append(envs, name)
 		if name == "WAKATIME_API_KEY" {
 			passWaka = true
+		}
+	}
+	// 値は docker のコマンドの環境にだけ入れる（引数は -e NAME のまま）。順は plan の順
+	var secretEnv []string
+	for _, e := range s.plan.Keychain {
+		if v, ok := kcValues[e.Name]; ok {
+			secretEnv = append(secretEnv, e.Name+"="+v)
 		}
 	}
 
@@ -462,6 +488,7 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 		HasNvimConfig: nvimErr == nil && nvim.IsDir(),
 		Envs:          envs,
 		Ports:         cfg.Ports,
+		SecretEnv:     secretEnv,
 	}
 	if u.Fancy() {
 		u.Banner()
@@ -469,13 +496,9 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 		info(d, "領域 %s を展開します", p.ContainerName)
 	}
 	// 段階のうち、最後以外は、ここまでに済んでいる（待ち時間を足さないため、実際の処理に合わせる）
-	summon := ui.Stage{Label: "禁書庫から召喚する", Note: "1Password", State: ui.Skipped}
-	if inner {
-		summon.State = ui.Done
-	}
 	stages := []ui.Stage{
 		{Label: "契約を読み解く", Note: ".sigil / .env", State: ui.Done},
-		summon,
+		summonStage(inner, len(kcValues) > 0),
 		{Label: "禁忌の扉を閉ざす", Note: "~/.ssh ~/.aws docker.sock", State: ui.Done},
 		{Label: "権能を剥奪する", Note: "cap-drop=ALL", State: ui.Done},
 		{Label: "結界を張る", Note: "no-new-privileges", State: ui.Done},

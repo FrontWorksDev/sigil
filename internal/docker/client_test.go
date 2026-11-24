@@ -168,3 +168,63 @@ func TestSetupWakaTimeWritesFromContainerEnv(t *testing.T) {
 		}
 	}
 }
+
+// fakeEnvRunner は RunEnv も持つ Runner。RunEnv に渡された環境を記録する。
+type fakeEnvRunner struct {
+	fakeRunner
+	envCalls []call
+	envs     [][]string
+}
+
+func (f *fakeEnvRunner) RunEnv(name string, args, extraEnv []string, stdout, stderr io.Writer) error {
+	f.envCalls = append(f.envCalls, call{name, append([]string(nil), args...)})
+	f.envs = append(f.envs, append([]string(nil), extraEnv...))
+	return nil
+}
+
+func TestCreatePassesSecretEnvToEnvRunner(t *testing.T) {
+	f := &fakeEnvRunner{}
+	s := sampleSpec()
+	s.Envs = []string{"A"}
+	s.SecretEnv = []string{"A=v"}
+	if err := (Client{R: f}).Create(s); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.calls) != 0 || len(f.envCalls) != 1 {
+		t.Fatalf("Run = %v, RunEnv = %v", f.calls, f.envCalls)
+	}
+	if !reflect.DeepEqual(f.envs[0], []string{"A=v"}) {
+		t.Errorf("extraEnv = %v", f.envs[0])
+	}
+	args := f.envCalls[0].args
+	hasE := false
+	for i, a := range args {
+		// 値は環境で渡す。argv（ps で見える）には載せない
+		if a == "v" || strings.Contains(a, "A=v") {
+			t.Errorf("argv に値がある: %v", args)
+		}
+		if a == "-e" && i+1 < len(args) && args[i+1] == "A" {
+			hasE = true
+		}
+	}
+	if !hasE {
+		t.Errorf("-e A がない: %v", args)
+	}
+}
+
+func TestCreateSecretEnvNeedsEnvRunner(t *testing.T) {
+	f := &fakeRunner{}
+	s := sampleSpec()
+	s.Envs = []string{"A"}
+	s.SecretEnv = []string{"A=v"}
+	err := (Client{R: f}).Create(s)
+	if err == nil {
+		t.Fatal("エラーにならない")
+	}
+	if strings.Contains(err.Error(), "A=v") {
+		t.Errorf("エラーに値がある: %v", err)
+	}
+	if len(f.calls) != 0 {
+		t.Errorf("docker を呼んだ: %v", f.calls)
+	}
+}

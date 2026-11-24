@@ -2,6 +2,7 @@ package docker
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -21,6 +22,23 @@ type ExecRunner struct{}
 
 func (ExecRunner) Run(name string, args []string, stdout, stderr io.Writer) error {
 	cmd := exec.Command(name, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	return cmd.Run()
+}
+
+// EnvRunner は、sigil の環境に extraEnv を足した環境でコマンドを実行する Runner。
+// シークレットの値を argv ではなく環境で docker に渡すために使う。
+type EnvRunner interface {
+	RunEnv(name string, args, extraEnv []string, stdout, stderr io.Writer) error
+}
+
+// RunEnv は、os.Environ() のあとに extraEnv を足した環境で実行する。
+// 同じ名前があれば後のもの（extraEnv）が勝つ（os/exec は重複する名前の最後の値を使う）。
+func (ExecRunner) RunEnv(name string, args, extraEnv []string, stdout, stderr io.Writer) error {
+	cmd := exec.Command(name, args...)
+	cmd.Env = append(os.Environ(), extraEnv...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -79,8 +97,19 @@ func (c Client) ImageExists(image string) bool {
 }
 
 // Create はコンテナを作る。標準出力（コンテナ ID）は捨て、標準エラーは見せる。
+//
+// SecretEnv があれば、値を環境で渡せる EnvRunner で実行する。Runner が EnvRunner でなければ、
+// 値を渡さずに作ると、コンテナに値が届かないことに気づけないので、作らずにエラーにする。
 func (c Client) Create(s RunSpec) error {
-	return c.run(nil, RunArgs(s)...)
+	if len(s.SecretEnv) == 0 {
+		return c.run(nil, RunArgs(s)...)
+	}
+	er, ok := c.R.(EnvRunner)
+	if !ok {
+		// エラーには値も名前も載せない
+		return errors.New("docker に環境を渡して実行できません（内部エラー）")
+	}
+	return er.RunEnv("docker", RunArgs(s), s.SecretEnv, nil, c.Stderr)
 }
 
 // Start は停止中のコンテナを起動する。

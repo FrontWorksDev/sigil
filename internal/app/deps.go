@@ -13,12 +13,17 @@ import (
 	sigilimage "sigil/image"
 	"sigil/internal/docker"
 	"sigil/internal/gitcommit"
+	"sigil/internal/secret"
 )
 
 // Deps は、外部とのやりとりをまとめたもの。
 // テストではすべて偽物に差し替え、docker・git・op・端末がなくても動くようにする。
 type Deps struct {
 	Runner docker.Runner
+
+	// Security は、キーチェーンを読む /usr/bin/security を args で実行する。
+	// テストでは偽物に差し替え、本物のキーチェーンに触れないようにする。
+	Security func(args []string) (stdout, stderr []byte, err error)
 
 	// Cmd は sigil commit が使う git と docker の実行。環境変数と標準入力を渡せる
 	// （一時の index を指す GIT_INDEX_FILE と、銘を標準入力で渡すため）。
@@ -65,7 +70,10 @@ type Deps struct {
 // DefaultDeps は本物の Deps を返す。
 func DefaultDeps() Deps {
 	return Deps{
-		Runner:      docker.ExecRunner{},
+		Runner: docker.ExecRunner{},
+		Security: func(args []string) ([]byte, []byte, error) {
+			return runSecurity(secret.SecurityPath, args, secret.SecurityTimeout)
+		},
 		Cmd:         gitcommit.ExecRunner{},
 		Pager:       pager,
 		Exec:        syscall.Exec,

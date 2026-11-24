@@ -89,14 +89,14 @@ func TestFingerprint(t *testing.T) {
 
 func TestAsk(t *testing.T) {
 	c := config.Config{Envs: []string{"DATABASE_URL"}, Ports: []config.Port{{Host: "8080", Container: "80"}}}
-	refs := []secret.Entry{{Name: "DATABASE_URL", Ref: "op://dev/db/url"}, {Name: "LITERAL", Ref: ""}}
+	refs := []secret.Entry{{Name: "DATABASE_URL", Ref: "op://dev/db/url", Scheme: secret.Op}, {Name: "LITERAL", Ref: ""}}
 	cases := map[string]bool{
 		"y\n": true, "Y\n": true, "yes\n": true, "YES\n": true, "y": true,
 		"n\n": false, "": false, "\n": false, "yes please\n": false, "Yes\n": false,
 	}
 	for in, want := range cases {
 		var out bytes.Buffer
-		if got := Ask(strings.NewReader(in), ui.New(&out, ui.Options{Mode: ui.Plain}), []string{"/p/.sigil", "/p/.env"}, c, refs); got != want {
+		if got := Ask(strings.NewReader(in), ui.New(&out, ui.Options{Mode: ui.Plain}), []string{"/p/.sigil", "/p/.env"}, c, refs, nil); got != want {
 			t.Errorf("Ask(%q) = %v, want %v", in, got, want)
 		}
 		s := out.String()
@@ -114,7 +114,7 @@ func TestAsk(t *testing.T) {
 func TestAskColumnsAligned(t *testing.T) {
 	c := config.Config{Envs: []string{"DATABASE_URL"}, Ports: []config.Port{{Host: "8080", Container: "80"}}}
 	var out bytes.Buffer
-	Ask(strings.NewReader("n\n"), ui.New(&out, ui.Options{Mode: ui.Plain}), []string{"/p/.sigil"}, c, nil)
+	Ask(strings.NewReader("n\n"), ui.New(&out, ui.Options{Mode: ui.Plain}), []string{"/p/.sigil"}, c, nil, nil)
 	col := map[string]int{}
 	for _, l := range strings.Split(out.String(), "\n") {
 		for _, v := range []string{"DATABASE_URL", "127.0.0.1:8080:80"} {
@@ -142,7 +142,7 @@ var ansi = regexp.MustCompile("\x1b\\[[0-9;]*m")
 func TestAskColor(t *testing.T) {
 	c := config.Config{Envs: []string{"DATABASE_URL"}}
 	var out bytes.Buffer
-	got := Ask(strings.NewReader("y\n"), ui.New(&out, ui.Options{Mode: ui.Color, Cols: 80, Rows: 24}), []string{"/p/.sigil"}, c, nil)
+	got := Ask(strings.NewReader("y\n"), ui.New(&out, ui.Options{Mode: ui.Color, Cols: 80, Rows: 24}), []string{"/p/.sigil"}, c, nil, nil)
 	if !got {
 		t.Error("y で承認されない")
 	}
@@ -153,5 +153,30 @@ func TestAskColor(t *testing.T) {
 		if !strings.Contains(s, must) {
 			t.Errorf("表示に %q がない:\n%s", must, s)
 		}
+	}
+}
+
+// 提供元はスキームから決め、全体の設定に負けた名前には注記を添える
+func TestAskSourceAndOverridden(t *testing.T) {
+	refs := []secret.Entry{
+		{Name: "A", Ref: "op://v/i/f", Scheme: secret.Op},
+		{Name: "W", Ref: "keychain://wakatime", Scheme: secret.Keychain},
+	}
+	var out bytes.Buffer
+	Ask(strings.NewReader("n\n"), ui.New(&out, ui.Options{Mode: ui.Plain}), []string{"/p/.env"}, config.Config{}, refs, map[string]bool{"W": true})
+	var a, w string
+	for _, l := range strings.Split(out.String(), "\n") {
+		if strings.Contains(l, "op://v/i/f") {
+			a = l
+		}
+		if strings.Contains(l, "keychain://wakatime") {
+			w = l
+		}
+	}
+	if !strings.Contains(a, "1Password") || strings.Contains(a, "全体の設定が優先") {
+		t.Errorf("1Password の行 = %q", a)
+	}
+	if !strings.Contains(w, "キーチェーン") || !strings.Contains(w, "全体の設定が優先されるため使わない") {
+		t.Errorf("キーチェーンの行 = %q", w)
 	}
 }

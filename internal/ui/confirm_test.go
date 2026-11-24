@@ -147,7 +147,7 @@ func TestContractScreenNarrow(t *testing.T) {
 	ref := "op://" + strings.Repeat("vault", 6) + "/" + strings.Repeat("item", 6) + "/field-name"
 	for _, m := range []Mode{Color, Mono} {
 		u, buf := newTest(m, 60, 40)
-		u.ContractScreen(ContractView{Files: []string{".sigil", ".env"}, Envs: []string{"FOO"}, Refs: [][2]string{{"API_KEY", ref}}})
+		u.ContractScreen(ContractView{Files: []string{".sigil", ".env"}, Envs: []string{"FOO"}, Refs: []ContractRef{{Name: "API_KEY", Ref: ref, Source: "1Password"}}})
 		out := buf.String()
 		if !strings.Contains(squash(out), ref) {
 			t.Errorf("mode %d: 参照が欠けている:\n%s", m, out)
@@ -254,15 +254,16 @@ func TestDiffPage(t *testing.T) {
 	}
 }
 
-// approval.Ask の、いまの文言。Plain の ContractScreen はこれと 1 文字も違えてはいけない。
+// Plain の承認の画面の文言。スクリプトや記憶に頼る人のため、変えるときはここも意図して変える。
 const askWithRefs = "sigil: 契約の確認 ── .sigil と .env の内容が新しいか、前回の承認から変わっています。\n" +
 	"     このプロジェクトの領域（コンテナ）に、次のものを渡します:\n" +
 	"       持ち込むもの（ホストの環境変数）  FOO\n" +
 	"       持ち込むもの（ホストの環境変数）  BAR\n" +
 	"       門（ポート）                      127.0.0.1:5173:5173\n" +
-	"     禁書庫から召喚するもの（.env で、1Password から値を読み込む名前と参照先）:\n" +
-	"       API_KEY                  op://v/i/f\n" +
-	"       PLAIN                    （.env に直接書かれた値）\n" +
+	"     禁書庫から召喚するもの（.env で、1Password・キーチェーンから値を読み込む名前と参照先）:\n" +
+	"       API_KEY                  1Password    op://v/i/f\n" +
+	"       WAKA                     キーチェーン keychain://wakatime  （全体の設定が優先されるため使わない）\n" +
+	"       PLAIN                                 （.env に直接書かれた値）\n" +
 	"     このほか、全体設定（~/.config/sigil/config）の分も渡されます。\n" +
 	"sigil: この契約を結ぶ（この設定で承認する）なら y を入力してください [y/N] "
 
@@ -278,7 +279,8 @@ func TestContractScreenPlainUnchanged(t *testing.T) {
 		Files: []string{".sigil", ".env"},
 		Envs:  []string{"FOO", "BAR"},
 		Ports: []string{"127.0.0.1:5173:5173"},
-		Refs:  [][2]string{{"API_KEY", "op://v/i/f"}, {"PLAIN", ""}},
+		Refs: []ContractRef{{Name: "API_KEY", Ref: "op://v/i/f", Source: "1Password"},
+			{Name: "WAKA", Ref: "keychain://wakatime", Source: "キーチェーン", Overridden: true}, {Name: "PLAIN"}},
 	})
 	if buf.String() != askWithRefs {
 		t.Errorf("差がある:\n got: %q\nwant: %q", buf.String(), askWithRefs)
@@ -295,11 +297,14 @@ func TestContractScreenColor(t *testing.T) {
 		u, buf := newTest(m, 80, 40)
 		u.ContractScreen(ContractView{
 			Files: []string{".sigil", ".env"}, Envs: []string{"FOO"}, Ports: []string{"127.0.0.1:5173:5173"},
-			Refs: [][2]string{{"API_KEY", "op://v/i/f"}, {"PLAIN", ""}},
+			Refs: []ContractRef{{Name: "API_KEY", Ref: "op://v/i/f", Source: "1Password"},
+				{Name: "WAKA", Ref: "keychain://wakatime", Source: "キーチェーン", Overridden: true}, {Name: "PLAIN"}},
 		})
 		out := ownSGR(buf.String())
 		for _, want := range []string{"⟡ 契約の確認", "持ち込むもの", "ホストの環境変数", "門", "ポート", "禁書庫", "FOO", "127.0.0.1:5173:5173",
-			"op://v/i/f", "（.env に直接書かれた値）", "全体設定（~/.config/sigil/config）"} {
+			"op://v/i/f", "（.env に直接書かれた値）", "全体設定（~/.config/sigil/config）",
+			"1Password", "キーチェーン", "keychain://wakatime", "全体の設定が優先されるため使わない",
+			"1Password・キーチェーンから値を読み込む"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("mode %d: %q がない:\n%s", m, want, out)
 			}

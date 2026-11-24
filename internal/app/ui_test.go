@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -423,5 +424,51 @@ func TestHelpBannerUsesStdoutSize(t *testing.T) {
 	e.run("help")
 	if !strings.Contains(e.stdout.String(), "seal your code") {
 		t.Errorf("標準出力の幅で測っていない")
+	}
+}
+
+func TestContractScreenKeychainSource(t *testing.T) {
+	// 提供元（1Password / キーチェーン）と、全体の設定に負けた組の注記は、色に頼らず文字で出す
+	for _, mode := range []string{"plain", "mono"} {
+		e := newEnv(t)
+		if mode == "mono" {
+			e.fancy()
+			e.vars["NO_COLOR"] = "1"
+		}
+		e.write(".sigil", "env WAKA\nenv OPENAI\n")
+		e.write(".env", "WAKA=keychain://wakatime\nOPENAI=op://Dev/OpenAI/credential\n")
+		e.write(filepath.Join(e.home, ".config", "sigil", "secrets.env"), "OPENAI=raw\n")
+		e.tty = "n\n"
+		if code := e.run(); code != 1 {
+			t.Fatalf("%s: code = %d", mode, code)
+		}
+		out := e.stderr.String()
+		if mode == "plain" && strings.Contains(out, "\x1b") {
+			t.Errorf("plain にエスケープ: %q", out)
+		}
+		if mode == "mono" && hasSGRColor(out) {
+			t.Errorf("mono に色: %q", out)
+		}
+		var waka, openai string
+		for _, l := range strings.Split(out, "\n") {
+			if strings.Contains(l, "keychain://wakatime") {
+				waka = l
+			}
+			if strings.Contains(l, "op://Dev/OpenAI/credential") {
+				openai = l
+			}
+		}
+		if !strings.Contains(waka, "キーチェーン") || !strings.Contains(waka, "WAKA") {
+			t.Errorf("%s: キーチェーンの行 = %q\n%s", mode, waka, out)
+		}
+		if !strings.Contains(openai, "1Password") {
+			t.Errorf("%s: 1Password の行 = %q\n%s", mode, openai, out)
+		}
+		if !strings.Contains(out, "全体の設定が優先されるため使わない") {
+			t.Errorf("%s: 負けた組の注記がない:\n%s", mode, out)
+		}
+		if !strings.Contains(out, "1Password・キーチェーンから値を読み込む名前と参照先") {
+			t.Errorf("%s: 見出しの説明がない:\n%s", mode, out)
+		}
 	}
 }

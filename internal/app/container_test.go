@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"sigil/internal/approval"
 )
 
 // ---- Task 9: コンテナの用意と exec ----
@@ -800,5 +802,140 @@ func TestExistingContainerSkipsConfigAndApproval(t *testing.T) {
 	}
 	if e.ttyOpened != 0 || e.lastExec().argv0 != "/usr/local/bin/docker" {
 		t.Error("既存のコンテナなのに確認または op を使った")
+	}
+}
+
+// ---- キーチェーンの参照も承認の対象（issue #25） ----
+
+// globalConfig は全体設定を書く。
+func (e *testEnv) globalConfig(content string) {
+	e.write(filepath.Join(e.home, ".config", "sigil", "config"), content)
+}
+
+func TestApproveKeychainOnlyEnvAsks(t *testing.T) {
+	// .sigil がなく、.env にキーチェーンの参照しかなくても、必ず確認する
+	e := newEnv(t)
+	e.globalConfig("env WAKATIME_API_KEY\n")
+	e.write(".env", "WAKATIME_API_KEY=keychain://w\n")
+	e.tty = "n\n"
+	if code := e.run(); code != 1 {
+		t.Fatalf("code = %d, %s", code, e.stderr.String())
+	}
+	if e.ttyOpened != 1 {
+		t.Error("キーチェーンの参照だけの .env で確認しない")
+	}
+	if !strings.Contains(e.stderr.String(), "keychain://w") {
+		t.Errorf("参照先が表示されない: %q", e.stderr.String())
+	}
+	if len(e.sec.calls) != 0 || len(e.runner.find("docker run")) != 0 || len(e.execs) != 0 {
+		t.Errorf("中止したのに security か docker を呼んだ: sec=%v docker=%v", e.sec.calls, e.runner.calls)
+	}
+}
+
+func TestApproveOpOnlyHashUnchanged(t *testing.T) {
+	// 1Password の組だけのときは、改修前と同じハッシュになり、既存の承認記録がそのまま使える
+	e := newEnv(t)
+	sigil := "env A\n"
+	e.write(".sigil", sigil)
+	e.write(".env", "A=op://v/i/f\n")
+	old := approval.Fingerprint([]byte(sigil), []byte("A=\"op://v/i/f\"\n"))
+	store := approval.Store{Dir: filepath.Join(e.home, ".local", "state", "sigil", "approved")}
+	if err := store.Record(e.key(), old); err != nil {
+		t.Fatal(err)
+	}
+	if code := e.run(); code != 0 {
+		t.Fatal(e.stderr.String())
+	}
+	if e.ttyOpened != 0 {
+		t.Error("改修前の承認記録があるのに聞いた")
+	}
+}
+
+func TestApproveKeychainRefChangeAsksAgain(t *testing.T) {
+	e := newEnv(t)
+	e.write(".sigil", "env FOO\n")
+	e.write(".env", "FOO=keychain://a\n")
+	e.tty = "y\n"
+	if code := e.run(); code != 0 {
+		t.Fatal(e.stderr.String())
+	}
+	e.write(".env", "FOO=keychain://b\n")
+	e2 := newEnvSharing(t, e)
+	e2.tty = "n\n"
+	if code := e2.run(); code != 1 || e2.ttyOpened != 1 {
+		t.Errorf("キーチェーンの参照先が変わったのに聞かない: code=%d opened=%d", code, e2.ttyOpened)
+	}
+}
+
+func TestApproveIgnoresGlobalSecretsChange(t *testing.T) {
+	// 全体の secrets.env はホストのファイル。編集しても、プロジェクトの承認は変わらない
+	e := newEnv(t)
+	e.write(".sigil", "env FOO\n")
+	e.write(".env", "FOO=keychain://a\n")
+	e.tty = "y\n"
+	if code := e.run(); code != 0 {
+		t.Fatal(e.stderr.String())
+	}
+	// 同じ名前を全体で上書きしても（優先順位が変わっても）、聞き直さない
+	e.write(filepath.Join(e.home, ".config", "sigil", "secrets.env"), "FOO=raw\nOTHER=keychain://x\n")
+	e2 := newEnvSharing(t, e)
+	if code := e2.run(); code != 0 || e2.ttyOpened != 0 {
+		t.Errorf("secrets.env を変えただけで聞き直した: code=%d opened=%d %s", code, e2.ttyOpened, e2.stderr.String())
+	}
+}
+
+func TestOpEnvExcludesOverridden(t *testing.T) {
+	// 全体の secrets.env に負けたプロジェクトの組は、op run の env ファイルに入れない
+	e := newEnv(t)
+	e.opPath = "/opt/bin/op"
+	e.write(".sigil", "env A\nenv B\n")
+	e.write(".env", "A=op://p/i/f\nB=op://p/j/f\n")
+	e.write(filepath.Join(e.home, ".config", "sigil", "secrets.env"), "A=keychain://w\n")
+	e.tty = "y\n"
+	if code := e.run(); code != 0 {
+		t.Fatal(e.stderr.String())
+	}
+	x := e.lastExec()
+	if x.argv0 != "/opt/bin/op" {
+		t.Fatalf("op run に置き換えていない: %v", x.argv)
+	}
+	tmpEnv := strings.TrimPrefix(x.argv[3], "--env-file=")
+	b, err := os.ReadFile(tmpEnv)
+	if err != nil || string(b) != "B=\"op://p/j/f\"\n" {
+		t.Errorf("一時ファイル = %q, %v", b, err)
+	}
+	// 承認の画面には、負けた組も、使わないことが分かるように出す
+	out := e.stderr.String()
+	if !strings.Contains(out, "op://p/i/f") || !strings.Contains(out, "全体の設定が優先されるため使わない") {
+		t.Errorf("負けた組の表示がない:\n%s", out)
+	}
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, "op://p/j/f") && strings.Contains(l, "全体の設定が優先") {
+			t.Errorf("勝った組に注記がある: %q", l)
+		}
+	}
+}
+
+func TestEnvKeychainRefSelectionWarnings(t *testing.T) {
+	// キーチェーンの参照も、op の参照と同じ規則・同じ文で選ぶ
+	e := newEnv(t)
+	e.write(".sigil", "env FOO\n")
+	e.write(".env", "FOO=keychain://a\nSNEAKY=keychain://b\nPATH=keychain://c\n")
+	e.tty = "y\n"
+	if code := e.run(); code != 0 {
+		t.Fatal(e.stderr.String())
+	}
+	out := e.stderr.String()
+	for _, want := range []string{
+		"注意: .env の SNEAKY は .sigil にも全体設定にも列挙されていないので、禁書庫から読み込みません",
+		"注意: .env の PATH は渡せない名前なので、禁書庫から読み込みません",
+		"keychain://a",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("%q がない:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "keychain://b") || strings.Contains(out, "keychain://c") {
+		t.Errorf("使わない参照を確認の画面に出した:\n%s", out)
 	}
 }

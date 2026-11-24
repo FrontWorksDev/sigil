@@ -77,9 +77,9 @@ sigil             # シェル（開発サーバーなど）
 | ファイル | 内容 |
 |---|---|
 | `<project>/.sigil` | このプロジェクトに渡す環境変数名とポート。**内容が変わるたびに確認されます** |
-| `<project>/.env` | 値（1Password の `op://` 参照） |
-| `~/.config/sigil/config` | 全プロジェクト共通の環境変数名とポート（確認なし） |
-| `~/.config/sigil/secrets.env` | 全プロジェクト共通の値（`op://` 参照） |
+| `<project>/.env` | 値（1Password の `op://` 参照、キーチェーンの `keychain://` 参照） |
+| `~/.config/sigil/config` | 全プロジェクト共通の環境変数名とポート、読む専用キーチェーン（確認なし） |
+| `~/.config/sigil/secrets.env` | 全プロジェクト共通の値（`op://` / `keychain://` 参照） |
 
 ```
 # .sigil / config の書式（シェルとして実行はされません）
@@ -92,10 +92,56 @@ port 8080:80         # 127.0.0.1:8080 -> コンテナ 80
 - 1Password から読み込むのは、`.env` のうち、値が `op://` 参照で、名前を `.sigil` か全体設定で `env` として列挙した行だけです。sigil はその行だけで作り直したファイルを `op run` に渡すので、`.env` のほかの行が sigil や docker の動作に影響することはありません。
 - `op://` 参照ではない行（`VITE_API_URL` などのアプリの設定）は sigil は扱いません。アプリがコンテナ内で `.env` を直接読みます。
 - `DOCKER_*`、`PATH`、`HOME`、`XDG_*`、`GIT_*` など、sigil や docker の動作を変えられる名前は渡せません。
-- `.sigil` と、`.env` で 1Password から読み込む名前と参照は、変わるたびに確認されます。確認の画面には、名前ごとに 1Password の参照先が表示されます。アプリの設定の行を変えただけでは確認されません。
+- `.sigil` と、`.env` で 1Password・キーチェーンから読み込む名前と参照は、変わるたびに確認されます。確認の画面には、名前ごとに読み込み元と参照先が表示されます。アプリの設定の行を変えただけでは確認されません。
+- 同じ名前が `.env` と `secrets.env` の両方にあれば、`secrets.env` が優先されます（確認の画面に「全体の設定が優先されるため使わない」と出ます）。
 - `.sigil` と `.env` は、通常のファイルにしてください（シンボリックリンクは読みません）。
 - 設定はコンテナを**作るとき**にだけ使われます。変えたら `sigil stop` してから `sigil` を実行してください。
 - ひな形は `examples/` にあります。`examples/env.example` は、プロジェクト直下に `.env` という名前でコピーして使います（`.env` はコミットされないように `.gitignore` で除外しています）。Neovim（LazyVim）をコンテナで使うための設定は `examples/nvim-sigil.lua` を見てください。
+
+### キーチェーンから読み込む（1Password がない端末）
+
+1Password を使えない Mac では、macOS のキーチェーンから値を読み込めます。`.env` の書き方が違うだけで、`.sigil` への列挙や確認の画面は 1Password と同じです。sigil は `/usr/bin/security` で、**全体設定で指定した専用のキーチェーンだけ**を読みます（ログインキーチェーンは読みません）。
+
+1. 専用のキーチェーンを作り、使わないときは自動でロックされるようにします。パスワードは引数に書かず、聞かれたら入力します。
+
+   ```sh
+   security create-keychain ~/Library/Keychains/sigil.keychain-db
+   security set-keychain-settings -l -u -t 300 ~/Library/Keychains/sigil.keychain-db   # 5 分使わなければ・スリープでロック
+   ```
+
+   キーチェーンは `~/Library/Keychains/` の直下に置いてください。それ以外の場所や、名前が `login` で始まるものは使えません。
+
+2. 項目を足します。シェルで `security add-generic-password ... -w 値` と打つと、値がほかのプロセスから `ps` で見え、シェルの履歴にも残ります。また、`-w` のあとにキーチェーンのパスを続けると、パスが値として読まれ、既定のキーチェーンに入ってしまいます。そこで `security -i`（対話モード）の中で打ちます。
+
+   ```sh
+   security -i
+   security> add-generic-password -s wakatime -a sigil -w <値> /Users/<you>/Library/Keychains/sigil.keychain-db
+   ```
+
+   終わったら Ctrl-D で抜けます。対話モードでは `~` が展開されないので、パスは絶対パスで書きます。
+
+   - 同じ service（`-s`）の項目を複数作らないでください。どれが読まれるか決まりません。
+   - 値は、印字できる文字の 1 行にしてください。制御文字などを含む値は、`security` が 16 進で出力するので、そのまま渡ってしまいます。
+   - 読むたびに確認のダイアログを出したいときは、`-T ""` を付けて作ります（コンテナを作るたび、項目ごとにダイアログが出ます）。付けずに作った項目や、ダイアログで「常に許可」を選んだ項目は、解錠中なら、同じユーザーのほかのプロセスも `security` で確認なしに読めます。
+
+3. 全体設定に、専用のキーチェーンを書きます（全体設定でだけ書けます。`.sigil` に書くとエラーです）。
+
+   ```
+   # ~/.config/sigil/config
+   env WAKATIME_API_KEY
+   keychain ~/Library/Keychains/sigil.keychain-db
+   ```
+
+4. `.env` か `secrets.env` に、`keychain://<service>` と書きます。
+
+   ```sh
+   WAKATIME_API_KEY=keychain://wakatime
+   ```
+
+- キーチェーンがロックされていれば、コンテナを作るときに macOS の解錠のダイアログが出ます（120 秒応答がなければ止まります）。
+- 全体設定に `keychain` がないと、`keychain://` の名前は渡しません（ホストのシェルに同じ名前があっても、そちらは使いません）。
+- 行末にコメントは書けません。パスに空白は使えません。
+- 値を替えたら、`sigil stop` してから作り直してください（作ったときの値が使われ続けます）。
 
 ### GitHub（gh）を使う
 

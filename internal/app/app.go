@@ -36,8 +36,8 @@ const usage = `使い方:
 
 設定:
   <project>/.sigil                このプロジェクトに渡す環境変数名とポート（変わるたびに確認）〔契約〕
-  <project>/.env                  値（1Password の op:// 参照）
-  ~/.config/sigil/config          全プロジェクト共通の環境変数名とポート
+  <project>/.env                  値（1Password の op:// 参照、キーチェーンの keychain:// 参照）
+  ~/.config/sigil/config          全プロジェクト共通の環境変数名とポート、読む専用キーチェーン
   ~/.config/sigil/secrets.env     全プロジェクト共通の値
 
 環境変数:

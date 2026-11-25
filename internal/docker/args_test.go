@@ -230,6 +230,10 @@ func TestRunArgsReadOnlyMounts(t *testing.T) {
 			label = v
 		}
 	}
+	// ラベルの形は、既存のコンテナに残るので固定する
+	if want := `[{"host":"/Users/k/src/lib","container":"/workspace/lib"},{"host":"/opt/src/other","container":"/workspace/other"}]`; label != want {
+		t.Errorf("ラベル = %s, want %s", label, want)
+	}
 	got, err := DecodeReadOnly(label)
 	if err != nil || !reflect.DeepEqual(got, s.ReadOnly) {
 		t.Errorf("ラベル %q → %v, %v", label, got, err)

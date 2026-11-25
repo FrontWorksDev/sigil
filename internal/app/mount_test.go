@@ -123,6 +123,10 @@ func TestReadOnlyMountInnerRechecks(t *testing.T) {
 	if e2.ttyOpened != 0 || len(e2.runner.find("docker run")) != 0 {
 		t.Error("inner で確認したか、承認と違うフォルダで作成した")
 	}
+	// .sigil は同じなので、.sigil のせいだけに見せず、場所が変わった可能性を伝える
+	if !strings.Contains(e2.stderr.String(), "ro のフォルダの場所が変わりました") {
+		t.Errorf("stderr = %s", e2.stderr.String())
+	}
 }
 
 func TestReadOnlyMountRecheckedBeforeRun(t *testing.T) {

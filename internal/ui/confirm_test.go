@@ -344,7 +344,7 @@ func TestReadAnswerSharesReader(t *testing.T) {
 	}
 }
 
-const askWithMounts = "sigil: 契約の確認 ── .sigil の内容が新しいか、前回の承認から変わっています。\n" +
+const askWithMounts = "sigil: 契約の確認 ── .sigil の内容か、写本の場所が、新しいか前回の承認から変わっています。\n" +
 	"     このプロジェクトの領域（コンテナ）に、次のものを渡します:\n" +
 	"       持ち込むもの（ホストの環境変数）  FOO\n" +
 	"       写本（読み取り専用のフォルダ）    /h/src/lib → /workspace/lib\n" +
@@ -378,7 +378,7 @@ func TestContractScreenColorMounts(t *testing.T) {
 		u.ContractScreen(ContractView{Files: []string{".sigil"}, Mounts: []ContractMount{{Host: long, Container: "/workspace/lib"}}})
 		out := ownSGR(buf.String())
 		joined := strings.NewReplacer("\n", "", "│", "", " ", "").Replace(out)
-		for _, want := range []string{"写本", "読み取り専用のフォルダ", "/workspace/lib", "写本の中の.envなども、コンテナから読めます。",
+		for _, want := range []string{"写本", "写本の場所が", "読み取り専用のフォルダ", "/workspace/lib", "写本の中の.envなども、コンテナから読めます。",
 			// 長いパスも切り詰めず、折り返して全部見せる
 			strings.ReplaceAll(long, " ", "")} {
 			if !strings.Contains(joined, want) {

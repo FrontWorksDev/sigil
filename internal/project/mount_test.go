@@ -285,3 +285,48 @@ func TestVerifyMounts(t *testing.T) {
 		}
 	}
 }
+
+func TestMountErrorsDoNotEchoLinkTargets(t *testing.T) {
+	// リンクの先は、別のプロジェクトのコンテナなどが決められる。端末の制御文字をエラーに載せない
+	e := newMountEnv(t)
+	evil := filepath.Join(e.base, "evil\x1b]52;c;AAAA\x07")
+	if err := os.WriteFile(evil, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// ro の途中が、制御文字を含む名前のファイルへのリンク（ENOTDIR）
+	if err := os.Symlink(evil, filepath.Join(e.src, "trap")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := e.resolve([]string{"~/src/trap/sub"}, "~/src")
+	if err == nil || strings.ContainsRune(err.Error(), 0x1b) || !strings.Contains(err.Error(), "フォルダではないもの") {
+		t.Errorf("ENOTDIR → %q", err)
+	}
+
+	// 停止中のコンテナの確かめで、差し替えた先が制御文字を含む
+	lib := filepath.Join(e.src, "lib")
+	ms := []Mount{{Host: lib, Container: "/workspace/lib"}}
+	evilDir := filepath.Join(e.base, "dir\x1b[2J")
+	mustMkdir(t, evilDir)
+	if err := os.Remove(lib); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(evilDir, lib); err != nil {
+		t.Fatal(err)
+	}
+	err = VerifyMounts(ms)
+	if !errors.Is(err, ErrMountChanged) || strings.ContainsRune(err.Error(), 0x1b) {
+		t.Errorf("差し替え → %q", err)
+	}
+
+	// 循環するリンク
+	if err := os.Remove(lib); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(lib, lib); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyMounts(ms); err == nil || !strings.Contains(err.Error(), "循環") {
+		t.Errorf("循環 → %q", err)
+	}
+}

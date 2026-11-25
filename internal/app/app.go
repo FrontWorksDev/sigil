@@ -695,6 +695,11 @@ func approve(d Deps, store approval.Store, p project.Project, s settings, ask bo
 		files = append(files, s.envPath)
 	}
 	if !ask {
+		if len(s.mounts) > 0 {
+			// op run から起動し直された側では、直前に承認したばかりのことが多い。ファイルが同じでも、
+			// ro の向きが変わっただけで一致しなくなるので、差し替えの可能性を伝える（.sigil のせいに見せない）
+			return loref("契約が結ばれていません", "%s が承認されていないか、承認したあとで ro のフォルダの場所が変わりました。もう一度実行してください", strings.Join(files, " と "))
+		}
 		return loref("契約が結ばれていません", "%s が承認されていません", strings.Join(files, " と "))
 	}
 	tty, err := d.OpenTTY()

@@ -111,7 +111,7 @@ func TestInspectArgs(t *testing.T) {
 }
 
 func TestReadOnlyMounts(t *testing.T) {
-	label := `[{"Host":"/h/lib","Container":"/workspace/lib"}]`
+	label := `[{"host":"/h/lib","container":"/workspace/lib"}]`
 	labelsJSON := `{"sigil.layout":"2","sigil.ro":` + strconvQuote(label) + "}\n"
 	f := &fakeRunner{responses: []response{
 		{stdout: labelsJSON},

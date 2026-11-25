@@ -73,9 +73,19 @@ func (u *UI) ContractScreen(v ContractView) {
 	io.WriteString(u.w, contractPrompt)
 }
 
+// changed は、確認する理由の文を返す。写本があるときは、ファイルが同じでも、ro のフォルダの場所
+// （シンボリックリンクの向き）が変わっただけで聞き直すので、そのことも書く。ファイルが変わったとだけ書くと、
+// 差し替えに気づけないため。
+func (v ContractView) changed(files string) string {
+	if len(v.Mounts) > 0 {
+		return files + " の内容か、写本の場所が、新しいか前回の承認から変わっています。"
+	}
+	return files + " の内容が新しいか、前回の承認から変わっています。"
+}
+
 func (u *UI) contractPlain(v ContractView, files string) {
 	out := u.w
-	fmt.Fprintf(out, "sigil: 契約の確認 ── %s の内容が新しいか、前回の承認から変わっています。\n", files)
+	fmt.Fprintf(out, "sigil: 契約の確認 ── %s\n", v.changed(files))
 	fmt.Fprintln(out, "     このプロジェクトの領域（コンテナ）に、次のものを渡します:")
 	for _, e := range v.Envs {
 		fmt.Fprintf(out, "       持ち込むもの（ホストの環境変数）  %s\n", e)
@@ -161,7 +171,7 @@ func (u *UI) contractBox(v ContractView, files string) {
 	w := u.avail(7)
 	same := func(s string) string { return s }
 	lines := wrapItem(u.fg(purple, "⟡")+" ", "  ", "契約の確認", w, u.bold)
-	lines = append(lines, wrapItem("", "", EscapeLine(files)+" の内容が新しいか、前回の承認から変わっています。", w, u.dim)...)
+	lines = append(lines, wrapItem("", "", v.changed(EscapeLine(files)), w, u.dim)...)
 	lines = append(lines, "")
 	lines = append(lines, wrapItem("", "", "このプロジェクトの領域（コンテナ）に、次のものを渡します:", w, same)...)
 	if len(groups) == 0 {

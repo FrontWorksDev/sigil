@@ -285,8 +285,12 @@ docker build --pull --build-arg USER_UID=<os.Getuid()> --build-arg USER_GID=<os.
 ツールを毎回最新版に取り直すため、docker のキャッシュを次のように扱う（issue #16。決定事項を参照）。
 
 - `--pull`: 手元にある土台のイメージ（`node:lts-trixie-slim`、`php:cli-trixie`、`ghcr.io/astral-sh/uv:latest` など）も取り直す。
-- `SIGIL_REFRESH`: 毎回違う値（ビルドした時刻、UTC の RFC 3339）を渡す。Dockerfile では PHP 拡張のビルドの後ろ、ツールを取ってくる手順（Neovim の `stable`、tree-sitter CLI、`uv python install`、wakatime-cli・lazygit・gh の `latest`、Claude Code の `install.sh`）の前で `ARG SIGIL_REFRESH` を宣言する。ARG は後ろの `RUN` に環境変数として渡るので、そこから後ろの `RUN` は毎回作り直される。
-- apt で入れるもの（2 つの `apt-get install`）と PHP 拡張はキャッシュのまま。土台の `php:cli-trixie` が更新されれば、`--pull` で取り直したときに作り直される。すべて作り直すときは `sigil build --no-cache`。
+- `SIGIL_REFRESH`: 毎回違う値（ビルドした時刻、UTC の RFC 3339）を渡す。Dockerfile では PHP 拡張・言語ランタイムのコピー・ユーザーの作成の後ろ、ツールを取ってくる手順（Neovim の `stable`、tree-sitter CLI、`uv python install`、wakatime-cli・lazygit・gh の `latest`、Claude Code の `install.sh`）の前で `ARG SIGIL_REFRESH` を宣言する。ARG は後ろの `RUN` に環境変数として渡るので、そこから後ろの `RUN` は毎回作り直される。
+- apt で入れるもの（2 つの `apt-get install`）、PHP 拡張、言語ランタイムの `COPY --from`、ユーザーの作成（rustup の `chown -R` を含む）は、`ARG SIGIL_REFRESH` より前に置いてキャッシュのままにする。どれも土台のイメージと UID / GID だけで決まり、土台が更新されれば `--pull` で取り直したときに作り直される。すべて作り直すときは `sigil build --no-cache`。
+- `ARG SIGIL_REFRESH` は `ENV` ではないのでコンテナの環境変数には残らないが、BuildKit は `RUN` が使った ARG をイメージの履歴（`docker history --no-trunc`）に残す。ARG で秘密を渡さない。
+- 毎回イメージの ID が変わるので、前の `sigil:latest` は名前のないイメージ（`<none>`）として残る。sigil は消さない（利用者の Docker 資源を消さない方針のため）。README で `docker image prune` を案内する。
+- 手元にしかない土台のイメージを使うときやオフラインのときは、`--pull` で失敗する。README で `--pull=false` を案内する。
+- `SIGIL_CONTEXT` で別の Dockerfile を使うときは、その Dockerfile にも `ARG SIGIL_REFRESH` がなければ毎回の取り直しは効かない（docker は「使われなかったビルド引数」の警告を出す）。
 - 追加の引数は sigil が付ける引数より後ろに置く。docker は同じ指定が重なると後ろのものを使うので、`--pull=false` などで上書きできる。
 - `ARG SIGIL_REFRESH` の位置は、`image/embed_test.go` で確かめる（ツールを取ってくる手順が前に来たら失敗する）。
 
@@ -1124,4 +1128,5 @@ docker には、書かれたパスではなく**解決したパス**を渡す。
 | 2026-11-25 | `-dirty` は、`git describe --dirty` ではなく、コミットの側（`vcs.modified`）だけで示す。issue の案（両方に付ける）から変える | コードレビューの指摘。`git describe --dirty` は追跡していないファイルを数えず、Go の `vcs.modified` は数えるので、`v0.4.0 (commit 57a801c-dirty)` のように食い違うことがあった |
 | 2026-11-25 | `--version` / `-V` の後ろの引数は、黙って捨てずにエラーにする | コードレビューの指摘。以前は `-V` がコンテナに渡っていたので、`sigil -V cmd` のつもりで打った人が、cmd が動かなかったことに気づけない |
 | 2026-11-25 | `-X` の変数名が実在するかは、CI で確かめない。変数のコメントで、名前を変えたら Makefile も変えるよう書く | コードレビューの指摘（リンカーは存在しない名前の `-X` を黙って無視する）。CI の build ジョブは darwin 向けのクロスビルドで、Linux のランナーでは実行して確かめられない。Linux 向けのビルドを足すほどの重みはないと利用者が判断した |
-| 2026-11-25 | `sigil build` は既定で `--pull` を付け、毎回違うビルド引数 `SIGIL_REFRESH` を渡す。Dockerfile では PHP 拡張の後ろ、ツールを取ってくる手順の前で宣言する。`--no-cache` は既定にしない。速くビルドするための sigil 独自の指定は作らない | issue #16。`stable` / `latest` / `install.sh` は手順の文字列が変わらないので、docker のキャッシュで古い版が使い回され、「ツールは最新」の方針と README の説明（`sigil build` で更新）に合っていなかった。`--no-cache` を既定にすると、apt と PHP 拡張のコンパイルまで毎回やり直して遅くなる。apt の版は Debian の安定版で、変わるのはおもに修正版なので、土台のイメージが更新されたとき（`--pull` で検出される）に作り直されれば足りる。速くしたいときは、利用者の引数が後ろに来るので、`--pull=false --build-arg SIGIL_REFRESH=<固定の値>` で今までどおりキャッシュを使える。独自の指定を作ると「追加の引数は docker build へ」の決まりに例外ができるので作らない |
+| 2026-11-25 | `sigil build` は既定で `--pull` を付け、毎回違うビルド引数 `SIGIL_REFRESH` を渡す。Dockerfile では PHP 拡張・言語ランタイムのコピー・ユーザーの作成の後ろ、ツールを取ってくる手順の前で宣言する。`--no-cache` は既定にしない。速くビルドするための sigil 独自の指定は作らない | issue #16。`stable` / `latest` / `install.sh` は手順の文字列が変わらないので、docker のキャッシュで古い版が使い回され、「ツールは最新」の方針と README の説明（`sigil build` で更新）に合っていなかった。`--no-cache` を既定にすると、apt と PHP 拡張のコンパイルまで毎回やり直して遅くなる。apt の版は Debian の安定版で、変わるのはおもに修正版なので、土台のイメージが更新されたとき（`--pull` で検出される）に作り直されれば足りる。速くしたいときは、利用者の引数が後ろに来るので、`--pull=false --build-arg SIGIL_REFRESH=<固定の値>` で今までどおりキャッシュを使える。独自の指定を作ると「追加の引数は docker build へ」の決まりに例外ができるので作らない |
+| 2026-11-26 | 言語ランタイムの `COPY --from` とユーザーの作成を `ARG SIGIL_REFRESH` より前に移す。古いイメージは sigil では消さず、README で `docker image prune` と `--pull=false` を案内する | コードレビューの指摘。ARG より後ろにあると、毎回 Go・Rust・Node の toolchain（数 GB）を書き直し、rustup の `chown -R` で複製のレイヤーも作っていた。どれも土台のイメージ（`--pull` で追う）と UID / GID だけで決まる。毎回 ID の違うイメージができるので、古いものが `<none>` として溜まるが、CLAUDE.md の「利用者の Docker 資源を消さない」に合わせ、消すのは利用者に任せる。Dockerfile の「ARG はイメージに残らない」というコメントは誤り（BuildKit は履歴に残す）なので直した |

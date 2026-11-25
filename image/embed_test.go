@@ -65,9 +65,18 @@ func TestDockerfileRefreshBeforeTools(t *testing.T) {
 	if refresh < 0 {
 		t.Fatal("ARG SIGIL_REFRESH がない")
 	}
-	// 遅い手順（キャッシュのままにするもの）は前
-	if i := strings.Index(df, "RUN docker-php-ext-install"); i < 0 || i > refresh {
-		t.Error("PHP 拡張のビルドが ARG SIGIL_REFRESH より後ろにある")
+	// 遅い手順や大きなレイヤー（キャッシュのままにするもの）は前
+	for _, s := range []string{
+		"RUN docker-php-ext-install",
+		"COPY --from=go /usr/local/go",
+		"COPY --from=rust /usr/local/rustup",
+		"useradd --uid",
+	} {
+		if i := strings.Index(df, s); i < 0 {
+			t.Errorf("%q が Dockerfile にない（テストを直すこと）", s)
+		} else if i > refresh {
+			t.Errorf("%q が ARG SIGIL_REFRESH より後ろにある（毎回作り直される）", s)
+		}
 	}
 	// 更新したい手順は後ろ
 	for _, s := range []string{

@@ -69,15 +69,36 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # mbstring / xml / curl / sqlite3 は公式イメージに最初から入っている。足りないものだけビルドする
 RUN docker-php-ext-install -j"$(nproc)" zip intl bcmath
 
+# --- 言語ランタイム（公式イメージからコピー） ---------------------------
+# このコピーと下のユーザーの作成は、土台のイメージ（--pull で取り直す）と UID / GID だけで
+# 決まるので、毎回作り直さないよう ARG SIGIL_REFRESH より前に置く（Go・Rust・Node の toolchain は
+# 合わせて数 GB あり、rustup の chown -R はその複製のレイヤーを作るため）。
+COPY --from=node /usr/local/bin/ /usr/local/bin/
+COPY --from=node /usr/local/lib/node_modules/ /usr/local/lib/node_modules/
+COPY --from=node /usr/local/include/node/ /usr/local/include/node/
+COPY --from=go /usr/local/go /usr/local/go
+COPY --from=rust /usr/local/rustup /usr/local/rustup
+COPY --from=rust /usr/local/cargo /usr/local/cargo
+COPY --from=composer /usr/bin/composer /usr/local/bin/composer
+
+# --- 一般ユーザー -------------------------------------------------------
+# Mac の GID 20 (staff) は Debian 側に既にあるので、存在すれば流用する
+RUN if ! getent group "${USER_GID}" >/dev/null; then \
+      groupadd --gid "${USER_GID}" "${USERNAME}"; \
+    fi \
+ && useradd --uid "${USER_UID}" --gid "${USER_GID}" -m -s /bin/bash "${USERNAME}" \
+ && chown -R "${USER_UID}:${USER_GID}" /usr/local/rustup \
+ && git config --system safe.directory /workspace
+
 # --- ここから後ろは、sigil build のたびに作り直す（issue #16） -----------------
 # 下の手順は「stable」「latest」や install.sh のように、手順の文字列が変わらないまま中身が新しくなる。
 # docker は文字列が同じならキャッシュを使い回すので、sigil build が毎回違う値（ビルドした時刻）を
 # SIGIL_REFRESH に渡す。ARG は後ろの RUN に環境変数として渡るので、値が変わると、ここから後ろの
-# RUN はキャッシュが使われない（間の COPY も、下のレイヤーが変わるので作り直される。COPY --from の
-# 中身は土台のイメージのもので、土台は --pull で取り直す）。
-# 上の apt と PHP 拡張はキャッシュのまま（ビルドが遅くなるため）。土台の php:cli-trixie が
-# 更新されれば、--pull で取り直したときに一緒に作り直される。
-# 値は使わない。ENV ではないので、イメージにも残らない。
+# RUN はキャッシュが使われない（間の COPY も、下のレイヤーが変わるので作り直される）。
+# 上の apt、PHP 拡張、言語ランタイムのコピー、ユーザーの作成はキャッシュのまま（遅く、数 GB の
+# レイヤーを書き直すことになるため）。土台のイメージが更新されれば、--pull で取り直したときに作り直される。
+# 値は使わない。ENV ではないのでコンテナの環境変数には残らないが、BuildKit は RUN が使った ARG を
+# イメージの履歴（docker history --no-trunc）に残す。ARG で秘密を渡してはいけない。
 ARG SIGIL_REFRESH
 
 # --- Neovim（LazyVim は新しい Neovim が必要なので公式リリースから） ----
@@ -89,15 +110,6 @@ RUN case "${TARGETARCH}" in \
  && curl -fsSL "https://github.com/neovim/neovim/releases/download/${NVIM_VERSION}/nvim-linux-${arch}.tar.gz" \
     | tar -xz -C /opt \
  && ln -s "/opt/nvim-linux-${arch}/bin/nvim" /usr/local/bin/nvim
-
-# --- 言語ランタイム（公式イメージからコピー） ---------------------------
-COPY --from=node /usr/local/bin/ /usr/local/bin/
-COPY --from=node /usr/local/lib/node_modules/ /usr/local/lib/node_modules/
-COPY --from=node /usr/local/include/node/ /usr/local/include/node/
-COPY --from=go /usr/local/go /usr/local/go
-COPY --from=rust /usr/local/rustup /usr/local/rustup
-COPY --from=rust /usr/local/cargo /usr/local/cargo
-COPY --from=composer /usr/bin/composer /usr/local/bin/composer
 
 # pnpm / yarn（corepack）と、LazyVim の treesitter が使う tree-sitter CLI
 RUN (corepack enable || true) \
@@ -207,15 +219,6 @@ RUN git config --system core.pager 'delta --navigate' \
       '  diffRenderers:' \
       '    - command: delta --{{colorScheme}} --paging=never' \
     > /etc/xdg/lazygit/config.yml
-
-# --- 一般ユーザー -------------------------------------------------------
-# Mac の GID 20 (staff) は Debian 側に既にあるので、存在すれば流用する
-RUN if ! getent group "${USER_GID}" >/dev/null; then \
-      groupadd --gid "${USER_GID}" "${USERNAME}"; \
-    fi \
- && useradd --uid "${USER_UID}" --gid "${USER_GID}" -m -s /bin/bash "${USERNAME}" \
- && chown -R "${USER_UID}:${USER_GID}" /usr/local/rustup \
- && git config --system safe.directory /workspace
 
 # 名前付きボリュームのマウント先を先に作っておく
 # （空のボリュームは初回にこのディレクトリの所有者を引き継ぐ）

@@ -224,7 +224,7 @@ func TestResolveMountCheckSafeDefenceInDepth(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := resolveMount(c.path, e.home, e.home, []string{e.base}, []string{e.base}, in)
+			_, err := resolveMount(c.path, e.home, e.home, []string{e.base}, []string{e.base, e.base}, in)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Errorf("err = %v, want %q を含む", err, c.want)
 			}
@@ -233,7 +233,7 @@ func TestResolveMountCheckSafeDefenceInDepth(t *testing.T) {
 	// 大文字小文字だけ違うホーム（大文字小文字を区別しないファイルシステムでだけ、同じ場所として確かめられる）
 	upper := filepath.Join(e.base, "HOME")
 	if _, err := os.Stat(upper); err == nil {
-		_, err := resolveMount(upper, e.home, e.home, []string{e.base}, []string{e.base}, in)
+		_, err := resolveMount(upper, e.home, e.home, []string{e.base}, []string{e.base, e.base}, in)
 		if err == nil || !strings.Contains(err.Error(), "全体はマウントできません") {
 			t.Errorf("大文字小文字の違うホーム: err = %v", err)
 		}
@@ -296,7 +296,7 @@ func TestVerifyMounts(t *testing.T) {
 func TestMountErrorsDoNotEchoLinkTargets(t *testing.T) {
 	// リンクの先は、別のプロジェクトのコンテナなどが決められる。端末の制御文字をエラーに載せない
 	e := newMountEnv(t)
-	evil := filepath.Join(e.base, "evil\x1b]52;c;AAAA\x07")
+	evil := filepath.Join(e.src, "evil\x1b]52;c;AAAA\x07") // ro_root の中（途中がファイルで ENOTDIR になる経路）
 	if err := os.WriteFile(evil, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -308,6 +308,15 @@ func TestMountErrorsDoNotEchoLinkTargets(t *testing.T) {
 	_, err := e.resolve([]string{"~/src/trap/sub"}, "~/src")
 	if err == nil || strings.ContainsRune(err.Error(), 0x1b) || !strings.Contains(err.Error(), "フォルダではないもの") {
 		t.Errorf("ENOTDIR → %q", err)
+	}
+
+	// ro_root の外を指すリンクの先も、制御文字をそのまま出さない
+	if err := os.Symlink(filepath.Join(e.base, "out\x1b[2J"), filepath.Join(e.src, "trap2")); err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.resolve([]string{"~/src/trap2"}, "~/src")
+	if err == nil || strings.ContainsRune(err.Error(), 0x1b) || !strings.Contains(err.Error(), "ro_root の中にありません") {
+		t.Errorf("外を指すリンク → %q", err)
 	}
 
 	// 停止中のコンテナの確かめで、差し替えた先が制御文字を含む
@@ -466,7 +475,80 @@ func TestResolveMountsRejectsProjectViaLinkedRoot(t *testing.T) {
 	if _, err := e.resolve([]string{"~/code/lib"}, "~/code"); err != nil {
 		t.Errorf("~/code/lib → %v", err)
 	}
-	if got := rootSpellings("/a/raw/x", []string{"/r/res", "/a/raw"}); len(got) != 2 || got[1] != "/r/res/x" {
-		t.Errorf("rootSpellings = %v", got)
+	if r, rest, ok := rootStart("/a/raw/x/y", []string{"/r/res", "/a/raw"}); !ok || r != "/r/res" || len(rest) != 2 || rest[0] != "x" {
+		t.Errorf("rootStart = %v %v %v", r, rest, ok)
+	}
+	if _, _, ok := rootStart("/a/rawx/y", []string{"/r/res", "/a/raw"}); ok {
+		t.Error("前方一致するだけの別フォルダが ro_root の中とされた")
+	}
+	// 大文字小文字の変換でバイト長が変わる文字（ケルビン記号）でも、落ちない
+	for _, c := range [][2]string{{"/a/k", "/a/\u212a"}, {"/a/\u212a", "/a/k"}, {"/a/k/x", "/a/\u212a"}, {"/a/\u212a/x", "/a/k"}} {
+		rootStart(c[0], []string{"/r/res", c[1]})
+	}
+}
+
+func TestWalkResolve(t *testing.T) {
+	e := newMountEnv(t)
+	link := func(target, at string) {
+		t.Helper()
+		if err := os.Symlink(target, filepath.Join(e.src, at)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lib := filepath.Join(e.src, "lib")
+	link("lib", "rel")           // 相対
+	link("../src/lib", "updown") // いったん ro_root の外（ホーム）に上がって戻る
+	link(lib, "abs")             // 絶対
+	link("rel", "chain")         // リンクのリンク
+	for _, ro := range []string{"~/src/rel", "~/src/updown", "~/src/abs", "~/src/chain"} {
+		got, err := e.resolve([]string{ro}, "~/src")
+		if err != nil || len(got) != 1 || got[0].Host != lib {
+			t.Errorf("%s → %v, %v", ro, got, err)
+		}
+	}
+
+	// ほかのリポジトリ（別のプロジェクトのコンテナが書ける）に置かれた、ro_root の外へのリンクには触れない
+	link("/net/attacker.example/share", "net")
+	link("../.ssh", "escape")
+	link("../nope-outside/x", "escape2") // 外の存在しない場所。触れれば「存在しません」になる
+	link("/x/../y", "dotdot")
+	for ro, want := range map[string]string{
+		"~/src/net":     "ro_root の中にありません",
+		"~/src/escape":  "ro_root の中にありません",
+		"~/src/escape2": "ro_root の中にありません",
+		"~/src/dotdot":  `".." があるので`,
+	} {
+		_, err := e.resolve([]string{ro}, "~/src")
+		if err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "存在しません") {
+			t.Errorf("%s → %v", ro, err)
+		}
+	}
+
+	// 循環
+	link("loop2", "loop1")
+	link("loop1", "loop2")
+	if _, err := e.resolve([]string{"~/src/loop1"}, "~/src"); err == nil || !strings.Contains(err.Error(), "循環") {
+		t.Errorf("循環 → %v", err)
+	}
+}
+
+func TestWalkResolveProjectLinkUnderOtherSpelling(t *testing.T) {
+	// プロジェクトの中のリンクは、NFD/NFC や大文字小文字の違う書き方でもたどらない（ファイルの同一性で判定する）
+	e := newMountEnv(t)
+	nfc := filepath.Join(e.src, "café")
+	mustMkdir(t, nfc)
+	if err := os.Symlink("/nonexistent-sigil-test/x", filepath.Join(nfc, "link")); err != nil {
+		t.Fatal(err)
+	}
+	in := MountInput{Project: New(nfc), Home: e.home}
+	lexRoots := []string{e.src, e.src}
+	for _, spelled := range []string{filepath.Join(e.src, "café"), filepath.Join(e.src, "CAFÉ")} {
+		if _, err := os.Stat(spelled); err != nil {
+			continue // 正規化や大文字小文字を区別するファイルシステムでは、別のフォルダなので確かめない
+		}
+		_, err := walkResolve(filepath.Join(spelled, "link"), lexRoots, in.Project.Root)
+		if err == nil || !strings.Contains(err.Error(), "プロジェクトの中のシンボリックリンク") {
+			t.Errorf("%q → %v", spelled, err)
+		}
 	}
 }

@@ -109,26 +109,27 @@ var (
 // resolveMount は ro の 1 行を確かめる。rawHome は ~/ の展開に、home（解決済み）は CheckSafe に使う。
 // lexRoots は、ファイルシステムに触れる前の、文字列での確かめに使う ro_root（解決したものと、書かれたもの）。
 func resolveMount(written, rawHome, home string, roots, lexRoots []string, in MountInput) (Mount, error) {
-	// ファイルシステムに触れる前に、文字列で ro_root の中かを確かめる。.sigil は承認より前に読むので、
-	// 先に EvalSymlinks すると、/net/<ホスト>/...（macOS の autofs）を書くだけで、承認の画面より前に
-	// 外部のホストへ接続させたり、ホストにどんなパスがあるかを探らせたりできてしまう
+	// .sigil は承認より前に読むので、EvalSymlinks に任せると、/net/<ホスト>/...（macOS の autofs）への
+	// シンボリックリンクを、プロジェクトの中やほかのリポジトリ（別のプロジェクトのコンテナが書ける）に置くだけで、
+	// 承認の画面より前に外部のホストへ接続させたり、ホストにどんなパスがあるかを探らせたりできてしまう。
+	// そこで、ro_root から 1 段ずつたどり、ro_root の外には触れない（walkResolve）
 	expanded, err := expandPath(written, rawHome)
 	if err != nil {
 		return Mount{}, err
 	}
-	if !slices.ContainsFunc(lexRoots, func(root string) bool { return lexWithin(expanded, root) }) {
-		return Mount{}, fmt.Errorf("%s は %w", expanded, errOutsideRoots)
-	}
-	// プロジェクトの中も、解決する前に拒否する。プロジェクト（信頼できないリポジトリ）は、自分の中に
-	// /net/<ホスト> などへのシンボリックリンクを置けるので、解決すると承認より前に触れてしまう。
-	// Project.Root は解決済みなので、ro_root の部分を解決済みの形に置き換えてから比べる
-	// （~/src が /Volumes/Dev/src へのリンクのときなど、書かれた形のままでは一致しないため）
-	if slices.ContainsFunc(rootSpellings(expanded, lexRoots), func(p string) bool { return lexWithin(p, in.Project.Root) }) {
-		return Mount{}, fmt.Errorf("%s はプロジェクトの中なので、ro には書けません（すでにマウントされています）", expanded)
-	}
-	host, err := resolveDir(written, rawHome)
+	host, err := walkResolve(expanded, lexRoots, in.Project.Root)
 	if err != nil {
 		return Mount{}, err
+	}
+	if err := checkPrintable(host); err != nil {
+		return Mount{}, err
+	}
+	fi, err := os.Stat(host)
+	if err != nil {
+		return Mount{}, fmt.Errorf("%s を確かめられません（%s）", host, fsReason(err))
+	}
+	if !fi.IsDir() {
+		return Mount{}, fmt.Errorf("%s はフォルダではありません", host)
 	}
 	if !slices.ContainsFunc(roots, func(root string) bool { return within(host, root) }) {
 		return Mount{}, fmt.Errorf("%s は %w", host, errOutsideRoots)
@@ -165,15 +166,108 @@ func resolveMount(written, rawHome, home string, roots, lexRoots []string, in Mo
 	return m, nil
 }
 
-// rootSpellings は、p の ro_root の部分を、解決済みの ro_root に置き換えた形を返す（p そのものも含む）。
-// lexRoots は「解決したもの、書かれたもの」の組の並び。ファイルシステムには触れない。
-func rootSpellings(p string, lexRoots []string) []string {
-	out := []string{p}
+// maxLinks は、walkResolve がたどるシンボリックリンクの数の上限（循環を止める）。
+const maxLinks = 40
+
+// walkResolve は、ro のパス p を、ro_root（解決済み）から 1 段ずつたどって、シンボリックリンクを解決する。
+//
+// filepath.EvalSymlinks と違い、次のものには触れない（Lstat もしない）:
+//   - ro_root の外。リンクの先が外なら、その場で拒否する（/net/<ホスト> などへ接続させない）
+//   - プロジェクトの中のシンボリックリンクの先。プロジェクトは信頼できないリポジトリなので、たどらずに拒否する。
+//     プロジェクトの中かは within（ファイルの同一性）で判定するので、NFD/NFC や大文字小文字の違いでは抜けられない
+//
+// lexRoots は「解決したもの、書かれたもの」の組の並び。たどる途中のパスは、すべて解決済みの ro_root の下にある。
+func walkResolve(p string, lexRoots []string, projectRoot string) (string, error) {
+	cur, rest, ok := rootStart(p, lexRoots)
+	if !ok {
+		return "", fmt.Errorf("%s は %w", p, errOutsideRoots)
+	}
+	links := 0
+	for len(rest) > 0 {
+		c := rest[0]
+		rest = rest[1:]
+		switch c {
+		case "", ".":
+			continue
+		case "..":
+			// cur はシンボリックリンクを含まないので、文字列で親に上がってよい
+			cur = filepath.Dir(cur)
+			continue
+		}
+		next := filepath.Join(cur, c)
+		// next には、リンクの先（信頼できない文字列）が入りうるので、%q で出す
+		if _, _, ok := rootStart(next, lexRoots); !ok {
+			return "", fmt.Errorf("%s のシンボリックリンクの先 %q は %w", p, next, errOutsideRoots)
+		}
+		fi, err := os.Lstat(next)
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("%s は %w", p, errNotExist)
+		}
+		if err != nil {
+			return "", fmt.Errorf("%s をたどれません（%s）", p, fsReason(err))
+		}
+		if fi.Mode()&fs.ModeSymlink == 0 {
+			cur = next
+			continue
+		}
+		if within(cur, projectRoot) {
+			return "", fmt.Errorf("%s はプロジェクトの中のシンボリックリンクを通るので、ro には書けません", p)
+		}
+		if links++; links > maxLinks {
+			return "", fmt.Errorf("%s をたどれません（シンボリックリンクが循環しているか、多すぎます）", p)
+		}
+		target, err := os.Readlink(next)
+		if err != nil {
+			return "", fmt.Errorf("%s をたどれません（%s）", p, fsReason(err))
+		}
+		if !filepath.IsAbs(target) {
+			rest = append(splitPath(target), rest...)
+			continue
+		}
+		// 絶対パスの先は、文字列で ro_root の中かを確かめてから、その ro_root からたどり直す。
+		// ".." を含むと、文字列での判定と実際の解決が食い違いうるので拒否する
+		if slices.Contains(splitPath(target), "..") {
+			return "", fmt.Errorf(`%s のシンボリックリンクの先 %q に ".." があるので、たどりません`, p, target)
+		}
+		root, trest, ok := rootStart(target, lexRoots)
+		if !ok {
+			return "", fmt.Errorf("%s のシンボリックリンクの先 %q は %w", p, target, errOutsideRoots)
+		}
+		cur, rest = root, append(trest, rest...)
+	}
+	return cur, nil
+}
+
+// rootStart は、p がどれかの ro_root の中なら、その解決済みの ro_root と、残りの要素を返す。文字列だけで判定する。
+func rootStart(p string, lexRoots []string) (string, []string, bool) {
 	clean := filepath.Clean(p)
 	for i := 0; i+1 < len(lexRoots); i += 2 {
-		resolved, raw := filepath.Clean(lexRoots[i]), filepath.Clean(lexRoots[i+1])
-		if raw != "/" && lexWithin(clean, raw) {
-			out = append(out, resolved+clean[len(raw):])
+		resolved := filepath.Clean(lexRoots[i])
+		for _, spelled := range []string{resolved, filepath.Clean(lexRoots[i+1])} {
+			if rest, ok := cutRoot(clean, spelled); ok {
+				return resolved, rest, true
+			}
+		}
+	}
+	return "", nil, false
+}
+
+// cutRoot は、p が base そのものか、その中なら、base より後ろの要素を返す。
+// lexWithin は大文字小文字を無視するので、ケルビン記号（U+212A）などでバイト長が違っても一致しうる。
+// 区切りの位置がそろうときだけ切る（ずれた位置で切ると panic するか、別のパスになる）。
+func cutRoot(p, base string) ([]string, bool) {
+	if base == "/" || !lexWithin(p, base) || len(p) < len(base) || (len(p) > len(base) && p[len(base)] != '/') {
+		return nil, false
+	}
+	return splitPath(p[len(base):]), true
+}
+
+// splitPath は、パスを "/" で区切った、空でない要素にする。
+func splitPath(p string) []string {
+	var out []string
+	for _, c := range strings.Split(p, "/") {
+		if c != "" {
+			out = append(out, c)
 		}
 	}
 	return out

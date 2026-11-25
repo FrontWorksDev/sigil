@@ -69,6 +69,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # mbstring / xml / curl / sqlite3 は公式イメージに最初から入っている。足りないものだけビルドする
 RUN docker-php-ext-install -j"$(nproc)" zip intl bcmath
 
+# --- ここから後ろは、sigil build のたびに作り直す（issue #16） -----------------
+# 下の手順は「stable」「latest」や install.sh のように、手順の文字列が変わらないまま中身が新しくなる。
+# docker は文字列が同じならキャッシュを使い回すので、sigil build が毎回違う値（ビルドした時刻）を
+# SIGIL_REFRESH に渡す。ARG は後ろの RUN に環境変数として渡るので、値が変わると、ここから後ろの
+# RUN はキャッシュが使われない（間の COPY も、下のレイヤーが変わるので作り直される。COPY --from の
+# 中身は土台のイメージのもので、土台は --pull で取り直す）。
+# 上の apt と PHP 拡張はキャッシュのまま（ビルドが遅くなるため）。土台の php:cli-trixie が
+# 更新されれば、--pull で取り直したときに一緒に作り直される。
+# 値は使わない。ENV ではないので、イメージにも残らない。
+ARG SIGIL_REFRESH
+
 # --- Neovim（LazyVim は新しい Neovim が必要なので公式リリースから） ----
 RUN case "${TARGETARCH}" in \
       amd64) arch=x86_64 ;; \

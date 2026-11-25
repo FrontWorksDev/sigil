@@ -167,9 +167,10 @@ func TestExecArgs(t *testing.T) {
 }
 
 func TestBuildArgs(t *testing.T) {
-	got := BuildArgs("sigil:dev-test", 501, 20, []string{"--no-cache"}, "/tmp/c")
-	want := []string{"build", "--build-arg", "USER_UID=501", "--build-arg", "USER_GID=20",
-		"-t", "sigil:dev-test", "--no-cache", "/tmp/c"}
+	// --pull と SIGIL_REFRESH は、利用者の引数（上書きできるように）より前に置く
+	got := BuildArgs("sigil:dev-test", 501, 20, "r1", []string{"--no-cache"}, "/tmp/c")
+	want := []string{"build", "--pull", "--build-arg", "USER_UID=501", "--build-arg", "USER_GID=20",
+		"--build-arg", "SIGIL_REFRESH=r1", "-t", "sigil:dev-test", "--no-cache", "/tmp/c"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("BuildArgs = %v", got)
 	}

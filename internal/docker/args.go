@@ -158,11 +158,22 @@ func ExecArgs(name, workdir string, tty bool, env []string, cmd []string) []stri
 
 // BuildArgs は docker build の引数を返す。
 // UID / GID をホストと合わせ、マウントしたファイルの所有者がずれないようにする。
-func BuildArgs(image string, uid, gid int, extra []string, contextDir string) []string {
+//
+// イメージのツールは「ビルドの時点の最新版」にする方針なので、docker のキャッシュで
+// 古い版が使い回されないようにする（issue #16）。
+//   - --pull: 手元にある土台のイメージ（node:lts-trixie-slim など）も取り直す。
+//   - SIGIL_REFRESH: 毎回違う値（refresh。ビルドした時刻）を渡す。Dockerfile では
+//     ツールを取ってくる手順の前で宣言しているので、そこから後ろのレイヤーは毎回作り直される。
+//
+// extra（利用者の引数）はこれらより後ろに置く。docker は同じ指定が重なると後ろを使うので、
+// `--pull=false` や `--build-arg SIGIL_REFRESH=...` で上書きできる。
+func BuildArgs(image string, uid, gid int, refresh string, extra []string, contextDir string) []string {
 	args := []string{
 		"build",
+		"--pull",
 		"--build-arg", "USER_UID=" + strconv.Itoa(uid),
 		"--build-arg", "USER_GID=" + strconv.Itoa(gid),
+		"--build-arg", "SIGIL_REFRESH=" + refresh,
 		"-t", image,
 	}
 	args = append(args, extra...)

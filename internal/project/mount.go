@@ -56,8 +56,15 @@ func ResolveMounts(in MountInput) ([]Mount, error) {
 		return nil, fmt.Errorf("%s:%d: ro でマウントしてよい範囲が決まっていません。全体設定（%s）に ro_root <フォルダ> を書いてください", in.SigilPath, r.Line, in.GlobalPath)
 	}
 	var roots []string
+	var missing []string
 	for _, r := range in.Roots {
 		p, err := resolveDir(r.Path, in.Home)
+		if errors.Is(err, errNotExist) {
+			// 外付けのディスクが外れているときなど。ほかの ro_root の中の ro まで止めないよう、飛ばす。
+			// 許す範囲が狭まるだけなので、安全側。ro がどの ro_root にも入らなければ、下でエラーになる
+			missing = append(missing, fmt.Sprintf("%s:%d", in.GlobalPath, r.Line))
+			continue
+		}
 		if err != nil {
 			return nil, fmt.Errorf("%s:%d: ro_root %w", in.GlobalPath, r.Line, err)
 		}
@@ -71,6 +78,9 @@ func ResolveMounts(in MountInput) ([]Mount, error) {
 	var out []Mount
 	for _, r := range in.ReadOnly {
 		m, err := resolveMount(r.Path, in.Home, home, roots, in)
+		if errors.Is(err, errOutsideRoots) && len(missing) > 0 {
+			err = fmt.Errorf("%w。存在しない ro_root（%s）は飛ばしました", err, strings.Join(missing, "、"))
+		}
 		if err == nil {
 			for _, o := range out {
 				if o.Container == m.Container {
@@ -86,6 +96,13 @@ func ResolveMounts(in MountInput) ([]Mount, error) {
 	return out, nil
 }
 
+var (
+	// errNotExist は、resolveDir で、パスが存在しないことを表す（ro_root なら飛ばす）。
+	errNotExist = errors.New("存在しません")
+	// errOutsideRoots は、ro が、どの ro_root の中にもないことを表す。
+	errOutsideRoots = errors.New("ro_root の中にありません（全体設定の ro_root で決めた範囲だけをマウントできます）")
+)
+
 // resolveMount は ro の 1 行を確かめる。rawHome は ~/ の展開に、home（解決済み）は CheckSafe に使う。
 func resolveMount(written, rawHome, home string, roots []string, in MountInput) (Mount, error) {
 	host, err := resolveDir(written, rawHome)
@@ -93,7 +110,7 @@ func resolveMount(written, rawHome, home string, roots []string, in MountInput) 
 		return Mount{}, err
 	}
 	if !slices.ContainsFunc(roots, func(root string) bool { return within(host, root) }) {
-		return Mount{}, fmt.Errorf("%s は ro_root の中にありません（全体設定の ro_root で決めた範囲だけをマウントできます）", host)
+		return Mount{}, fmt.Errorf("%s は %w", host, errOutsideRoots)
 	}
 	// ro_root はすでに CheckSafe を通っているので、その中のフォルダが CheckSafe に掛かることは、通常はない
 	// （ro_root が秘密情報を含む場所を含めば、ro_root の時点で拒否される）。それでも、ro_root の判定に
@@ -144,7 +161,7 @@ func resolveDir(written, rawHome string) (string, error) {
 	}
 	resolved, err := filepath.EvalSymlinks(p)
 	if errors.Is(err, fs.ErrNotExist) {
-		return "", fmt.Errorf("%s は存在しません", p)
+		return "", fmt.Errorf("%s は %w", p, errNotExist)
 	}
 	if err != nil {
 		return "", fmt.Errorf("%s をたどれません（%s）", p, fsReason(err))

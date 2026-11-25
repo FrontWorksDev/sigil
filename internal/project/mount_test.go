@@ -190,7 +190,6 @@ func TestResolveMountsRejectsBadRoot(t *testing.T) {
 	e := newMountEnv(t)
 	cases := map[string]string{
 		"ホーム":    "~/",
-		"存在しない":  "~/nope",
 		"相対パス":   "src",
 		"秘密情報":   "~/.config",
 		"~/.ssh": "~/.ssh",
@@ -336,5 +335,46 @@ func TestMountErrorsDoNotEchoLinkTargets(t *testing.T) {
 	}
 	if err := VerifyMounts(ms); err == nil || !strings.Contains(err.Error(), "循環") {
 		t.Errorf("循環 → %q", err)
+	}
+}
+
+func TestResolveMountsRejectsFolderHoldingSymlinkedConfig(t *testing.T) {
+	// ~/.config が ro_root の中の dotfiles へのリンクなら、ro_root（~/src）そのものが秘密情報を含むので拒否する
+	e := newMountEnv(t)
+	dot := filepath.Join(e.src, "dotfiles")
+	mustMkdir(t, filepath.Join(dot, "config"))
+	cfg := filepath.Join(e.home, ".config")
+	if err := os.RemoveAll(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dot, "config"), cfg); err != nil {
+		t.Fatal(err)
+	}
+	_, err := e.resolve([]string{"~/src/dotfiles"}, "~/src")
+	if err == nil || !strings.Contains(err.Error(), "秘密情報を含む場所") || !strings.Contains(err.Error(), "ro_root") {
+		t.Errorf("err = %v", err)
+	}
+	// ro_root を狭くしても、dotfiles そのものは拒否する
+	mustMkdir(t, filepath.Join(e.src, "repos"))
+	if _, err := e.resolve([]string{"~/src/dotfiles"}, "~/src/repos"); err == nil {
+		t.Error("dotfiles が通ってしまう")
+	}
+}
+
+func TestResolveMountsSkipsMissingRoot(t *testing.T) {
+	// 外付けのディスクの ro_root が外れていても、ほかの ro_root の中の ro は使える
+	e := newMountEnv(t)
+	got, err := e.resolve([]string{"~/src/lib"}, "/Volumes/nope/src", "~/src")
+	if err != nil || len(got) != 1 {
+		t.Fatalf("got = %v, err = %v", got, err)
+	}
+	// どの ro_root にも入らなければエラー。飛ばした ro_root も知らせる
+	_, err = e.resolve([]string{"~/src/lib"}, "/Volumes/nope/src")
+	if err == nil || !strings.Contains(err.Error(), "ro_root の中にありません") || !strings.Contains(err.Error(), "存在しない ro_root（/g/config:1）は飛ばしました") {
+		t.Errorf("err = %v", err)
+	}
+	// 存在しない ro_root を飛ばしても、危険な ro_root はこれまでどおり止める
+	if _, err := e.resolve([]string{"~/src/lib"}, "/Volumes/nope/src", "~/"); err == nil || !strings.Contains(err.Error(), "/g/config:2: ro_root") {
+		t.Errorf("危険な ro_root → %v", err)
 	}
 }

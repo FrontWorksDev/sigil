@@ -94,13 +94,13 @@ func within(p, base string) bool {
 	}
 }
 
-// CheckSafe は、マウントすると危険な場所を拒否する。
-// ホームやその上をマウントすると、~/.ssh や ~/.aws がコンテナから見えてしまう。
-// extra は、ほかに守る場所（sigil の状態フォルダなど）。
 // errTooBroad は、CheckSafe で、ホームや / そのものを指したことを表す。
 // 直し方は呼ぶ側で違う（プロジェクトなら実行する場所、ro_root なら全体設定）ので、案内は呼ぶ側で足す。
 var errTooBroad = errors.New("全体はマウントできません")
 
+// CheckSafe は、マウントすると危険な場所を拒否する。
+// ホームやその上をマウントすると、~/.ssh や ~/.aws がコンテナから見えてしまう。
+// extra は、ほかに守る場所（sigil の状態フォルダなど）。
 func CheckSafe(root, home string, extra ...string) error {
 	for _, p := range []string{"/", "/Users", "/home", home} {
 		if samePath(root, p) {
@@ -113,6 +113,14 @@ func CheckSafe(root, home string, extra ...string) error {
 	sensitive := append([]string(nil), extra...)
 	for _, s := range sensitiveInHome {
 		sensitive = append(sensitive, filepath.Join(home, s))
+	}
+	// 守る場所がシンボリックリンクなら、実体の場所も守る。dotfiles を ~/src/dotfiles に置き、
+	// ~/.config -> ~/src/dotfiles/config とリンクしていると、within(s, root) は s の文字列の親
+	// （~/.config → ~ → ...）しかたどらないので、~/src/dotfiles をマウントさせてしまう
+	for _, s := range sensitive {
+		if r, err := filepath.EvalSymlinks(s); err == nil && r != s {
+			sensitive = append(sensitive, r)
+		}
 	}
 	for _, s := range sensitive {
 		if within(root, s) {

@@ -436,3 +436,15 @@ func TestVerifyMountsRechecksSafe(t *testing.T) {
 		t.Error("extra の中が通ってしまう")
 	}
 }
+
+func TestResolveMountsRejectsProjectPathBeforeResolving(t *testing.T) {
+	// プロジェクトの中のリンクは、解決する前に拒否する（リンクの先に触れない）
+	e := newMountEnv(t)
+	if err := os.Symlink("/nonexistent-sigil-test/x", filepath.Join(e.proj.Root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := e.resolve([]string{"~/src/app/link"}, "~/src")
+	if err == nil || !strings.Contains(err.Error(), "プロジェクトの中") || strings.Contains(err.Error(), "存在しません") {
+		t.Errorf("err = %v", err)
+	}
+}

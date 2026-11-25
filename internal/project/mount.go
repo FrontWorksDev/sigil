@@ -119,6 +119,11 @@ func resolveMount(written, rawHome, home string, roots, lexRoots []string, in Mo
 	if !slices.ContainsFunc(lexRoots, func(root string) bool { return lexWithin(expanded, root) }) {
 		return Mount{}, fmt.Errorf("%s は %w", expanded, errOutsideRoots)
 	}
+	// プロジェクトの中も、解決する前に拒否する。プロジェクト（信頼できないリポジトリ）は、自分の中に
+	// /net/<ホスト> などへのシンボリックリンクを置けるので、解決すると承認より前に触れてしまう
+	if lexWithin(expanded, in.Project.Root) {
+		return Mount{}, fmt.Errorf("%s はプロジェクトの中なので、ro には書けません（すでにマウントされています）", expanded)
+	}
 	host, err := resolveDir(written, rawHome)
 	if err != nil {
 		return Mount{}, err

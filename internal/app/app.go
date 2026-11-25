@@ -34,6 +34,7 @@ const usage = `使い方:
   sigil commit [-- <path>...]
                           コンテナで用意した銘で、確認してコミット・push〔刻印の儀〕
   sigil help              この説明
+  sigil --version         sigil の版（-V でも）
 
 設定:
   <project>/.sigil                渡す環境変数名とポート、読み取り専用のフォルダ（変わるたびに確認）〔契約〕
@@ -75,6 +76,12 @@ func run(args []string, d Deps) error {
 		// 標準出力が端末のときだけバナーを付ける（パイプでは説明だけにする）
 		newStdoutUI(d).Banner()
 		fmt.Fprint(d.Stdout, usage)
+		return nil
+	case "--version", "-V":
+		// help と同じく、op run や docker の確認より前に答える（不具合の報告のときに、
+		// docker や 1Password がなくても版を確かめられるように）。
+		// サブコマンドの version は用意しない。コンテナ内の version を -- なしで実行できるように（issue #6）。
+		printVersion(d)
 		return nil
 	}
 

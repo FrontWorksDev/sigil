@@ -5,10 +5,18 @@ INSTALL_PATH := $(HOME)/.local/bin/sigil
 # 古い Go 版の dev だと確かめられたときだけ消す（実行はせず、埋め込まれた devbox-check の文字列で判定）。
 OLD_PATH := $(HOME)/.local/bin/dev
 
+# sigil --version で表示する版（issue #6）。タグがなければコミットの短い名前になる。
+# git がない場所では空になり、sigil は dev と表示する。
+# - --dirty は付けない。手元の変更は、Go が埋め込む vcs.modified でコミットの側に -dirty を付ける
+#   （git describe --dirty は追跡していないファイルを数えず、食い違うため）。
+# - タグ名には " や $ も使えるので、英数字と ._+- だけでできていなければ空にする。
+#   そのまま下の "..." に入れると、細工したタグで make build のときにシェルのコマンドが動く。
+VERSION := $(shell git describe --tags --always 2>/dev/null | LC_ALL=C grep -E '^[A-Za-z0-9._+-]+$$')
+
 .PHONY: build install test vet fmt check
 
 build:
-	CGO_ENABLED=0 go build -trimpath -o $(BIN) .
+	CGO_ENABLED=0 go build -trimpath -ldflags "-X sigil/internal/app.version=$(VERSION)" -o $(BIN) .
 
 # 置き場所にシンボリックリンクがあると、install はリンク先を上書きしてしまうので、
 # 先にリンクだけを消してから実体を置く。

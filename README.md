@@ -27,6 +27,16 @@ sigil build                   # sigil:latest イメージを作ります
 
 `sigil` は標準ライブラリだけで書かれた 1 つのバイナリです。`image/`（Dockerfile と sigil-check）はバイナリに埋め込まれているので、インストール後はこのリポジトリがなくても `sigil build` できます。
 
+インストールした版は `sigil --version`（`-V` でも）で確かめられます。不具合を報告するときは、この 1 行を添えてください。
+
+```console
+$ sigil --version
+sigil v0.4.0 (commit 57a801c, go1.27.4, darwin/arm64)
+```
+
+- 版は `make build` / `make install` のときに `git describe --tags --always` で埋め込みます。`make` を通さずに `go build` したときは `dev` になります。
+- コミットは、Go がビルドのときに埋め込む git の情報から取ります。手元に変更があるときは `-dirty` が付きます。`make install` し忘れていないかは、このコミットと `git log -1` を比べると分かります。
+
 ## dev（devbox）からの移行
 
 以前は `dev` という名前でした。名前・設定ファイル・コンテナ・ボリューム・イメージを、すべて `sigil` にそろえたので、次の手順で移行してください。
@@ -65,6 +75,7 @@ sigil             # シェル（開発サーバーなど）
 | `sigil commit [-- <path>...]` | コンテナで用意したメッセージで、確認してコミット・push（[詳細](#コミットと-pushsigil-commit)） |
 | `sigil build [args...]` | イメージを作る（ツールの更新もこれ）。引数は `docker build` へ |
 | `sigil help` | 使い方 |
+| `sigil --version` / `-V` | sigil の版 |
 
 - プロジェクトは、git リポジトリの最上位です（git でなければカレントディレクトリ）。サブフォルダで実行すると、コンテナ内でも同じサブフォルダで動きます。
 - ホームディレクトリそのものや、`/`、`/Users` では動きません（ホーム全体をマウントしないため）。`~/.ssh`、`~/.aws`、`~/.config`、`~/Library` などの中でも動きません。

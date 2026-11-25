@@ -2,12 +2,15 @@ package docker
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
+
+	"sigil/internal/project"
 )
 
 // Runner は外部コマンドを実行する。終了コードが 0 以外ならエラーを返す。
@@ -89,6 +92,23 @@ func (c Client) Inspect(name string) (State, string, error) {
 		return Stopped, fields[2], nil
 	}
 	return Missing, "", nil
+}
+
+// ReadOnlyMounts は、コンテナの作成時に承認した ro のマウント（ReadOnlyLabel）を返す。ラベルがなければ nil。
+//
+// 読めないときはエラーにする。確かめられないまま docker start すると、差し替えられたパスを
+// マウントしかねないため（呼ぶ側は起動しない）。
+func (c Client) ReadOnlyMounts(name string) ([]project.Mount, error) {
+	var out bytes.Buffer
+	args := []string{"container", "inspect", "--format", "{{json .Config.Labels}}", name}
+	if err := c.R.Run("docker", args, &out, nil); err != nil {
+		return nil, fmt.Errorf("%s のラベルを読めません（%w）", name, err)
+	}
+	var labels map[string]string
+	if err := json.Unmarshal(bytes.TrimSpace(out.Bytes()), &labels); err != nil {
+		return nil, fmt.Errorf("%s のラベルを読めません（%w）", name, err)
+	}
+	return DecodeReadOnly(labels[ReadOnlyLabel])
 }
 
 // ImageExists はイメージがあるかを返す。

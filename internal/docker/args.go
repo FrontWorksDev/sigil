@@ -2,6 +2,8 @@
 package docker
 
 import (
+	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -16,6 +18,10 @@ const (
 	LayoutVersion = "2"
 	// ProjectLabel は、コンテナがどのプロジェクトのものかを示すラベル。sigil ls で使う。
 	ProjectLabel = "sigil.project"
+	// ReadOnlyLabel は、承認した ro のマウント（解決したパスとマウント先の JSON）を残すラベル。
+	// docker は docker start のたびにマウント元のパスを解決し直すので、停止中のコンテナを起動する前に、
+	// パスが作成時から差し替えられていないかを、このラベルと比べて確かめる（20 章「既存のコンテナ」）。
+	ReadOnlyLabel = "sigil.ro"
 
 	containerHome = "/home/dev"
 )
@@ -40,6 +46,28 @@ type RunSpec struct {
 	ReadOnly []project.Mount
 }
 
+// EncodeReadOnly は、ReadOnlyLabel の値を作る。
+func EncodeReadOnly(ms []project.Mount) string {
+	b, err := json.Marshal(ms)
+	if err != nil {
+		// 文字列だけの構造体なので失敗しない
+		panic(err)
+	}
+	return string(b)
+}
+
+// DecodeReadOnly は、ReadOnlyLabel の値を読む。空ならマウントはない。
+func DecodeReadOnly(v string) ([]project.Mount, error) {
+	if v == "" {
+		return nil, nil
+	}
+	var ms []project.Mount
+	if err := json.Unmarshal([]byte(v), &ms); err != nil {
+		return nil, fmt.Errorf("%s ラベルを読めません: %w", ReadOnlyLabel, err)
+	}
+	return ms, nil
+}
+
 // RunArgs は docker run の引数を返す。
 //
 // ホーム、~/.ssh、~/.aws、Docker ソケットは絶対にマウントしない。
@@ -55,6 +83,9 @@ func RunArgs(s RunSpec) []string {
 		"--cap-drop=ALL",
 		"--security-opt=no-new-privileges",
 		"-v", s.ProjectRoot + ":" + s.ContainerPath,
+	}
+	if len(s.ReadOnly) > 0 {
+		args = append(args, "--label", ReadOnlyLabel+"="+EncodeReadOnly(s.ReadOnly))
 	}
 	if s.HasGit {
 		// .git には、ホストの git が実行する hooks や config がある。

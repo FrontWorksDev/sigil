@@ -1,11 +1,16 @@
 package app
 
 import (
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"sigil/internal/docker"
+	"sigil/internal/project"
 )
 
 // roEnv は、ro_root（~/src）と、マウントされる側のリポジトリ（~/src/lib、~/src/lib-v2）を用意し、
@@ -160,5 +165,94 @@ func TestReadOnlyMountMissingBeforeRunIsNotCalledRewritten(t *testing.T) {
 	out := e.stderr.String()
 	if !strings.Contains(out, "写本の在り処を確かめられません") || strings.Contains(out, "書き換えられました") {
 		t.Errorf("stderr = %s", out)
+	}
+}
+
+// stoppedWithMount は、~/src/lib を ro でマウントした、停止中のコンテナを偽の docker に設定する。
+func stoppedWithMount(t *testing.T, e *testEnv) string {
+	t.Helper()
+	lib, err := filepath.EvalSymlinks(filepath.Join(e.home, "src", "lib"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.container("exited", "2")
+	label := docker.EncodeReadOnly([]project.Mount{{Host: lib, Container: "/workspace/lib"}})
+	labels, _ := json.Marshal(map[string]string{docker.LayoutLabel: "2", docker.ReadOnlyLabel: label})
+	e.runner.on("docker container inspect", string(labels)+"\n", nil)
+	return lib
+}
+
+func TestStoppedContainerWithUnchangedMountIsStarted(t *testing.T) {
+	e := roEnv(t)
+	stoppedWithMount(t, e)
+	if code := e.run(); code != 0 {
+		t.Fatal(e.stderr.String())
+	}
+	if len(e.runner.find("docker start")) != 1 {
+		t.Errorf("calls = %v", e.runner.calls)
+	}
+}
+
+func TestStoppedContainerWithSwappedMountIsNotStarted(t *testing.T) {
+	// docker start はマウント元を解決し直すので、作成のあとで差し替えられたパスを起動前に見つける
+	e := roEnv(t)
+	lib := stoppedWithMount(t, e)
+	if err := os.Rename(lib, lib+"-moved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(e.home, "src", "lib-v2"), lib); err != nil {
+		t.Fatal(err)
+	}
+	if code := e.run(); code != 1 {
+		t.Fatalf("code = %d", code)
+	}
+	if len(e.runner.find("docker start")) != 0 {
+		t.Error("差し替えられたのに起動した")
+	}
+	out := e.stderr.String()
+	if !strings.Contains(out, "写本が書き換えられました") || !strings.Contains(out, "sigil stop") {
+		t.Errorf("stderr = %s", out)
+	}
+}
+
+func TestStoppedContainerWithMissingMountIsNotStarted(t *testing.T) {
+	e := roEnv(t)
+	lib := stoppedWithMount(t, e)
+	if err := os.Remove(lib); err != nil {
+		t.Fatal(err)
+	}
+	if code := e.run(); code != 1 {
+		t.Fatalf("code = %d", code)
+	}
+	if len(e.runner.find("docker start")) != 0 {
+		t.Error("消えたのに起動した")
+	}
+	out := e.stderr.String()
+	if !strings.Contains(out, "写本の在り処を確かめられません") || strings.Contains(out, "書き換えられました") {
+		t.Errorf("stderr = %s", out)
+	}
+}
+
+func TestStoppedContainerLabelUnreadableIsNotStarted(t *testing.T) {
+	e := newEnv(t)
+	e.container("exited", "2")
+	e.runner.on("docker container inspect", "", errors.New("daemon error"))
+	if code := e.run(); code != 1 {
+		t.Fatalf("code = %d", code)
+	}
+	if len(e.runner.find("docker start")) != 0 {
+		t.Error("確かめられないのに起動した")
+	}
+}
+
+func TestRunningContainerDoesNotReadMounts(t *testing.T) {
+	// 実行中のコンテナは、マウントがすでに済んでいるので確かめない（待ち時間を足さない）
+	e := newEnv(t)
+	e.container("running", "2")
+	if code := e.run(); code != 0 {
+		t.Fatal(e.stderr.String())
+	}
+	if len(e.runner.find("docker container inspect")) != 0 {
+		t.Error("実行中なのにラベルを読んだ")
 	}
 }

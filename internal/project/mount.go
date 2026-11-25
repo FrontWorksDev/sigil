@@ -176,3 +176,39 @@ func checkPrintable(p string) error {
 	}
 	return nil
 }
+
+// ErrMountChanged は、VerifyMounts で、パスが作成時と違う場所を指すようになったことを表す。
+var ErrMountChanged = errors.New("ro のフォルダの場所が、コンテナを作ったときから変わりました")
+
+// VerifyMounts は、停止中のコンテナを docker start する前に、作成時に承認したマウント（ラベルに残したもの）の
+// ホスト側のパスが、今も同じフォルダを指すかを確かめる。
+//
+// docker は起動のたびにマウント元のパスを解決し直す。作成時のパスはシンボリックリンクを解決済みなので、
+// 途中のフォルダがシンボリックリンクに差し替えられていれば、解決し直した結果が変わる。
+// 差し替えには、別のプロジェクトのコンテナが書き込めるフォルダなどが使われうる（20 章）。
+func VerifyMounts(ms []Mount) error {
+	for _, m := range ms {
+		// ラベルはコンテナからは書き換えられないが、念のため形を確かめる
+		if !filepath.IsAbs(m.Host) || filepath.Clean(m.Host) != m.Host || !strings.HasPrefix(m.Container, "/workspace/") {
+			return fmt.Errorf("ro のマウントの記録が不正です: %q → %q", m.Host, m.Container)
+		}
+		resolved, err := filepath.EvalSymlinks(m.Host)
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%s は存在しません", m.Host)
+		}
+		if err != nil {
+			return err
+		}
+		if resolved != m.Host {
+			return fmt.Errorf("%w: %s → %s", ErrMountChanged, m.Host, resolved)
+		}
+		fi, err := os.Stat(resolved)
+		if err != nil {
+			return err
+		}
+		if !fi.IsDir() {
+			return fmt.Errorf("%w: %s はフォルダではありません", ErrMountChanged, m.Host)
+		}
+	}
+	return nil
+}

@@ -588,6 +588,10 @@ func useExisting(u *ui.UI, client docker.Client, p project.Project, st docker.St
 		return loref("旧き紋章の領域です", "%s は古い sigil で作られています。sigil stop してから、もう一度実行してください", p.ContainerName)
 	}
 	if st == docker.Stopped {
+		// docker start は ro のマウント元を解決し直すので、作成時から差し替えられていないかを先に確かめる
+		if err := verifyExistingMounts(client, p); err != nil {
+			return err
+		}
 		err := u.Spin("領域を再展開する  "+p.ContainerName, func(stderr io.Writer) error {
 			c := client
 			c.Stderr = stderr
@@ -598,6 +602,24 @@ func useExisting(u *ui.UI, client docker.Client, p project.Project, st docker.St
 		}
 	}
 	u.Enter(filepath.Base(p.Root))
+	return nil
+}
+
+// verifyExistingMounts は、停止中のコンテナを起動する前に、作成時に承認した ro のフォルダの場所が
+// 変わっていないかを確かめる（20 章「既存のコンテナ」）。変わっていれば起動しない。
+// 既存のコンテナのマウントは変えられないので、作り直し（sigil stop）を案内する。
+func verifyExistingMounts(client docker.Client, p project.Project) error {
+	ms, err := client.ReadOnlyMounts(p.ContainerName)
+	if err != nil {
+		return loref("写本の在り処を確かめられません", "%w", err)
+	}
+	if err := project.VerifyMounts(ms); err != nil {
+		title := "写本の在り処を確かめられません"
+		if errors.Is(err, project.ErrMountChanged) {
+			title = "写本が書き換えられました"
+		}
+		return loref(title, "%s を起動しません（%w）。sigil stop してから、もう一度実行してください", p.ContainerName, err)
+	}
 	return nil
 }
 

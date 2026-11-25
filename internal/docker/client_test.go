@@ -2,6 +2,7 @@ package docker
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"reflect"
@@ -107,6 +108,44 @@ func TestInspectArgs(t *testing.T) {
 	if f.calls[0].name != "docker" || !reflect.DeepEqual(f.calls[0].args, want) {
 		t.Errorf("argv = %v", f.calls[0])
 	}
+}
+
+func TestReadOnlyMounts(t *testing.T) {
+	label := `[{"Host":"/h/lib","Container":"/workspace/lib"}]`
+	labelsJSON := `{"sigil.layout":"2","sigil.ro":` + strconvQuote(label) + "}\n"
+	f := &fakeRunner{responses: []response{
+		{stdout: labelsJSON},
+		{stdout: `{"sigil.layout":"2"}` + "\n"},
+		{stdout: "null\n"},
+		{err: errors.New("no such container")},
+		{stdout: ""},
+		{stdout: `{"sigil.ro":"broken"}`},
+	}}
+	c := Client{R: f}
+	ms, err := c.ReadOnlyMounts("c")
+	if err != nil || len(ms) != 1 || ms[0].Host != "/h/lib" || ms[0].Container != "/workspace/lib" {
+		t.Errorf("ラベルあり → %v, %v", ms, err)
+	}
+	want := []string{"container", "inspect", "--format", "{{json .Config.Labels}}", "c"}
+	if !reflect.DeepEqual(f.calls[0].args, want) {
+		t.Errorf("argv = %v", f.calls[0].args)
+	}
+	for _, name := range []string{"ラベルなし", "ラベルが null"} {
+		if ms, err := c.ReadOnlyMounts("c"); err != nil || ms != nil {
+			t.Errorf("%s → %v, %v", name, ms, err)
+		}
+	}
+	// 確かめられないときはエラー（呼ぶ側は起動しない）
+	for _, name := range []string{"docker の失敗", "空の出力", "壊れたラベル"} {
+		if _, err := c.ReadOnlyMounts("c"); err == nil {
+			t.Errorf("%s なのにエラーにならない", name)
+		}
+	}
+}
+
+func strconvQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }
 
 func TestImageExists(t *testing.T) {

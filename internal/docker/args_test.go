@@ -222,4 +222,21 @@ func TestRunArgsReadOnlyMounts(t *testing.T) {
 	if got := len(flagValues(RunArgs(sampleSpec()), "-v")); got != len(vols)-2 {
 		t.Errorf("ro なしの -v の数 = %d", got)
 	}
+
+	// 承認したマウントをラベルに残す（停止中のコンテナを起動する前に比べるため）
+	var label string
+	for _, l := range flagValues(RunArgs(s), "--label") {
+		if v, ok := strings.CutPrefix(l, ReadOnlyLabel+"="); ok {
+			label = v
+		}
+	}
+	got, err := DecodeReadOnly(label)
+	if err != nil || !reflect.DeepEqual(got, s.ReadOnly) {
+		t.Errorf("ラベル %q → %v, %v", label, got, err)
+	}
+	for _, l := range flagValues(RunArgs(sampleSpec()), "--label") {
+		if strings.HasPrefix(l, ReadOnlyLabel+"=") {
+			t.Errorf("ro なしなのにラベルがある: %s", l)
+		}
+	}
 }

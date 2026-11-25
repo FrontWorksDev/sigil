@@ -1,6 +1,7 @@
 package project
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -230,6 +231,57 @@ func TestResolveMountCheckSafeDefenceInDepth(t *testing.T) {
 		_, err := resolveMount(upper, e.home, e.home, []string{e.base}, in)
 		if err == nil || !strings.Contains(err.Error(), "全体はマウントできません") {
 			t.Errorf("大文字小文字の違うホーム: err = %v", err)
+		}
+	}
+}
+
+func TestVerifyMounts(t *testing.T) {
+	e := newMountEnv(t)
+	ok := []Mount{{Host: filepath.Join(e.src, "other", "lib"), Container: "/workspace/lib"}}
+	if err := VerifyMounts(ok); err != nil {
+		t.Fatalf("変わっていないのにエラー: %v", err)
+	}
+	if err := VerifyMounts(nil); err != nil {
+		t.Errorf("マウントなし → %v", err)
+	}
+
+	// 途中のフォルダをシンボリックリンクに差し替える（別のプロジェクトのコンテナが書き込める場所を想定）
+	other := filepath.Join(e.src, "other")
+	if err := os.Rename(other, filepath.Join(e.src, "other-moved")); err != nil {
+		t.Fatal(err)
+	}
+	mustMkdir(t, filepath.Join(e.home, ".ssh", "lib"))
+	if err := os.Symlink(filepath.Join(e.home, ".ssh"), other); err != nil {
+		t.Fatal(err)
+	}
+	err := VerifyMounts(ok)
+	if !errors.Is(err, ErrMountChanged) {
+		t.Errorf("差し替えたのに ErrMountChanged にならない: %v", err)
+	}
+
+	// 消えただけなら ErrMountChanged ではない（呼ぶ側は「書き換えられた」とは言わない）
+	gone := []Mount{{Host: filepath.Join(e.src, "gone"), Container: "/workspace/gone"}}
+	if err := VerifyMounts(gone); err == nil || errors.Is(err, ErrMountChanged) {
+		t.Errorf("消えた → %v", err)
+	}
+
+	// フォルダがファイルに置き換えられた
+	file := filepath.Join(e.src, "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyMounts([]Mount{{Host: file, Container: "/workspace/file"}}); !errors.Is(err, ErrMountChanged) {
+		t.Errorf("ファイル → %v", err)
+	}
+
+	// 記録の形が不正
+	for _, m := range []Mount{
+		{Host: "rel/lib", Container: "/workspace/lib"},
+		{Host: e.src + "/../src", Container: "/workspace/src"},
+		{Host: e.src, Container: "/home/dev"},
+	} {
+		if err := VerifyMounts([]Mount{m}); err == nil || !strings.Contains(err.Error(), "記録が不正") {
+			t.Errorf("%v → %v", m, err)
 		}
 	}
 }

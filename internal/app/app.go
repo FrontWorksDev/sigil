@@ -393,7 +393,7 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 	}
 	if st != docker.Missing {
 		// 既存のコンテナには、作成時に渡したものが使われる。設定の読み込みや承認はしない。
-		return false, useExisting(u, client, p, st, layout)
+		return false, useExisting(u, client, p, st, layout, home, dd)
 	}
 
 	s, err := loadSettings(p, home, dd)
@@ -561,7 +561,7 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 		// そのときは失敗とせず、そのコンテナを使う。
 		if st, layout, ierr := client.Inspect(p.ContainerName); ierr == nil && st != docker.Missing {
 			info(d, "別のペインで展開された領域 %s に入ります", p.ContainerName)
-			return false, useExisting(u, client, p, st, layout)
+			return false, useExisting(u, client, p, st, layout, home, dd)
 		}
 		return false, loref("領域を展開できませんでした", "コンテナ %s を作成できませんでした: %w", p.ContainerName, err)
 	}
@@ -583,13 +583,13 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 
 // useExisting は既存のコンテナを使えるようにする。古い layout ならエラー、停止中なら起動する。
 // 演出は 1 行だけにし、待ち時間は足さない（停止中なら docker start の間だけスピナーを回す）。
-func useExisting(u *ui.UI, client docker.Client, p project.Project, st docker.State, layout string) error {
+func useExisting(u *ui.UI, client docker.Client, p project.Project, st docker.State, layout, home string, dd dirs) error {
 	if layout != docker.LayoutVersion {
 		return loref("旧き紋章の領域です", "%s は古い sigil で作られています。sigil stop してから、もう一度実行してください", p.ContainerName)
 	}
 	if st == docker.Stopped {
 		// docker start は ro のマウント元を解決し直すので、作成時から差し替えられていないかを先に確かめる
-		if err := verifyExistingMounts(client, p); err != nil {
+		if err := verifyExistingMounts(client, p, home, dd); err != nil {
 			return err
 		}
 		err := u.Spin("領域を再展開する  "+p.ContainerName, func(stderr io.Writer) error {
@@ -608,12 +608,13 @@ func useExisting(u *ui.UI, client docker.Client, p project.Project, st docker.St
 // verifyExistingMounts は、停止中のコンテナを起動する前に、作成時に承認した ro のフォルダの場所が
 // 変わっていないかを確かめる（20 章「既存のコンテナ」）。変わっていれば起動しない。
 // 既存のコンテナのマウントは変えられないので、作り直し（sigil stop）を案内する。
-func verifyExistingMounts(client docker.Client, p project.Project) error {
+func verifyExistingMounts(client docker.Client, p project.Project, home string, dd dirs) error {
 	ms, err := client.ReadOnlyMounts(p.ContainerName)
 	if err != nil {
 		return loref("写本の在り処を確かめられません", "%w", err)
 	}
-	if err := project.VerifyMounts(ms); err != nil {
+	// 守る場所は、作成時（loadSettings の MountInput）と同じものを渡す
+	if err := project.VerifyMounts(ms, home, dd.config, dd.state); err != nil {
 		title := "写本の在り処を確かめられません"
 		if errors.Is(err, project.ErrMountChanged) {
 			title = "写本が書き換えられました"

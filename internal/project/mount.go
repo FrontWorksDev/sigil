@@ -55,7 +55,7 @@ func ResolveMounts(in MountInput) ([]Mount, error) {
 		// XDG_CONFIG_HOME で場所が変わるので、実際に読む全体設定のパスを案内する
 		return nil, fmt.Errorf("%s:%d: ro でマウントしてよい範囲が決まっていません。全体設定（%s）に ro_root <フォルダ> を書いてください", in.SigilPath, r.Line, in.GlobalPath)
 	}
-	var roots []string
+	var roots, lexRoots []string
 	var missing []string
 	for _, r := range in.Roots {
 		p, err := resolveDir(r.Path, in.Home)
@@ -73,11 +73,14 @@ func ResolveMounts(in MountInput) ([]Mount, error) {
 			return nil, fmt.Errorf("%s:%d: ro_root %w。ro_root には、他人のコードに見せてよいリポジトリの置き場（例: ~/src）を書いてください", in.GlobalPath, r.Line, err)
 		}
 		roots = append(roots, p)
+		// 書かれたまま（展開のみ）の形も、文字列での先の確かめに使う（ホームがシンボリックリンクのときなど）
+		raw, _ := expandPath(r.Path, in.Home) // resolveDir で確かめ済み
+		lexRoots = append(lexRoots, p, raw)
 	}
 
 	var out []Mount
 	for _, r := range in.ReadOnly {
-		m, err := resolveMount(r.Path, in.Home, home, roots, in)
+		m, err := resolveMount(r.Path, in.Home, home, roots, lexRoots, in)
 		if errors.Is(err, errOutsideRoots) && len(missing) > 0 {
 			err = fmt.Errorf("%w。存在しない ro_root（%s）は飛ばしました", err, strings.Join(missing, "、"))
 		}
@@ -104,7 +107,18 @@ var (
 )
 
 // resolveMount は ro の 1 行を確かめる。rawHome は ~/ の展開に、home（解決済み）は CheckSafe に使う。
-func resolveMount(written, rawHome, home string, roots []string, in MountInput) (Mount, error) {
+// lexRoots は、ファイルシステムに触れる前の、文字列での確かめに使う ro_root（解決したものと、書かれたもの）。
+func resolveMount(written, rawHome, home string, roots, lexRoots []string, in MountInput) (Mount, error) {
+	// ファイルシステムに触れる前に、文字列で ro_root の中かを確かめる。.sigil は承認より前に読むので、
+	// 先に EvalSymlinks すると、/net/<ホスト>/...（macOS の autofs）を書くだけで、承認の画面より前に
+	// 外部のホストへ接続させたり、ホストにどんなパスがあるかを探らせたりできてしまう
+	expanded, err := expandPath(written, rawHome)
+	if err != nil {
+		return Mount{}, err
+	}
+	if !slices.ContainsFunc(lexRoots, func(root string) bool { return lexWithin(expanded, root) }) {
+		return Mount{}, fmt.Errorf("%s は %w", expanded, errOutsideRoots)
+	}
 	host, err := resolveDir(written, rawHome)
 	if err != nil {
 		return Mount{}, err
@@ -129,7 +143,6 @@ func resolveMount(written, rawHome, home string, roots []string, in MountInput) 
 	}
 
 	// マウント先の名前は、シンボリックリンクの先ではなく、利用者が書いた名前にする
-	expanded, _ := config.ExpandHome(written, rawHome) // resolveDir で確かめ済み
 	name := filepath.Base(filepath.Clean(expanded))
 	if name == "" || name == "." || name == ".." || name == "/" {
 		return Mount{}, fmt.Errorf("%s からマウント先の名前を決められません", written)
@@ -145,8 +158,19 @@ func resolveMount(written, rawHome, home string, roots []string, in MountInput) 
 	return m, nil
 }
 
-// resolveDir は、~/ か / で始まるパスを、シンボリックリンクを解決したフォルダのパスにする。
-func resolveDir(written, rawHome string) (string, error) {
+// lexWithin は、p が base そのものか、その中にあるかを、文字列だけで返す（ファイルシステムに触れない）。
+// APFS は大文字小文字を区別しないので、大文字小文字を無視して比べる（広く通すのはこの先の確かめの入口だけで、
+// 解決したパスで within による本来の確かめをする）。
+func lexWithin(p, base string) bool {
+	p, base = filepath.Clean(p), filepath.Clean(base)
+	if base == "/" || strings.EqualFold(p, base) {
+		return true
+	}
+	return len(p) > len(base) && strings.EqualFold(p[:len(base)+1], base+"/")
+}
+
+// expandPath は、~/ を展開し、.. と表示されない文字を拒否する。ファイルシステムには触れない。
+func expandPath(written, rawHome string) (string, error) {
 	p, err := config.ExpandHome(written, rawHome)
 	if err != nil {
 		return "", err
@@ -157,6 +181,15 @@ func resolveDir(written, rawHome string) (string, error) {
 	}
 	// 承認の画面を偽装させないため、表示されない文字（制御文字、U+202E などの書式文字）を拒否する
 	if err := checkPrintable(p); err != nil {
+		return "", err
+	}
+	return p, nil
+}
+
+// resolveDir は、~/ か / で始まるパスを、シンボリックリンクを解決したフォルダのパスにする。
+func resolveDir(written, rawHome string) (string, error) {
+	p, err := expandPath(written, rawHome)
+	if err != nil {
 		return "", err
 	}
 	resolved, err := filepath.EvalSymlinks(p)
@@ -179,6 +212,15 @@ func resolveDir(written, rawHome string) (string, error) {
 	return resolved, nil
 }
 
+// blankLooking は、unicode.IsPrint が真で unicode.IsSpace が偽なのに、空白のように見える（何も描かれない）文字。
+var blankLooking = map[rune]bool{
+	0x115F: true, // HANGUL CHOSEONG FILLER
+	0x1160: true, // HANGUL JUNGSEONG FILLER
+	0x2800: true, // BRAILLE PATTERN BLANK
+	0x3164: true, // HANGUL FILLER
+	0xFFA0: true, // HALFWIDTH HANGUL FILLER
+}
+
 // checkPrintable は、表示されない文字と、ASCII 以外の空白を拒否する。
 // 全角空白（U+3000）や NBSP（U+00A0）も拒否するのは、承認の画面で普通の空白と見分けられず、
 // 別のフォルダと見誤らせうるため（unicode.IsPrint は ASCII の空白だけを表示できる文字とする）。
@@ -190,6 +232,8 @@ func checkPrintable(p string) error {
 		switch {
 		case r != ' ' && unicode.IsSpace(r):
 			return fmt.Errorf("パスに ASCII 以外の空白（U+%04X）があります。承認の画面で普通の空白と見分けられないので使えません: %q", r, p)
+		case blankLooking[r]:
+			return fmt.Errorf("パスに空白に見える文字（U+%04X）があります。承認の画面で普通の空白と見分けられないので使えません: %q", r, p)
 		case !unicode.IsPrint(r):
 			return fmt.Errorf("パスに表示されない文字（U+%04X）があります: %q", r, p)
 		}
@@ -206,7 +250,13 @@ var ErrMountChanged = errors.New("ro のフォルダの場所が、コンテナ�
 // docker は起動のたびにマウント元のパスを解決し直す。作成時のパスはシンボリックリンクを解決済みなので、
 // 途中のフォルダがシンボリックリンクに差し替えられていれば、解決し直した結果が変わる。
 // 差し替えには、別のプロジェクトのコンテナが書き込めるフォルダなどが使われうる（20 章）。
-func VerifyMounts(ms []Mount) error {
+//
+// 作成のあとで守る場所が変わる（~/.config をそのフォルダにリンクした、など）こともあるので、CheckSafe もかけ直す。
+// home と extra は CheckSafe に渡す。ro_root は読み直さない（既存のコンテナでは設定を読まない。9 章）。
+func VerifyMounts(ms []Mount, home string, extra ...string) error {
+	if h, err := filepath.EvalSymlinks(home); err == nil {
+		home = h
+	}
 	for _, m := range ms {
 		// ラベルはコンテナからは書き換えられないが、イメージのラベル（ベースのイメージを含む）を受け継ぐことがある。
 		// 信頼できない値として形を確かめ、表示されない文字があればエラーにも載せない（%q で出す）
@@ -231,6 +281,9 @@ func VerifyMounts(ms []Mount) error {
 		}
 		if !fi.IsDir() {
 			return fmt.Errorf("%w: %s はフォルダではありません", ErrMountChanged, m.Host)
+		}
+		if err := CheckSafe(m.Host, home, extra...); err != nil {
+			return err
 		}
 	}
 	return nil

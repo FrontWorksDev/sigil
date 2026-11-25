@@ -224,7 +224,7 @@ func TestResolveMountCheckSafeDefenceInDepth(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := resolveMount(c.path, e.home, e.home, []string{e.base}, in)
+			_, err := resolveMount(c.path, e.home, e.home, []string{e.base}, []string{e.base}, in)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Errorf("err = %v, want %q を含む", err, c.want)
 			}
@@ -233,7 +233,7 @@ func TestResolveMountCheckSafeDefenceInDepth(t *testing.T) {
 	// 大文字小文字だけ違うホーム（大文字小文字を区別しないファイルシステムでだけ、同じ場所として確かめられる）
 	upper := filepath.Join(e.base, "HOME")
 	if _, err := os.Stat(upper); err == nil {
-		_, err := resolveMount(upper, e.home, e.home, []string{e.base}, in)
+		_, err := resolveMount(upper, e.home, e.home, []string{e.base}, []string{e.base}, in)
 		if err == nil || !strings.Contains(err.Error(), "全体はマウントできません") {
 			t.Errorf("大文字小文字の違うホーム: err = %v", err)
 		}
@@ -243,10 +243,10 @@ func TestResolveMountCheckSafeDefenceInDepth(t *testing.T) {
 func TestVerifyMounts(t *testing.T) {
 	e := newMountEnv(t)
 	ok := []Mount{{Host: filepath.Join(e.src, "other", "lib"), Container: "/workspace/lib"}}
-	if err := VerifyMounts(ok); err != nil {
+	if err := VerifyMounts(ok, e.home); err != nil {
 		t.Fatalf("変わっていないのにエラー: %v", err)
 	}
-	if err := VerifyMounts(nil); err != nil {
+	if err := VerifyMounts(nil, e.home); err != nil {
 		t.Errorf("マウントなし → %v", err)
 	}
 
@@ -259,14 +259,14 @@ func TestVerifyMounts(t *testing.T) {
 	if err := os.Symlink(filepath.Join(e.home, ".ssh"), other); err != nil {
 		t.Fatal(err)
 	}
-	err := VerifyMounts(ok)
+	err := VerifyMounts(ok, e.home)
 	if !errors.Is(err, ErrMountChanged) {
 		t.Errorf("差し替えたのに ErrMountChanged にならない: %v", err)
 	}
 
 	// 消えただけなら ErrMountChanged ではない（呼ぶ側は「書き換えられた」とは言わない）
 	gone := []Mount{{Host: filepath.Join(e.src, "gone"), Container: "/workspace/gone"}}
-	if err := VerifyMounts(gone); err == nil || errors.Is(err, ErrMountChanged) {
+	if err := VerifyMounts(gone, e.home); err == nil || errors.Is(err, ErrMountChanged) {
 		t.Errorf("消えた → %v", err)
 	}
 
@@ -275,7 +275,7 @@ func TestVerifyMounts(t *testing.T) {
 	if err := os.WriteFile(file, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := VerifyMounts([]Mount{{Host: file, Container: "/workspace/file"}}); !errors.Is(err, ErrMountChanged) {
+	if err := VerifyMounts([]Mount{{Host: file, Container: "/workspace/file"}}, e.home); !errors.Is(err, ErrMountChanged) {
 		t.Errorf("ファイル → %v", err)
 	}
 
@@ -287,7 +287,7 @@ func TestVerifyMounts(t *testing.T) {
 		{Host: e.src + "/../src", Container: "/workspace/src"},
 		{Host: e.src, Container: "/home/dev"},
 	} {
-		if err := VerifyMounts([]Mount{m}); err == nil || !strings.Contains(err.Error(), "記録が不正") || strings.ContainsRune(err.Error(), 0x1b) {
+		if err := VerifyMounts([]Mount{m}, e.home); err == nil || !strings.Contains(err.Error(), "記録が不正") || strings.ContainsRune(err.Error(), 0x1b) {
 			t.Errorf("%v → %v", m, err)
 		}
 	}
@@ -321,7 +321,7 @@ func TestMountErrorsDoNotEchoLinkTargets(t *testing.T) {
 	if err := os.Symlink(evilDir, lib); err != nil {
 		t.Fatal(err)
 	}
-	err = VerifyMounts(ms)
+	err = VerifyMounts(ms, e.home)
 	if !errors.Is(err, ErrMountChanged) || strings.ContainsRune(err.Error(), 0x1b) {
 		t.Errorf("差し替え → %q", err)
 	}
@@ -333,7 +333,7 @@ func TestMountErrorsDoNotEchoLinkTargets(t *testing.T) {
 	if err := os.Symlink(lib, lib); err != nil {
 		t.Fatal(err)
 	}
-	if err := VerifyMounts(ms); err == nil || !strings.Contains(err.Error(), "循環") {
+	if err := VerifyMounts(ms, e.home); err == nil || !strings.Contains(err.Error(), "循環") {
 		t.Errorf("循環 → %q", err)
 	}
 }
@@ -376,5 +376,63 @@ func TestResolveMountsSkipsMissingRoot(t *testing.T) {
 	// 存在しない ro_root を飛ばしても、危険な ro_root はこれまでどおり止める
 	if _, err := e.resolve([]string{"~/src/lib"}, "/Volumes/nope/src", "~/"); err == nil || !strings.Contains(err.Error(), "/g/config:2: ro_root") {
 		t.Errorf("危険な ro_root → %v", err)
+	}
+}
+
+func TestResolveMountsChecksRootsBeforeTouchingPath(t *testing.T) {
+	// ro_root の外は、ファイルシステムに触れる前に拒否する（/net/<ホスト> の autofs などに触れさせない）。
+	// 存在しないパスでも「存在しません」ではなく「ro_root の中にありません」になることで、順番を確かめる
+	e := newMountEnv(t)
+	for _, ro := range []string{"/net/attacker.example/x", "/nonexistent-sigil-test/lib", "~/nope"} {
+		_, err := e.resolve([]string{ro}, "~/src")
+		if err == nil || !strings.Contains(err.Error(), "ro_root の中にありません") || strings.Contains(err.Error(), "存在しません") {
+			t.Errorf("%s → %v", ro, err)
+		}
+	}
+	// 大文字小文字だけ違う書き方は、入口では通し、解決したパスで本来の確かめをする
+	if _, err := os.Stat(filepath.Join(e.home, "SRC")); err == nil {
+		if _, err := e.resolve([]string{"~/SRC/lib"}, "~/src"); err != nil {
+			t.Errorf("~/SRC/lib → %v", err)
+		}
+	}
+	// 前方一致するだけの別フォルダは、入口で拒否する
+	if !lexWithin("/a/src", "/a/src") || !lexWithin("/a/src/x", "/a/src/") || lexWithin("/a/srcx", "/a/src") || lexWithin("/a", "/a/src") {
+		t.Error("lexWithin の判定が違う")
+	}
+}
+
+func TestCheckPrintableRejectsBlankLookingLetters(t *testing.T) {
+	for _, r := range []rune{0x115F, 0x1160, 0x2800, 0x3164, 0xFFA0} {
+		p := "/x/lib" + string(r) + "v2"
+		if err := checkPrintable(p); err == nil || !strings.Contains(err.Error(), "空白に見える文字") {
+			t.Errorf("U+%04X → %v", r, err)
+		}
+	}
+}
+
+func TestVerifyMountsRechecksSafe(t *testing.T) {
+	// 作成のあとで ~/.config をそのフォルダの中にリンクしたら、起動しない
+	e := newMountEnv(t)
+	dot := filepath.Join(e.src, "dotfiles")
+	mustMkdir(t, filepath.Join(dot, "config"))
+	ms := []Mount{{Host: dot, Container: "/workspace/dotfiles"}}
+	if err := VerifyMounts(ms, e.home); err != nil {
+		t.Fatalf("リンクの前 → %v", err)
+	}
+	cfg := filepath.Join(e.home, ".config")
+	if err := os.RemoveAll(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dot, "config"), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyMounts(ms, e.home); err == nil || !strings.Contains(err.Error(), "秘密情報を含む場所") {
+		t.Errorf("リンクの後 → %v", err)
+	}
+	// 守る場所（extra）の中も拒否する
+	extra := filepath.Join(e.src, "state")
+	mustMkdir(t, extra)
+	if err := VerifyMounts([]Mount{{Host: extra, Container: "/workspace/state"}}, e.home, extra); err == nil {
+		t.Error("extra の中が通ってしまう")
 	}
 }

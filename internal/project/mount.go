@@ -58,11 +58,12 @@ func ResolveMounts(in MountInput) ([]Mount, error) {
 	var roots []string
 	for _, r := range in.Roots {
 		p, err := resolveDir(r.Path, in.Home)
-		if err == nil {
-			err = CheckSafe(p, home, in.Extra...)
-		}
 		if err != nil {
 			return nil, fmt.Errorf("%s:%d: ro_root %w", in.GlobalPath, r.Line, err)
+		}
+		if err := CheckSafe(p, home, in.Extra...); err != nil {
+			// CheckSafe の文面はプロジェクト向けの言い回しを含まない。直すのは全体設定なので、そう案内する
+			return nil, fmt.Errorf("%s:%d: ro_root %w。ro_root には、他人のコードに見せてよいリポジトリの置き場（例: ~/src）を書いてください", in.GlobalPath, r.Line, err)
 		}
 		roots = append(roots, p)
 	}
@@ -190,8 +191,10 @@ var ErrMountChanged = errors.New("ro のフォルダの場所が、コンテナ�
 // 差し替えには、別のプロジェクトのコンテナが書き込めるフォルダなどが使われうる（20 章）。
 func VerifyMounts(ms []Mount) error {
 	for _, m := range ms {
-		// ラベルはコンテナからは書き換えられないが、念のため形を確かめる
-		if !filepath.IsAbs(m.Host) || filepath.Clean(m.Host) != m.Host || !strings.HasPrefix(m.Container, "/workspace/") {
+		// ラベルはコンテナからは書き換えられないが、イメージのラベル（ベースのイメージを含む）を受け継ぐことがある。
+		// 信頼できない値として形を確かめ、表示されない文字があればエラーにも載せない（%q で出す）
+		if !filepath.IsAbs(m.Host) || filepath.Clean(m.Host) != m.Host || !strings.HasPrefix(m.Container, "/workspace/") ||
+			checkPrintable(m.Host) != nil || checkPrintable(m.Container) != nil {
 			return fmt.Errorf("ro のマウントの記録が不正です: %q → %q", m.Host, m.Container)
 		}
 		resolved, err := filepath.EvalSymlinks(m.Host)

@@ -46,8 +46,11 @@ type RunSpec struct {
 	ReadOnly []project.Mount
 }
 
-// EncodeReadOnly は、ReadOnlyLabel の値を作る。
+// EncodeReadOnly は、ReadOnlyLabel の値を作る。マウントがなければ "[]"。
 func EncodeReadOnly(ms []project.Mount) string {
+	if len(ms) == 0 {
+		return "[]"
+	}
 	b, err := json.Marshal(ms)
 	if err != nil {
 		// 文字列だけの構造体なので失敗しない
@@ -79,13 +82,13 @@ func RunArgs(s RunSpec) []string {
 		"--hostname", "sigil",
 		"--label", ProjectLabel + "=" + s.ProjectRoot,
 		"--label", LayoutLabel + "=" + LayoutVersion,
+		// ro がなくても必ず付ける。docker run のラベルはイメージのラベルより優先されるので、
+		// イメージ（ベースのイメージを含む）が sigil.ro を持っていても、その値を受け継がない
+		"--label", ReadOnlyLabel + "=" + EncodeReadOnly(s.ReadOnly),
 		// 権限を最小にし、setuid などで権限を取り戻させない
 		"--cap-drop=ALL",
 		"--security-opt=no-new-privileges",
 		"-v", s.ProjectRoot + ":" + s.ContainerPath,
-	}
-	if len(s.ReadOnly) > 0 {
-		args = append(args, "--label", ReadOnlyLabel+"="+EncodeReadOnly(s.ReadOnly))
 	}
 	if s.HasGit {
 		// .git には、ホストの git が実行する hooks や config がある。

@@ -221,8 +221,8 @@ func TestResolveUsesGitTopTrimmed(t *testing.T) {
 func TestResolveRejectsHome(t *testing.T) {
 	home := realTemp(t)
 	noGit := func(string) (string, error) { return "", errors.New("no") }
-	if _, err := Resolve(home, home, nil, noGit); err == nil {
-		t.Error("ホームそのものが通ってしまう")
+	if _, err := Resolve(home, home, nil, noGit); err == nil || !strings.Contains(err.Error(), "プロジェクトのフォルダで実行してください") {
+		t.Errorf("ホームそのもの → %v", err)
 	}
 	if _, err := Resolve(filepath.Dir(home), home, nil, noGit); err == nil {
 		t.Error("ホームを含むフォルダが通ってしまう")

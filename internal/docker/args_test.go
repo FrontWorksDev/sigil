@@ -238,9 +238,11 @@ func TestRunArgsReadOnlyMounts(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, s.ReadOnly) {
 		t.Errorf("ラベル %q → %v, %v", label, got, err)
 	}
-	for _, l := range flagValues(RunArgs(sampleSpec()), "--label") {
-		if strings.HasPrefix(l, ReadOnlyLabel+"=") {
-			t.Errorf("ro なしなのにラベルがある: %s", l)
-		}
+	// ro がなくても空のラベルを付け、イメージから受け継いだ sigil.ro を上書きする
+	if !slices.Contains(flagValues(RunArgs(sampleSpec()), "--label"), ReadOnlyLabel+"=[]") {
+		t.Errorf("ro なしのラベル = %v", flagValues(RunArgs(sampleSpec()), "--label"))
+	}
+	if ms, err := DecodeReadOnly("[]"); err != nil || len(ms) != 0 {
+		t.Errorf("[] → %v, %v", ms, err)
 	}
 }

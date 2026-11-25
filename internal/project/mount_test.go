@@ -203,6 +203,12 @@ func TestResolveMountsRejectsBadRoot(t *testing.T) {
 			}
 		})
 	}
+	// 危険な場所なら、直すのは全体設定なので、プロジェクト向けの案内（実行する場所）を出さない
+	_, err := e.resolve([]string{"~/src/lib"}, "~/")
+	if err == nil || !strings.Contains(err.Error(), "ro_root には、他人のコードに見せてよいリポジトリの置き場") ||
+		strings.Contains(err.Error(), "プロジェクトのフォルダで実行") {
+		t.Errorf("ro_root ~/ → %v", err)
+	}
 }
 
 // resolveMount の中の CheckSafe は、ro_root がすでに CheckSafe を通っているので、ResolveMounts からは
@@ -274,13 +280,15 @@ func TestVerifyMounts(t *testing.T) {
 		t.Errorf("ファイル → %v", err)
 	}
 
-	// 記録の形が不正
+	// 記録の形が不正（イメージから受け継いだラベルもありうるので、表示されない文字も拒否し、エラーに生で載せない）
 	for _, m := range []Mount{
+		{Host: "/x\x1b]52;c;AAAA\x07", Container: "/workspace/a"},
+		{Host: e.src, Container: "/workspace/a\x1b[2J"},
 		{Host: "rel/lib", Container: "/workspace/lib"},
 		{Host: e.src + "/../src", Container: "/workspace/src"},
 		{Host: e.src, Container: "/home/dev"},
 	} {
-		if err := VerifyMounts([]Mount{m}); err == nil || !strings.Contains(err.Error(), "記録が不正") {
+		if err := VerifyMounts([]Mount{m}); err == nil || !strings.Contains(err.Error(), "記録が不正") || strings.ContainsRune(err.Error(), 0x1b) {
 			t.Errorf("%v → %v", m, err)
 		}
 	}

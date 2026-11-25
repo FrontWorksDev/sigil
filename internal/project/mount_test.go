@@ -448,3 +448,25 @@ func TestResolveMountsRejectsProjectPathBeforeResolving(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestResolveMountsRejectsProjectViaLinkedRoot(t *testing.T) {
+	// ro_root がシンボリックリンク（~/code -> ~/src）でも、プロジェクトの中のリンクを解決する前に拒否する
+	e := newMountEnv(t)
+	if err := os.Symlink(e.src, filepath.Join(e.home, "code")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/nonexistent-sigil-test/x", filepath.Join(e.proj.Root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := e.resolve([]string{"~/code/app/link"}, "~/code")
+	if err == nil || !strings.Contains(err.Error(), "プロジェクトの中") || strings.Contains(err.Error(), "存在しません") {
+		t.Errorf("err = %v", err)
+	}
+	// ほかのフォルダは、これまでどおり通る
+	if _, err := e.resolve([]string{"~/code/lib"}, "~/code"); err != nil {
+		t.Errorf("~/code/lib → %v", err)
+	}
+	if got := rootSpellings("/a/raw/x", []string{"/r/res", "/a/raw"}); len(got) != 2 || got[1] != "/r/res/x" {
+		t.Errorf("rootSpellings = %v", got)
+	}
+}

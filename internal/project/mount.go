@@ -75,7 +75,7 @@ func ResolveMounts(in MountInput) ([]Mount, error) {
 		roots = append(roots, p)
 		// 書かれたまま（展開のみ）の形も、文字列での先の確かめに使う（ホームがシンボリックリンクのときなど）
 		raw, _ := expandPath(r.Path, in.Home) // resolveDir で確かめ済み
-		lexRoots = append(lexRoots, p, raw)
+		lexRoots = append(lexRoots, p, raw)   // 解決したもの、書かれたもの、の組で並べる（resolveMount が組で読む）
 	}
 
 	var out []Mount
@@ -120,8 +120,10 @@ func resolveMount(written, rawHome, home string, roots, lexRoots []string, in Mo
 		return Mount{}, fmt.Errorf("%s は %w", expanded, errOutsideRoots)
 	}
 	// プロジェクトの中も、解決する前に拒否する。プロジェクト（信頼できないリポジトリ）は、自分の中に
-	// /net/<ホスト> などへのシンボリックリンクを置けるので、解決すると承認より前に触れてしまう
-	if lexWithin(expanded, in.Project.Root) {
+	// /net/<ホスト> などへのシンボリックリンクを置けるので、解決すると承認より前に触れてしまう。
+	// Project.Root は解決済みなので、ro_root の部分を解決済みの形に置き換えてから比べる
+	// （~/src が /Volumes/Dev/src へのリンクのときなど、書かれた形のままでは一致しないため）
+	if slices.ContainsFunc(rootSpellings(expanded, lexRoots), func(p string) bool { return lexWithin(p, in.Project.Root) }) {
 		return Mount{}, fmt.Errorf("%s はプロジェクトの中なので、ro には書けません（すでにマウントされています）", expanded)
 	}
 	host, err := resolveDir(written, rawHome)
@@ -161,6 +163,20 @@ func resolveMount(written, rawHome, home string, roots, lexRoots []string, in Mo
 		return Mount{}, fmt.Errorf("マウント先 %s が、プロジェクトと重なります", m.Container)
 	}
 	return m, nil
+}
+
+// rootSpellings は、p の ro_root の部分を、解決済みの ro_root に置き換えた形を返す（p そのものも含む）。
+// lexRoots は「解決したもの、書かれたもの」の組の並び。ファイルシステムには触れない。
+func rootSpellings(p string, lexRoots []string) []string {
+	out := []string{p}
+	clean := filepath.Clean(p)
+	for i := 0; i+1 < len(lexRoots); i += 2 {
+		resolved, raw := filepath.Clean(lexRoots[i]), filepath.Clean(lexRoots[i+1])
+		if raw != "/" && lexWithin(clean, raw) {
+			out = append(out, resolved+clean[len(raw):])
+		}
+	}
+	return out
 }
 
 // lexWithin は、p が base そのものか、その中にあるかを、文字列だけで返す（ファイルシステムに触れない）。

@@ -34,7 +34,7 @@ $ sigil --version
 sigil v0.4.0 (commit 57a801c, go1.27.4, darwin/arm64)
 ```
 
-- 版は `make build` / `make install` のときに `git describe --tags --always --dirty` で埋め込みます。`make` を通さずに `go build` したときは `dev` になります。
+- 版は `make build` / `make install` のときに `git describe --tags --always` で埋め込みます。`make` を通さずに `go build` したときは `dev` になります。
 - コミットは、Go がビルドのときに埋め込む git の情報から取ります。手元に変更があるときは `-dirty` が付きます。`make install` し忘れていないかは、このコミットと `git log -1` を比べると分かります。
 
 ## dev（devbox）からの移行

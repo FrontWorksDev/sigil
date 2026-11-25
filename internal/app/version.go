@@ -7,7 +7,9 @@ import (
 )
 
 // version は、make build が -ldflags "-X sigil/internal/app.version=..." で埋め込む
-// （git describe --tags --always --dirty の結果）。go build だけで作ったときは空で、dev と表示する。
+// （git describe --tags --always の結果）。go build だけで作ったときは空で、dev と表示する。
+// 名前や置き場所を変えたら、Makefile の -X も変えること。リンカーは存在しない名前の -X を
+// 黙って無視するので、変え忘れるとすべてのビルドが dev と表示し、テストでも気づけない。
 var version string
 
 // printVersion は sigil --version / -V の表示。docker も op も呼ばずに、バイナリの情報だけを出す。
@@ -19,6 +21,8 @@ func printVersion(d Deps) {
 // versionString は「sigil v0.1.0 (commit e9dcf5c, go1.27.4, darwin/arm64)」の形の 1 行を作る。
 // コミットは、Go が git リポジトリの中でビルドしたときに自動で埋め込む VCS の情報から取る
 // （-trimpath でも残る）。make を通さずに go build しても、どのコミットかは分かる。
+// -dirty はコミットの側（vcs.modified）だけで示す。git describe --dirty は追跡していないファイルを
+// 数えないので、両方に付けると食い違うことがある。
 func versionString(embedded string, bi *debug.BuildInfo, ok bool, goVersion, goos, goarch string) string {
 	v := embedded
 	if v == "" {

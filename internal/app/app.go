@@ -81,6 +81,11 @@ func run(args []string, d Deps) error {
 		// help と同じく、op run や docker の確認より前に答える（不具合の報告のときに、
 		// docker や 1Password がなくても版を確かめられるように）。
 		// サブコマンドの version は用意しない。コンテナ内の version を -- なしで実行できるように（issue #6）。
+		// 後ろの引数は黙って捨てずにエラーにする。以前は -V がコンテナに渡っていたので、
+		// sigil -V cmd のつもりで打った人が、cmd が動かなかったことに気づけるように。
+		if len(args) > 1 {
+			return fmt.Errorf("%s には引数を付けられません（コンテナ内で実行するなら sigil -- %s ...）", args[0], args[0])
+		}
 		printVersion(d)
 		return nil
 	}

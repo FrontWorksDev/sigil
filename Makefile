@@ -7,7 +7,11 @@ OLD_PATH := $(HOME)/.local/bin/dev
 
 # sigil --version で表示する版（issue #6）。タグがなければコミットの短い名前になる。
 # git がない場所では空になり、sigil は dev と表示する。
-VERSION := $(shell git describe --tags --always --dirty 2>/dev/null)
+# - --dirty は付けない。手元の変更は、Go が埋め込む vcs.modified でコミットの側に -dirty を付ける
+#   （git describe --dirty は追跡していないファイルを数えず、食い違うため）。
+# - タグ名には " や $ も使えるので、英数字と ._+- だけでできていなければ空にする。
+#   そのまま下の "..." に入れると、細工したタグで make build のときにシェルのコマンドが動く。
+VERSION := $(shell git describe --tags --always 2>/dev/null | LC_ALL=C grep -E '^[A-Za-z0-9._+-]+$$')
 
 .PHONY: build install test vet fmt check
 

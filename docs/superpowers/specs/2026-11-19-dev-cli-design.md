@@ -72,7 +72,8 @@ examples/             設定ファイルのひな形
 
 - `build`、`ls`、`help`、`--version` はプロジェクトの外でも動く。それ以外はプロジェクトを特定してから動く。
 - `help` と `--version` は docker も `op` も使わない（op run への置き換えより前に答える）。
-- `--version` の版は、`make build` が `-ldflags "-X sigil/internal/app.version=$(git describe --tags --always --dirty)"` で埋め込む。埋め込まれていなければ `dev`。コミットは `runtime/debug.ReadBuildInfo()` の `vcs.revision`（先頭 7 文字）と `vcs.modified`（真なら `-dirty`）から取り、なければ省く。
+- `--version` の版は、`make build` が `-ldflags "-X sigil/internal/app.version=$(git describe --tags --always)"` で埋め込む。英数字と `._+-` 以外を含むときは埋め込まない。埋め込まれていなければ `dev`。コミットは `runtime/debug.ReadBuildInfo()` の `vcs.revision`（先頭 7 文字）と `vcs.modified`（真なら `-dirty`）から取り、なければ省く。
+- `--version` / `-V` の後ろに引数があれば、エラーにする（終了コード 1）。
 - `commit` はホストで動くコマンドで、コンテナの中では実行しない。docker は、コンテナでフックを実行するときだけ使う。
 - `sigil stop` で対象のコンテナがないときは「<名前> はありません」と出して終了コード 0（シェル版と同じ）。
 - `sigil ls` の書式: `--format 'table {{.Names}}\t{{.Status}}\t{{.Label "sigil.project"}}'`。
@@ -1111,3 +1112,7 @@ docker には、書かれたパスではなく**解決したパス**を渡す。
 | 2026-11-25 | `--version` は、`sigil build` で作ったイメージの版を表示しない（issue #6） | 利用者の判断。表示には docker の呼び出し（`docker inspect`）が要り、docker がなくても版を確かめられることを優先する。イメージにラベルで版を残すのは、要るときに別の issue にする |
 | 2026-11-25 | 版を埋め込む変数は、issue の案の `main.version` ではなく `sigil/internal/app.version` に置く | 表示を `internal/app` の `Run` で行うので、`main` から渡す引数を増やさずに済む。表示の組み立て（`versionString`）は、埋め込みの値とビルド情報を引数で受け取り、単体テストで両方の場合を確かめる |
 | 2026-11-25 | `--version` は端末でもバナーを付けず、版の 1 行だけを出す | 利用者の判断。実機で、バナーのあとに版の行を出す形を試したが、知りたいのは最後の 1 行だけで、8 行のロゴの下から探すことになり見づらかった。`git --version` などと同じく 1 行にする。ロゴは `sigil help` とコンテナに入るときの演出で見られる |
+| 2026-11-25 | Makefile の `git describe` の結果は、英数字と `._+-` だけでできていなければ埋め込まない | コードレビューの指摘。タグ名には `"` や `$` を使えるので、`-ldflags "..."` にそのまま入れると、細工したタグで `make build` のときにホストでシェルのコマンドが動く。タグを置けるならソースも変えられるので信頼の境界はまたがない（`/security-review` の判断）が、ホストで動く唯一の道具なので、数文字で塞げるものは塞ぐ |
+| 2026-11-25 | `-dirty` は、`git describe --dirty` ではなく、コミットの側（`vcs.modified`）だけで示す。issue の案（両方に付ける）から変える | コードレビューの指摘。`git describe --dirty` は追跡していないファイルを数えず、Go の `vcs.modified` は数えるので、`v0.4.0 (commit 57a801c-dirty)` のように食い違うことがあった |
+| 2026-11-25 | `--version` / `-V` の後ろの引数は、黙って捨てずにエラーにする | コードレビューの指摘。以前は `-V` がコンテナに渡っていたので、`sigil -V cmd` のつもりで打った人が、cmd が動かなかったことに気づけない |
+| 2026-11-25 | `-X` の変数名が実在するかは、CI で確かめない。変数のコメントで、名前を変えたら Makefile も変えるよう書く | コードレビューの指摘（リンカーは存在しない名前の `-X` を黙って無視する）。CI の build ジョブは darwin 向けのクロスビルドで、Linux のランナーでは実行して確かめられない。Linux 向けのビルドを足すほどの重みはないと利用者が判断した |

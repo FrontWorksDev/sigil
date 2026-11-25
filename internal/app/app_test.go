@@ -50,8 +50,8 @@ func TestBuildUsesEmbeddedContext(t *testing.T) {
 	if len(builds) != 1 {
 		t.Fatalf("build calls = %v", e.runner.calls)
 	}
-	want := []string{"build", "--build-arg", "USER_UID=501", "--build-arg", "USER_GID=20",
-		"-t", "sigil:latest", "--no-cache", ctxDir}
+	want := []string{"build", "--pull", "--build-arg", "USER_UID=501", "--build-arg", "USER_GID=20",
+		"--build-arg", "SIGIL_REFRESH=2026-11-25T01:02:03Z", "-t", "sigil:latest", "--no-cache", ctxDir}
 	if ctxDir == "" || !reflect.DeepEqual(builds[0].args, want) {
 		t.Errorf("argv = %v (ctx %q)", builds[0].args, ctxDir)
 	}
@@ -73,7 +73,7 @@ func TestBuildWithContextAndImageEnv(t *testing.T) {
 		t.Error("SIGIL_CONTEXT があるのに埋め込みを書き出した")
 	}
 	args := e.runner.find("docker build")[0].args
-	if args[len(args)-1] != "/ctx" || args[6] != "sigil:dev-test" {
+	if args[len(args)-1] != "/ctx" || args[len(args)-2] != "sigil:dev-test" {
 		t.Errorf("argv = %v", args)
 	}
 }

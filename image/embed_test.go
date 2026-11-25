@@ -51,3 +51,48 @@ func TestWriteContext(t *testing.T) {
 		t.Errorf("書き出されたファイル = %v, want [Dockerfile sigil-check]", names)
 	}
 }
+
+// ARG SIGIL_REFRESH は、文字列が変わらないまま中身が新しくなる手順（stable / latest の
+// ダウンロード、install.sh など）より前に置く。後ろに動かすと、それより前の手順が
+// docker のキャッシュで使い回され、sigil build でツールが更新されなくなる（issue #16）。
+func TestDockerfileRefreshBeforeTools(t *testing.T) {
+	src, err := os.ReadFile("Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	df := string(src)
+	refresh := strings.Index(df, "\nARG SIGIL_REFRESH\n")
+	if refresh < 0 {
+		t.Fatal("ARG SIGIL_REFRESH がない")
+	}
+	// 遅い手順や大きなレイヤー（キャッシュのままにするもの）は前
+	for _, s := range []string{
+		"RUN docker-php-ext-install",
+		"COPY --from=go /usr/local/go",
+		"COPY --from=rust /usr/local/rustup",
+		"useradd --uid",
+	} {
+		if i := strings.Index(df, s); i < 0 {
+			t.Errorf("%q が Dockerfile にない（テストを直すこと）", s)
+		} else if i > refresh {
+			t.Errorf("%q が ARG SIGIL_REFRESH より後ろにある（毎回作り直される）", s)
+		}
+	}
+	// 更新したい手順は後ろ
+	for _, s := range []string{
+		"releases/download/${NVIM_VERSION}",
+		"npm install -g tree-sitter-cli",
+		"uv python install",
+		"wakatime-cli/releases/latest",
+		"lazygit/releases/latest",
+		"cli/cli/releases/latest",
+		"https://claude.ai/install.sh",
+	} {
+		i := strings.Index(df, s)
+		if i < 0 {
+			t.Errorf("%q が Dockerfile にない（テストを直すこと）", s)
+		} else if i < refresh {
+			t.Errorf("%q が ARG SIGIL_REFRESH より前にある", s)
+		}
+	}
+}

@@ -56,6 +56,8 @@ type Deps struct {
 	StdoutTermSize func() (cols, rows int)
 	// After は time.After。演出の待ちを、テストでは待たずに進めるため。
 	After func(time.Duration) <-chan time.Time
+	// Now は time.Now。sigil build で毎回変わるビルド引数（SIGIL_REFRESH）を作るため。
+	Now func() time.Time
 	// Executable は sigil 自身の絶対パスを返す（op run から起動し直すため）。
 	Executable func() (string, error)
 
@@ -93,6 +95,7 @@ func DefaultDeps() Deps {
 		TermSize:         func() (int, int) { return termSize(os.Stderr) },
 		StdoutTermSize:   func() (int, int) { return termSize(os.Stdout) },
 		After:            time.After,
+		Now:              time.Now,
 		Executable: func() (string, error) {
 			p, err := os.Executable()
 			if err != nil {

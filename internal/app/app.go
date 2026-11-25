@@ -794,10 +794,13 @@ func build(d Deps, u *ui.UI, extra []string) error {
 		ctxDir = tmp
 	}
 	image := imageName(d)
+	// ツールを取ってくる手順のキャッシュを毎回無効にするための値（docker.BuildArgs を参照）。
+	// 値そのものに意味はなく、前回と違えばよい。
+	refresh := d.Now().UTC().Format(time.RFC3339Nano)
 	// 演出は、出力の形を sigil が決められるときだけにする。利用者が --progress や -q を
 	// 指定したとき、BuildKit を使わないとき（--progress がない）は、今までどおりそのまま流す。
 	if !u.Fancy() || docker.HasProgressFlag(extra) || buildkitDisabled(d) {
-		args := docker.BuildArgs(image, d.Getuid(), d.Getgid(), extra, ctxDir)
+		args := docker.BuildArgs(image, d.Getuid(), d.Getgid(), refresh, extra, ctxDir)
 		if err := d.Runner.Run("docker", args, d.Stdout, d.Stderr); err != nil {
 			return loref("紋章の鋳造に失敗しました", "docker build に失敗しました: %w", err)
 		}
@@ -805,7 +808,7 @@ func build(d Deps, u *ui.UI, extra []string) error {
 	}
 
 	// 出力を --progress=plain にして読み、段階と進み具合を魔法陣の横に出す
-	args := docker.BuildArgs(image, d.Getuid(), d.Getgid(), append([]string{"--progress=plain"}, extra...), ctxDir)
+	args := docker.BuildArgs(image, d.Getuid(), d.Getgid(), refresh, append([]string{"--progress=plain"}, extra...), ctxDir)
 	stages := []ui.Stage{
 		{Label: "素材を集める", Note: "FROM / ビルドコンテキスト"},
 		{Label: "紋章を鋳造する"},

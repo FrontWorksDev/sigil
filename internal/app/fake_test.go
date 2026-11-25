@@ -246,6 +246,7 @@ func newEnv(t *testing.T) *testEnv {
 			c <- time.Time{}
 			return c
 		},
+		Now:               func() time.Time { return time.Date(2026, 11, 25, 1, 2, 3, 0, time.UTC) },
 		Executable:        func() (string, error) { return "/abs/dev", nil },
 		Getuid:            func() int { return 501 },
 		Getgid:            func() int { return 20 },

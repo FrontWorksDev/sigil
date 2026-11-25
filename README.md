@@ -82,6 +82,9 @@ sigil             # シェル（開発サーバーなど）
 - git リポジトリではないフォルダで、中に別のリポジトリがある場所（`~/src` など）では動きません。リポジトリのフォルダで実行してください。
 - モノレポでは、どのサブフォルダから実行しても、リポジトリ全体が 1 つのコンテナになります。git submodule や git worktree の中では、コンテナ内の git は使えません（ホストの git は使えます）。
 - 環境変数 `SIGIL_IMAGE` でイメージ名（既定 `sigil:latest`）、`SIGIL_CONTEXT` で `sigil build` のビルドコンテキストを変えられます。
+- `sigil build` は、毎回ツールを最新版に取り直します（土台のイメージは `--pull` で取り直し、Neovim・Claude Code・gh などのダウンロードはキャッシュを使いません）。apt で入れるものと PHP 拡張は、土台のイメージが更新されたときに作り直されます。すべてを作り直すときは `sigil build --no-cache` です。
+  - 手元にしかない土台のイメージを使うとき（`--build-arg NODE_IMAGE=...` など）や、オフラインのときは `sigil build --pull=false` としてください。
+  - ビルドのたびに前のイメージが名前のないイメージ（`<none>`）として残ります。ときどき `docker image prune` で片付けてください（ビルドのキャッシュは `docker builder prune`）。
 
 ### コンテナに渡すもの
 

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"sigil/internal/config"
+	"sigil/internal/project"
 )
 
 func sampleSpec() RunSpec {
@@ -196,5 +197,52 @@ func TestParseLs(t *testing.T) {
 	rows := ParseLs(out)
 	if len(rows) != 2 || rows[0] != (LsRow{"sigil-a-1", "running", "Up 2 hours", "/src/a"}) || rows[1].State != "exited" {
 		t.Errorf("rows = %v", rows)
+	}
+}
+
+func TestRunArgsReadOnlyMounts(t *testing.T) {
+	s := sampleSpec()
+	s.ReadOnly = []project.Mount{
+		{Host: "/Users/k/src/lib", Container: "/workspace/lib"},
+		{Host: "/opt/src/other", Container: "/workspace/other"},
+	}
+	vols := flagValues(RunArgs(s), "-v")
+	var ro []string
+	for _, v := range vols {
+		if strings.HasPrefix(v, "/Users/k/src/lib") || strings.HasPrefix(v, "/opt/") {
+			ro = append(ro, v)
+		}
+	}
+	// 解決したパスを読み取り専用で、書かれた順に
+	want := []string{"/Users/k/src/lib:/workspace/lib:ro", "/opt/src/other:/workspace/other:ro"}
+	if !reflect.DeepEqual(ro, want) {
+		t.Errorf("ro = %v, want %v", ro, want)
+	}
+	// ro がなければ何も足さない
+	if got := len(flagValues(RunArgs(sampleSpec()), "-v")); got != len(vols)-2 {
+		t.Errorf("ro なしの -v の数 = %d", got)
+	}
+
+	// 承認したマウントをラベルに残す（停止中のコンテナを起動する前に比べるため）
+	var label string
+	for _, l := range flagValues(RunArgs(s), "--label") {
+		if v, ok := strings.CutPrefix(l, ReadOnlyLabel+"="); ok {
+			label = v
+		}
+	}
+	// ラベルの形は、既存のコンテナに残るので固定する
+	if want := `[{"host":"/Users/k/src/lib","container":"/workspace/lib"},{"host":"/opt/src/other","container":"/workspace/other"}]`; label != want {
+		t.Errorf("ラベル = %s, want %s", label, want)
+	}
+	got, err := DecodeReadOnly(label)
+	if err != nil || !reflect.DeepEqual(got, s.ReadOnly) {
+		t.Errorf("ラベル %q → %v, %v", label, got, err)
+	}
+	// ro がなくても空のラベルを付け、イメージから受け継いだ sigil.ro を上書きする
+	if !slices.Contains(flagValues(RunArgs(sampleSpec()), "--label"), ReadOnlyLabel+"=[]") {
+		t.Errorf("ro なしのラベル = %v", flagValues(RunArgs(sampleSpec()), "--label"))
+	}
+	if ms, err := DecodeReadOnly("[]"); err != nil || len(ms) != 0 {
+		t.Errorf("[] → %v, %v", ms, err)
 	}
 }

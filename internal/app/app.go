@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -35,9 +36,9 @@ const usage = `使い方:
   sigil help              この説明
 
 設定:
-  <project>/.sigil                このプロジェクトに渡す環境変数名とポート（変わるたびに確認）〔契約〕
+  <project>/.sigil                渡す環境変数名とポート、読み取り専用のフォルダ（変わるたびに確認）〔契約〕
   <project>/.env                  値（1Password の op:// 参照、キーチェーンの keychain:// 参照）
-  ~/.config/sigil/config          全プロジェクト共通の環境変数名とポート、読む専用キーチェーン
+  ~/.config/sigil/config          全プロジェクト共通の環境変数名とポート、読む専用キーチェーン、ro_root
   ~/.config/sigil/secrets.env     全プロジェクト共通の値
 
 環境変数:
@@ -223,6 +224,11 @@ type settings struct {
 	secrets       []byte         // 全体の secrets.env（なければ nil）
 	globalEntries []secret.Entry // secrets.env の全行（生の値の行も、名前だけを持つ）
 	secretsPth    string
+
+	// mounts は、.sigil の ro を確かめて解決したもの（20 章）。承認のハッシュと docker run の両方に使う。
+	mounts []project.Mount
+	// mountInput は、docker run の直前に解決し直すための入力。
+	mountInput project.MountInput
 }
 
 // loadSettings は設定を読み、.env から 1Password・キーチェーンで読み込む名前と参照を選ぶ。
@@ -235,7 +241,7 @@ type settings struct {
 // keychain:// 参照も同じ規則で選ぶ（列挙していない名前のために、キーチェーンの解錠を求めないため。
 // 制御用の名前に、キーチェーンの値を入れさせないため）。
 // 参照ではない行（VITE_API_URL などのアプリの設定）は、アプリがコンテナ内で .env を直接読むので、sigil は扱わない。
-func loadSettings(p project.Project, dd dirs) (settings, error) {
+func loadSettings(p project.Project, home string, dd dirs) (settings, error) {
 	s := settings{
 		sigilPath:  filepath.Join(p.Root, ".sigil"),
 		envPath:    filepath.Join(p.Root, ".env"),
@@ -319,6 +325,16 @@ func loadSettings(p project.Project, dd dirs) (settings, error) {
 	// 全体の secrets.env に同じ名前があれば、そちらを使う。op run に渡すプロジェクトの分は、勝った組だけにする
 	s.plan = secret.MakePlan(s.projEntries, s.globalEntries, listed)
 	s.opEnv = secret.RenderEnv(s.plan.OpProject)
+
+	// ro は承認より前に確かめる。承認の画面に、実際にマウントする（解決した）パスを見せるため
+	s.mountInput = project.MountInput{
+		SigilPath: s.sigilPath, ReadOnly: s.projCfg.ReadOnly,
+		GlobalPath: filepath.Join(dd.config, "config"), Roots: s.globalCfg.ReadOnlyRoots,
+		Project: p, Home: home, Extra: []string{dd.config, dd.state},
+	}
+	if s.mounts, err = project.ResolveMounts(s.mountInput); err != nil {
+		return s, loref("写本の在り処を確かめられません", "%w", err)
+	}
 	return s, nil
 }
 
@@ -377,10 +393,10 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 	}
 	if st != docker.Missing {
 		// 既存のコンテナには、作成時に渡したものが使われる。設定の読み込みや承認はしない。
-		return false, useExisting(u, client, p, st, layout)
+		return false, useExisting(u, client, p, st, layout, home, dd)
 	}
 
-	s, err := loadSettings(p, dd)
+	s, err := loadSettings(p, home, dd)
 	if err != nil {
 		return false, lore("契約の書を読み解けません", err)
 	}
@@ -453,6 +469,14 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 	// ホストのシェルの値になってしまう
 	globalLoaded := inner && s.secrets != nil && secret.HasOpRef(s.secrets)
 
+	// ro は docker run の直前にも解決し直し、承認したものと比べる。承認からここまでには op run や
+	// キーチェーンのダイアログが入り、長く空くことがある。その間に、パスの途中のフォルダを
+	// シンボリックリンクに差し替えられて（別のプロジェクトのコンテナなど）、承認していない場所を
+	// マウントさせられないようにするため（20 章）
+	if err := recheckMounts(s); err != nil {
+		return false, err
+	}
+
 	cfg := config.Merge(s.projCfg, s.globalCfg)
 	var envs []string
 	passWaka := false
@@ -502,6 +526,7 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 		Envs:          envs,
 		Ports:         cfg.Ports,
 		SecretEnv:     secretEnv,
+		ReadOnly:      s.mounts,
 	}
 	if u.Fancy() {
 		u.Banner()
@@ -536,7 +561,7 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 		// そのときは失敗とせず、そのコンテナを使う。
 		if st, layout, ierr := client.Inspect(p.ContainerName); ierr == nil && st != docker.Missing {
 			info(d, "別のペインで展開された領域 %s に入ります", p.ContainerName)
-			return false, useExisting(u, client, p, st, layout)
+			return false, useExisting(u, client, p, st, layout, home, dd)
 		}
 		return false, loref("領域を展開できませんでした", "コンテナ %s を作成できませんでした: %w", p.ContainerName, err)
 	}
@@ -558,11 +583,15 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 
 // useExisting は既存のコンテナを使えるようにする。古い layout ならエラー、停止中なら起動する。
 // 演出は 1 行だけにし、待ち時間は足さない（停止中なら docker start の間だけスピナーを回す）。
-func useExisting(u *ui.UI, client docker.Client, p project.Project, st docker.State, layout string) error {
+func useExisting(u *ui.UI, client docker.Client, p project.Project, st docker.State, layout, home string, dd dirs) error {
 	if layout != docker.LayoutVersion {
 		return loref("旧き紋章の領域です", "%s は古い sigil で作られています。sigil stop してから、もう一度実行してください", p.ContainerName)
 	}
 	if st == docker.Stopped {
+		// docker start は ro のマウント元を解決し直すので、作成時から差し替えられていないかを先に確かめる
+		if err := verifyExistingMounts(client, p, home, dd); err != nil {
+			return err
+		}
 		err := u.Spin("領域を再展開する  "+p.ContainerName, func(stderr io.Writer) error {
 			c := client
 			c.Stderr = stderr
@@ -573,6 +602,25 @@ func useExisting(u *ui.UI, client docker.Client, p project.Project, st docker.St
 		}
 	}
 	u.Enter(filepath.Base(p.Root))
+	return nil
+}
+
+// verifyExistingMounts は、停止中のコンテナを起動する前に、作成時に承認した ro のフォルダの場所が
+// 変わっていないかを確かめる（20 章「既存のコンテナ」）。変わっていれば起動しない。
+// 既存のコンテナのマウントは変えられないので、作り直し（sigil stop）を案内する。
+func verifyExistingMounts(client docker.Client, p project.Project, home string, dd dirs) error {
+	ms, err := client.ReadOnlyMounts(p.ContainerName)
+	if err != nil {
+		return loref("写本の在り処を確かめられません", "%w", err)
+	}
+	// 守る場所は、作成時（loadSettings の MountInput）と同じものを渡す
+	if err := project.VerifyMounts(ms, home, dd.config, dd.state); err != nil {
+		title := "写本の在り処を確かめられません"
+		if errors.Is(err, project.ErrMountChanged) {
+			title = "写本が書き換えられました"
+		}
+		return loref(title, "%s を起動しません（%w）。sigil stop してから、もう一度実行してください", p.ContainerName, err)
+	}
 	return nil
 }
 
@@ -632,10 +680,11 @@ func newUI(d Deps) *ui.UI {
 // キーチェーンの参照しかない .env でも確認を飛ばさない（.sigil がなくても、全体設定で列挙した名前の
 // 参照先を、リポジトリが勝手に選べてしまうため）。
 func approve(d Deps, store approval.Store, p project.Project, s settings, ask bool) error {
+	// ro は .sigil にしか書けないので、s.sigil がなければ mounts もない
 	if s.sigil == nil && s.approvalEnv == nil {
 		return nil
 	}
-	sum := approval.Fingerprint(s.sigil, s.approvalEnv)
+	sum := approval.Fingerprint(s.sigil, s.approvalEnv, s.mounts...)
 	if store.IsApproved(p.Key, sum) {
 		return nil
 	}
@@ -647,6 +696,11 @@ func approve(d Deps, store approval.Store, p project.Project, s settings, ask bo
 		files = append(files, s.envPath)
 	}
 	if !ask {
+		if len(s.mounts) > 0 {
+			// op run から起動し直された側では、直前に承認したばかりのことが多い。ファイルが同じでも、
+			// ro の向きが変わっただけで一致しなくなるので、差し替えの可能性を伝える（.sigil のせいに見せない）
+			return loref("契約が結ばれていません", "%s が承認されていないか、承認したあとで ro のフォルダの場所が変わりました。もう一度実行してください", strings.Join(files, " と "))
+		}
 		return loref("契約が結ばれていません", "%s が承認されていません", strings.Join(files, " と "))
 	}
 	tty, err := d.OpenTTY()
@@ -654,10 +708,26 @@ func approve(d Deps, store approval.Store, p project.Project, s settings, ask bo
 		return loref("契約を確かめられません", "%s を確認できない環境です。対話できるターミナルで実行してください", strings.Join(files, " と "))
 	}
 	defer tty.Close()
-	if !approval.Ask(tty, newUI(d), files, s.projCfg, s.projEntries, s.plan.Overridden) {
+	if !approval.Ask(tty, newUI(d), files, s.projCfg, s.projEntries, s.plan.Overridden, s.mounts) {
 		return lore("契約は結ばれませんでした", errors.New("中止しました"))
 	}
 	return store.Record(p.Key, sum)
+}
+
+// recheckMounts は、ro を解決し直し、承認したもの（s.mounts）と同じかを確かめる。
+func recheckMounts(s settings) error {
+	if len(s.mounts) == 0 {
+		return nil
+	}
+	now, err := project.ResolveMounts(s.mountInput)
+	if err != nil {
+		// 消された・名前が変わったなど。差し替えられたとは限らないので、loadSettings と同じ見出しにする
+		return loref("写本の在り処を確かめられません", "%w", err)
+	}
+	if !slices.Equal(now, s.mounts) {
+		return loref("写本が書き換えられました", "承認したあとで、ro のフォルダの場所が変わりました。もう一度実行してください")
+	}
+	return nil
 }
 
 // warnLegacyEnv は、改名前の環境変数が設定されていて、新しい名前が設定されていなければ注意を出す。

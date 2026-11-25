@@ -263,6 +263,8 @@ func (e *testEnv) run(args ...string) int {
 // container は、既存のコンテナの状態（"running" / "exited"）と layout を偽の docker に設定する。
 func (e *testEnv) container(state, layout string) {
 	e.runner.on("docker ps -a --filter name=", e.name()+"\t"+state+"\t"+layout+"\n", nil)
+	// 停止中のコンテナを起動する前に読むラベル（ro はなし）
+	e.runner.on("docker container inspect", `{"sigil.layout":"`+layout+`"}`+"\n", nil)
 }
 
 func (e *testEnv) name() string { return project.New(e.proj).ContainerName }

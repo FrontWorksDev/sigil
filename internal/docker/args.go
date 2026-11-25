@@ -2,10 +2,13 @@
 package docker
 
 import (
+	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 
 	"sigil/internal/config"
+	"sigil/internal/project"
 )
 
 const (
@@ -15,6 +18,10 @@ const (
 	LayoutVersion = "2"
 	// ProjectLabel は、コンテナがどのプロジェクトのものかを示すラベル。sigil ls で使う。
 	ProjectLabel = "sigil.project"
+	// ReadOnlyLabel は、承認した ro のマウント（解決したパスとマウント先の JSON）を残すラベル。
+	// docker は docker start のたびにマウント元のパスを解決し直すので、停止中のコンテナを起動する前に、
+	// パスが作成時から差し替えられていないかを、このラベルと比べて確かめる（20 章「既存のコンテナ」）。
+	ReadOnlyLabel = "sigil.ro"
 
 	containerHome = "/home/dev"
 )
@@ -34,6 +41,34 @@ type RunSpec struct {
 	// RunArgs は使わない。値をコマンドライン（ps で誰でも見える）に載せず、
 	// Envs の "-e NAME" で docker がこの環境から値を読む。
 	SecretEnv []string
+	// ReadOnly は、.sigil の ro で読み取り専用にマウントするフォルダ（20 章）。
+	// Host は project.ResolveMounts で確かめ、シンボリックリンクを解決したもの。
+	ReadOnly []project.Mount
+}
+
+// EncodeReadOnly は、ReadOnlyLabel の値を作る。マウントがなければ "[]"。
+func EncodeReadOnly(ms []project.Mount) string {
+	if len(ms) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(ms)
+	if err != nil {
+		// 文字列だけの構造体なので失敗しない
+		panic(err)
+	}
+	return string(b)
+}
+
+// DecodeReadOnly は、ReadOnlyLabel の値を読む。空ならマウントはない。
+func DecodeReadOnly(v string) ([]project.Mount, error) {
+	if v == "" {
+		return nil, nil
+	}
+	var ms []project.Mount
+	if err := json.Unmarshal([]byte(v), &ms); err != nil {
+		return nil, fmt.Errorf("%s ラベルを読めません: %w", ReadOnlyLabel, err)
+	}
+	return ms, nil
 }
 
 // RunArgs は docker run の引数を返す。
@@ -47,6 +82,9 @@ func RunArgs(s RunSpec) []string {
 		"--hostname", "sigil",
 		"--label", ProjectLabel + "=" + s.ProjectRoot,
 		"--label", LayoutLabel + "=" + LayoutVersion,
+		// ro がなくても必ず付ける。docker run のラベルはイメージのラベルより優先されるので、
+		// イメージ（ベースのイメージを含む）が sigil.ro を持っていても、その値を受け継がない
+		"--label", ReadOnlyLabel + "=" + EncodeReadOnly(s.ReadOnly),
 		// 権限を最小にし、setuid などで権限を取り戻させない
 		"--cap-drop=ALL",
 		"--security-opt=no-new-privileges",
@@ -56,6 +94,11 @@ func RunArgs(s RunSpec) []string {
 		// .git には、ホストの git が実行する hooks や config がある。
 		// コンテナから書き換えられると、ホストで git を使ったときに任意のコードが動くので読み取り専用にする。
 		args = append(args, "-v", s.ProjectRoot+"/.git:"+s.ContainerPath+"/.git:ro")
+	}
+	for _, m := range s.ReadOnly {
+		// 別のリポジトリを参照のために読ませるだけなので、書き込めないようにする。
+		// 解決したパスを渡し、途中のシンボリックリンクを docker にたどらせない
+		args = append(args, "-v", m.Host+":"+m.Container+":ro")
 	}
 	if s.HasNvimConfig {
 		// Neovim の設定はホストの Neovim も読むので、コンテナから書き換えさせない。

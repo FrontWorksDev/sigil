@@ -343,3 +343,53 @@ func TestReadAnswerSharesReader(t *testing.T) {
 		t.Errorf("改行なし = %q", got)
 	}
 }
+
+const askWithMounts = "sigil: 契約の確認 ── .sigil の内容か、写本の場所が、新しいか前回の承認から変わっています。\n" +
+	"     このプロジェクトの領域（コンテナ）に、次のものを渡します:\n" +
+	"       持ち込むもの（ホストの環境変数）  FOO\n" +
+	"       写本（読み取り専用のフォルダ）    /h/src/lib → /workspace/lib\n" +
+	"     写本の中の .env なども、コンテナから読めます。\n" +
+	"     このほか、全体設定（~/.config/sigil/config）の分も渡されます。\n" +
+	"sigil: この契約を結ぶ（この設定で承認する）なら y を入力してください [y/N] "
+
+// 読み取り専用のフォルダ（20 章）は、ホスト側の解決したパスとマウント先を見せ、中も読めることを添える
+func TestContractScreenPlainMounts(t *testing.T) {
+	u, buf := newTest(Plain, 0, 0)
+	u.ContractScreen(ContractView{
+		Files:  []string{".sigil"},
+		Envs:   []string{"FOO"},
+		Mounts: []ContractMount{{Host: "/h/src/lib", Container: "/workspace/lib"}},
+	})
+	if buf.String() != askWithMounts {
+		t.Errorf("差がある:\n got: %q\nwant: %q", buf.String(), askWithMounts)
+	}
+	// 写本だけでも「（なし）」にはならない
+	u, buf = newTest(Plain, 0, 0)
+	u.ContractScreen(ContractView{Files: []string{".sigil"}, Mounts: []ContractMount{{Host: "/h/a", Container: "/workspace/a"}}})
+	if strings.Contains(buf.String(), "（なし）") {
+		t.Errorf("写本があるのに（なし）:\n%s", buf.String())
+	}
+}
+
+func TestContractScreenColorMounts(t *testing.T) {
+	for _, m := range []Mode{Color, Mono} {
+		u, buf := newTest(m, 60, 40)
+		long := "/h/" + strings.Repeat("deep/", 15) + "lib"
+		u.ContractScreen(ContractView{Files: []string{".sigil"}, Mounts: []ContractMount{{Host: long, Container: "/workspace/lib"}}})
+		out := ownSGR(buf.String())
+		joined := strings.NewReplacer("\n", "", "│", "", " ", "").Replace(out)
+		for _, want := range []string{"写本", "写本の場所が", "読み取り専用のフォルダ", "/workspace/lib", "写本の中の.envなども、コンテナから読めます。",
+			// 長いパスも切り詰めず、折り返して全部見せる
+			strings.ReplaceAll(long, " ", "")} {
+			if !strings.Contains(joined, want) {
+				t.Errorf("mode %d: %q がない:\n%s", m, want, out)
+			}
+		}
+		for _, l := range strings.Split(out, "\n") {
+			// 問いの行は固定の文で、枠の外なので除く
+			if Width(l) > 59 && !strings.HasPrefix(l, "sigil: この契約を結ぶ") {
+				t.Errorf("幅 %d: %q", Width(l), l)
+			}
+		}
+	}
+}

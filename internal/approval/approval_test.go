@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"sigil/internal/config"
+	"sigil/internal/project"
 	"sigil/internal/secret"
 	"sigil/internal/ui"
 )
@@ -96,7 +97,7 @@ func TestAsk(t *testing.T) {
 	}
 	for in, want := range cases {
 		var out bytes.Buffer
-		if got := Ask(strings.NewReader(in), ui.New(&out, ui.Options{Mode: ui.Plain}), []string{"/p/.sigil", "/p/.env"}, c, refs, nil); got != want {
+		if got := Ask(strings.NewReader(in), ui.New(&out, ui.Options{Mode: ui.Plain}), []string{"/p/.sigil", "/p/.env"}, c, refs, nil, nil); got != want {
 			t.Errorf("Ask(%q) = %v, want %v", in, got, want)
 		}
 		s := out.String()
@@ -114,7 +115,7 @@ func TestAsk(t *testing.T) {
 func TestAskColumnsAligned(t *testing.T) {
 	c := config.Config{Envs: []string{"DATABASE_URL"}, Ports: []config.Port{{Host: "8080", Container: "80"}}}
 	var out bytes.Buffer
-	Ask(strings.NewReader("n\n"), ui.New(&out, ui.Options{Mode: ui.Plain}), []string{"/p/.sigil"}, c, nil, nil)
+	Ask(strings.NewReader("n\n"), ui.New(&out, ui.Options{Mode: ui.Plain}), []string{"/p/.sigil"}, c, nil, nil, nil)
 	col := map[string]int{}
 	for _, l := range strings.Split(out.String(), "\n") {
 		for _, v := range []string{"DATABASE_URL", "127.0.0.1:8080:80"} {
@@ -142,7 +143,7 @@ var ansi = regexp.MustCompile("\x1b\\[[0-9;]*m")
 func TestAskColor(t *testing.T) {
 	c := config.Config{Envs: []string{"DATABASE_URL"}}
 	var out bytes.Buffer
-	got := Ask(strings.NewReader("y\n"), ui.New(&out, ui.Options{Mode: ui.Color, Cols: 80, Rows: 24}), []string{"/p/.sigil"}, c, nil, nil)
+	got := Ask(strings.NewReader("y\n"), ui.New(&out, ui.Options{Mode: ui.Color, Cols: 80, Rows: 24}), []string{"/p/.sigil"}, c, nil, nil, nil)
 	if !got {
 		t.Error("y で承認されない")
 	}
@@ -163,7 +164,7 @@ func TestAskSourceAndOverridden(t *testing.T) {
 		{Name: "W", Ref: "keychain://wakatime", Scheme: secret.Keychain},
 	}
 	var out bytes.Buffer
-	Ask(strings.NewReader("n\n"), ui.New(&out, ui.Options{Mode: ui.Plain}), []string{"/p/.env"}, config.Config{}, refs, map[string]bool{"W": true})
+	Ask(strings.NewReader("n\n"), ui.New(&out, ui.Options{Mode: ui.Plain}), []string{"/p/.env"}, config.Config{}, refs, map[string]bool{"W": true}, nil)
 	var a, w string
 	for _, l := range strings.Split(out.String(), "\n") {
 		if strings.Contains(l, "op://v/i/f") {
@@ -178,5 +179,40 @@ func TestAskSourceAndOverridden(t *testing.T) {
 	}
 	if !strings.Contains(w, "キーチェーン") || !strings.Contains(w, "全体の設定が優先されるため使わない") {
 		t.Errorf("キーチェーンの行 = %q", w)
+	}
+}
+
+func TestFingerprintMounts(t *testing.T) {
+	sigil, env := []byte("ro ~/src/lib\n"), []byte("A=\"op://v/i/f\"\n")
+	// ro がなければ今までと同じハッシュ（既存の承認記録を使えるように）
+	if Fingerprint(sigil, env) != Fingerprint(sigil, env, nil...) {
+		t.Error("マウントがないのにハッシュが変わる")
+	}
+	a := Fingerprint(sigil, env, project.Mount{Host: "/h/src/lib", Container: "/workspace/lib"})
+	if a == Fingerprint(sigil, env) {
+		t.Error("マウントがハッシュに含まれていない")
+	}
+	// .sigil が同じでも、シンボリックリンクの向きが変われば聞き直す
+	if a == Fingerprint(sigil, env, project.Mount{Host: "/h/src/lib-v2", Container: "/workspace/lib"}) {
+		t.Error("解決したパスが変わってもハッシュが同じ")
+	}
+	if a == Fingerprint(sigil, env, project.Mount{Host: "/h/src/lib", Container: "/workspace/lib2"}) {
+		t.Error("マウント先が変わってもハッシュが同じ")
+	}
+	// 区切りをずらした別の組が同じにならない
+	if Fingerprint(sigil, env, project.Mount{Host: "/a", Container: "/b"}, project.Mount{Host: "/c", Container: "/d"}) ==
+		Fingerprint(sigil, env, project.Mount{Host: "/a", Container: "/b\x00/c"}, project.Mount{Host: "/d"}) {
+		t.Error("区切りをずらした組が同じハッシュになる")
+	}
+}
+
+func TestAskShowsMounts(t *testing.T) {
+	var out bytes.Buffer
+	Ask(strings.NewReader("n\n"), ui.New(&out, ui.Options{Mode: ui.Plain}), []string{"/p/.sigil"}, config.Config{}, nil, nil,
+		[]project.Mount{{Host: "/h/src/lib", Container: "/workspace/lib"}})
+	for _, must := range []string{"写本（読み取り専用のフォルダ）", "/h/src/lib → /workspace/lib", ".env なども"} {
+		if !strings.Contains(out.String(), must) {
+			t.Errorf("表示に %q がない:\n%s", must, out.String())
+		}
 	}
 }

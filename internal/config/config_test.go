@@ -87,7 +87,7 @@ func TestParseErrors(t *testing.T) {
 		{"port 70000\n", "/p/.sigil:1: ポート番号は 1〜65535 です: 70000"},
 		{"port 8080:0\n", "/p/.sigil:1: ポート番号は 1〜65535 です: 8080:0"},
 		{"run rm -rf /\n", "/p/.sigil:1: 余分な値があります: run rm -rf /"},
-		{"run x\n", "/p/.sigil:1: 不明な指定です: run（env / port / keychain のみ）"},
+		{"run x\n", "/p/.sigil:1: 不明な指定です: run（env / port / keychain / ro / ro_root のみ）"},
 		{"# ok\nenv OK\nenv $(id)\n", "/p/.sigil:3: 環境変数名が不正です: $(id)"},
 	}
 	for _, tc := range cases {
@@ -228,5 +228,76 @@ func TestExpandHome(t *testing.T) {
 		if got, err := ExpandHome(in, "/h"); err == nil {
 			t.Errorf("ExpandHome(%q) = %q, エラーにならない", in, got)
 		}
+	}
+}
+
+func TestParseProjectReadOnly(t *testing.T) {
+	c, err := ParseProject("/p/.sigil", strings.NewReader("env A\nro ~/src/lib\n\nro /opt/other # c\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ReadOnly{{Path: "~/src/lib", Line: 2}, {Path: "/opt/other", Line: 4}}
+	if !reflect.DeepEqual(c.ReadOnly, want) {
+		t.Errorf("ReadOnly = %v, want %v", c.ReadOnly, want)
+	}
+}
+
+func TestParseReadOnlyErrors(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"ro\n", "/p/.sigil:1: 値がありません: ro"},
+		{"ro ~/a ~/b\n", "/p/.sigil:1: 余分な値があります: ro ~/a ~/b"},
+	}
+	for _, c := range cases {
+		_, err := ParseProject("/p/.sigil", strings.NewReader(c.in))
+		if err == nil || err.Error() != c.want {
+			t.Errorf("%q: err = %v, want %q", c.in, err, c.want)
+		}
+	}
+}
+
+func TestParseGlobalRejectsReadOnly(t *testing.T) {
+	// 全体設定に書くと、すべてのプロジェクトのコードからそのフォルダが読めてしまう
+	_, err := Parse("/g/config", strings.NewReader("env A\nro ~/src/lib\n"))
+	if err == nil || !strings.Contains(err.Error(), "/g/config:2: ro はプロジェクトの .sigil でだけ書けます") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestParseReadOnlyRoots(t *testing.T) {
+	c, err := Parse("/g/config", strings.NewReader("ro_root ~/src\nro_root /opt/src\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ReadOnly{{Path: "~/src", Line: 1}, {Path: "/opt/src", Line: 2}}
+	if !reflect.DeepEqual(c.ReadOnlyRoots, want) {
+		t.Errorf("ReadOnlyRoots = %v, want %v", c.ReadOnlyRoots, want)
+	}
+}
+
+func TestParseProjectRejectsReadOnlyRoot(t *testing.T) {
+	// マウントしてよい範囲をリポジトリに決めさせない
+	_, err := ParseProject("/p/.sigil", strings.NewReader("ro_root /\n"))
+	if err == nil || !strings.Contains(err.Error(), "/p/.sigil:1: ro_root は全体設定") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestParseRejectsNUL(t *testing.T) {
+	// 承認のハッシュは NUL で区切るので、.sigil に NUL を入れて区切りをずらさせない
+	for _, in := range []string{"env A\n# x\x00ro\x00\n", "env A\x00\n"} {
+		_, err := ParseProject("/p/.sigil", strings.NewReader(in))
+		if err == nil || !strings.Contains(err.Error(), "NUL") {
+			t.Errorf("%q: err = %v", in, err)
+		}
+	}
+}
+
+func TestMergeReadOnly(t *testing.T) {
+	// ro はプロジェクトの分、ro_root は全体の分。どちらも Merge で失われない
+	p := Config{ReadOnly: []ReadOnly{{Path: "~/src/a", Line: 1}}}
+	g := Config{ReadOnlyRoots: []ReadOnly{{Path: "~/src", Line: 3}}}
+	m := Merge(p, g)
+	if len(m.ReadOnly) != 1 || len(m.ReadOnlyRoots) != 1 {
+		t.Errorf("Merge = %+v", m)
 	}
 }

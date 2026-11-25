@@ -5,6 +5,7 @@ package project
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -93,13 +94,17 @@ func within(p, base string) bool {
 	}
 }
 
+// errTooBroad は、CheckSafe で、ホームや / そのものを指したことを表す。
+// 直し方は呼ぶ側で違う（プロジェクトなら実行する場所、ro_root なら全体設定）ので、案内は呼ぶ側で足す。
+var errTooBroad = errors.New("全体はマウントできません")
+
 // CheckSafe は、マウントすると危険な場所を拒否する。
 // ホームやその上をマウントすると、~/.ssh や ~/.aws がコンテナから見えてしまう。
 // extra は、ほかに守る場所（sigil の状態フォルダなど）。
 func CheckSafe(root, home string, extra ...string) error {
 	for _, p := range []string{"/", "/Users", "/home", home} {
 		if samePath(root, p) {
-			return fmt.Errorf("%s 全体はマウントできません。プロジェクトのフォルダで実行してください", root)
+			return fmt.Errorf("%s %w", root, errTooBroad)
 		}
 	}
 	if within(home, root) {
@@ -108,6 +113,14 @@ func CheckSafe(root, home string, extra ...string) error {
 	sensitive := append([]string(nil), extra...)
 	for _, s := range sensitiveInHome {
 		sensitive = append(sensitive, filepath.Join(home, s))
+	}
+	// 守る場所がシンボリックリンクなら、実体の場所も守る。dotfiles を ~/src/dotfiles に置き、
+	// ~/.config -> ~/src/dotfiles/config とリンクしていると、within(s, root) は s の文字列の親
+	// （~/.config → ~ → ...）しかたどらないので、~/src/dotfiles をマウントさせてしまう
+	for _, s := range sensitive {
+		if r, err := filepath.EvalSymlinks(s); err == nil && r != s {
+			sensitive = append(sensitive, r)
+		}
 	}
 	for _, s := range sensitive {
 		if within(root, s) {
@@ -163,6 +176,10 @@ func Resolve(cwd, home string, extra []string, gitTop func(dir string) (string, 
 		return Project{}, err
 	}
 	if err := CheckSafe(root, home, extra...); err != nil {
+		if errors.Is(err, errTooBroad) {
+			// ホームなどで実行したとき。プロジェクトのフォルダに移れば済むので、そう案内する
+			return Project{}, fmt.Errorf("%w。プロジェクトのフォルダで実行してください", err)
+		}
 		return Project{}, err
 	}
 	// docker の -v は ":" で区切るので、ホスト側のパスに ":" があると、別のパスをマウントしたり失敗したりする

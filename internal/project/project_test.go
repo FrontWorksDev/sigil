@@ -133,6 +133,40 @@ func TestCheckSafeSensitiveDirs(t *testing.T) {
 	}
 }
 
+func TestCheckSafeFollowsSensitiveSymlinks(t *testing.T) {
+	// dotfiles を ~/src/dotfiles に置き、~/.config や守る場所をそこへのリンクにしている場合。
+	// 実体を含むフォルダ（~/src/dotfiles）も、秘密情報を含む場所として拒否する
+	base := realTemp(t)
+	home := filepath.Join(base, "home")
+	dot := filepath.Join(home, "src", "dotfiles")
+	for _, d := range []string{filepath.Join(dot, "config"), filepath.Join(dot, "state"), filepath.Join(home, "src", "app")} {
+		mustMkdir(t, d)
+	}
+	if err := os.Symlink(filepath.Join(dot, "config"), filepath.Join(home, ".config")); err != nil {
+		t.Fatal(err)
+	}
+	extra := filepath.Join(home, ".state-link")
+	if err := os.Symlink(filepath.Join(dot, "state"), extra); err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range []string{dot, filepath.Join(dot, "config"), filepath.Join(dot, "config", "gh")} {
+		if err := CheckSafe(root, home); err == nil || !strings.Contains(err.Error(), "秘密情報を含む場所") {
+			t.Errorf("CheckSafe(%q) = %v", root, err)
+		}
+	}
+	// ~/.config を外しても、extra のリンクの実体を含むフォルダは拒否する
+	if err := os.Remove(filepath.Join(home, ".config")); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckSafe(dot, home, extra); err == nil {
+		t.Error("extra のリンクの実体を含むフォルダが通ってしまう")
+	}
+	// 関係のないフォルダは通す
+	if err := CheckSafe(filepath.Join(home, "src", "app"), home, extra); err != nil {
+		t.Errorf("app = %v", err)
+	}
+}
+
 func TestResolveRejectsCaseVariantOfHome(t *testing.T) {
 	base := realTemp(t)
 	home := filepath.Join(base, "Home")
@@ -221,8 +255,8 @@ func TestResolveUsesGitTopTrimmed(t *testing.T) {
 func TestResolveRejectsHome(t *testing.T) {
 	home := realTemp(t)
 	noGit := func(string) (string, error) { return "", errors.New("no") }
-	if _, err := Resolve(home, home, nil, noGit); err == nil {
-		t.Error("ホームそのものが通ってしまう")
+	if _, err := Resolve(home, home, nil, noGit); err == nil || !strings.Contains(err.Error(), "プロジェクトのフォルダで実行してください") {
+		t.Errorf("ホームそのもの → %v", err)
 	}
 	if _, err := Resolve(filepath.Dir(home), home, nil, noGit); err == nil {
 		t.Error("ホームを含むフォルダが通ってしまう")

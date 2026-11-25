@@ -342,8 +342,20 @@ func TestMountErrorsDoNotEchoLinkTargets(t *testing.T) {
 	if err := os.Symlink(lib, lib); err != nil {
 		t.Fatal(err)
 	}
-	if err := VerifyMounts(ms, e.home); err == nil || !strings.Contains(err.Error(), "循環") {
+	// 循環するリンクも、たどらずに「変わった」とする
+	if err := VerifyMounts(ms, e.home); !errors.Is(err, ErrMountChanged) {
 		t.Errorf("循環 → %q", err)
+	}
+
+	// 差し替えた先（/net/<ホスト> など）には触れない。触れれば「存在しません」になる
+	if err := os.Remove(lib); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/nonexistent-sigil-test/x", lib); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyMounts(ms, e.home); !errors.Is(err, ErrMountChanged) || strings.Contains(err.Error(), "存在しません") {
+		t.Errorf("外を指すリンク → %q", err)
 	}
 }
 

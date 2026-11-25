@@ -379,18 +379,25 @@ func VerifyMounts(ms []Mount, home string, extra ...string) error {
 			checkPrintable(m.Host) != nil || checkPrintable(m.Container) != nil {
 			return fmt.Errorf("ro のマウントの記録が不正です: %q → %q", m.Host, m.Container)
 		}
-		resolved, err := filepath.EvalSymlinks(m.Host)
-		if errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("%s は存在しません", m.Host)
+		// EvalSymlinks は使わない。差し替えられたリンクの先（/net/<ホスト> の autofs など）に、承認なしで
+		// 触れてしまうため。記録したパスはシンボリックリンクを含まないはずなので、先頭から 1 段ずつ Lstat し、
+		// リンクが 1 つでもあれば、たどらずに「変わった」とする
+		cur := "/"
+		for _, c := range splitPath(m.Host) {
+			cur = filepath.Join(cur, c)
+			fi, err := os.Lstat(cur)
+			if errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("%s は存在しません", m.Host)
+			}
+			if err != nil {
+				return fmt.Errorf("%s をたどれません（%s）", m.Host, fsReason(err))
+			}
+			if fi.Mode()&fs.ModeSymlink != 0 {
+				// cur は記録したパスの一部（確かめ済み）。リンクの先は読まない
+				return fmt.Errorf("%w: %s の途中（%s）がシンボリックリンクになっています", ErrMountChanged, m.Host, cur)
+			}
 		}
-		if err != nil {
-			return fmt.Errorf("%s をたどれません（%s）", m.Host, fsReason(err))
-		}
-		if resolved != m.Host {
-			// 差し替えた先は、ほかのコンテナが決められる。端末の制御文字を送り込まれないよう、%q で出す
-			return fmt.Errorf("%w: %s → %q", ErrMountChanged, m.Host, resolved)
-		}
-		fi, err := os.Stat(resolved)
+		fi, err := os.Lstat(m.Host)
 		if err != nil {
 			return fmt.Errorf("%s を確かめられません（%s）", m.Host, fsReason(err))
 		}

@@ -7,10 +7,10 @@ import (
 	"io"
 	"strings"
 
-	"sigil/internal/docker"
-	"sigil/internal/gitcommit"
-	"sigil/internal/project"
-	"sigil/internal/ui"
+	"github.com/FrontWorksDev/sigil/internal/docker"
+	"github.com/FrontWorksDev/sigil/internal/gitcommit"
+	"github.com/FrontWorksDev/sigil/internal/project"
+	"github.com/FrontWorksDev/sigil/internal/ui"
 )
 
 // hookLogMax は、フックの出力をためておく上限。コンテナが際限なく出力しても、

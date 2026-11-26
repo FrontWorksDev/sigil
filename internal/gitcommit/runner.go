@@ -8,7 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"sigil/internal/ui"
+	"github.com/FrontWorksDev/sigil/internal/ui"
 )
 
 // RunOpts は外部コマンドの実行に渡す入出力と環境変数。

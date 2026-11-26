@@ -16,7 +16,7 @@ VERSION := $(shell git describe --tags --always 2>/dev/null | LC_ALL=C grep -E '
 .PHONY: build install test vet fmt check
 
 build:
-	CGO_ENABLED=0 go build -trimpath -ldflags "-X sigil/internal/app.version=$(VERSION)" -o $(BIN) .
+	CGO_ENABLED=0 go build -trimpath -ldflags "-X github.com/FrontWorksDev/sigil/internal/app.version=$(VERSION)" -o $(BIN) .
 
 # 置き場所にシンボリックリンクがあると、install はリンク先を上書きしてしまうので、
 # 先にリンクだけを消してから実体を置く。

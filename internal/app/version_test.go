@@ -78,6 +78,12 @@ func vcsInfo(rev, modified string) *debug.BuildInfo {
 	return bi
 }
 
+func mainVersion(v string) *debug.BuildInfo {
+	bi := &debug.BuildInfo{}
+	bi.Main.Version = v
+	return bi
+}
+
 func TestVersionString(t *testing.T) {
 	const rev = "e9dcf5c0123456789abcdef0123456789abcdef0"
 	tests := []struct {
@@ -99,6 +105,15 @@ func TestVersionString(t *testing.T) {
 			"sigil v0.1.0 (go1.27.4, darwin/arm64)\n"},
 		{"短いリビジョンはそのまま", "", vcsInfo("abc", "false"), true,
 			"sigil dev (commit abc, go1.27.4, darwin/arm64)\n"},
+		// go install ...@v0.6.0 は -ldflags も VCS の情報も付かず、モジュールの版だけが入る
+		{"埋め込みなしならモジュールの版を使う", "", mainVersion("v0.6.0"), true,
+			"sigil v0.6.0 (go1.27.4, darwin/arm64)\n"},
+		{"埋め込みはモジュールの版より優先", "v0.6.0-3-gabcdef0", mainVersion("v0.6.0"), true,
+			"sigil v0.6.0-3-gabcdef0 (go1.27.4, darwin/arm64)\n"},
+		{"(devel) は dev", "", mainVersion("(devel)"), true,
+			"sigil dev (go1.27.4, darwin/arm64)\n"},
+		{"版らしくない値は dev", "", mainVersion("v1\x1b[31m"), true,
+			"sigil dev (go1.27.4, darwin/arm64)\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

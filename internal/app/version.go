@@ -6,7 +6,7 @@ import (
 	"runtime/debug"
 )
 
-// version は、make build が -ldflags "-X sigil/internal/app.version=..." で埋め込む
+// version は、make build が -ldflags "-X github.com/FrontWorksDev/sigil/internal/app.version=..." で埋め込む
 // （git describe --tags --always の結果）。go build だけで作ったときは空で、dev と表示する。
 // 名前や置き場所を変えたら、Makefile の -X も変えること。リンカーは存在しない名前の -X を
 // 黙って無視するので、変え忘れるとすべてのビルドが dev と表示し、テストでも気づけない。
@@ -25,6 +25,13 @@ func printVersion(d Deps) {
 // 数えないので、両方に付けると食い違うことがある。
 func versionString(embedded string, bi *debug.BuildInfo, ok bool, goVersion, goos, goarch string) string {
 	v := embedded
+	if v == "" && ok && bi != nil && isVersionLike(bi.Main.Version) {
+		// go install github.com/FrontWorksDev/sigil@v0.6.0 では -ldflags が付かないので、
+		// Go がモジュールの版として埋め込む値（タグ名）を使う。make を通さない go build でも、
+		// Go がタグとコミットから作る版（v0.6.1-0.2026...-abcdef+dirty など）が入る。
+		// 開発中で版が決まらないときは "(devel)" なので、dev にする。
+		v = bi.Main.Version
+	}
 	if v == "" {
 		v = "dev"
 	}
@@ -51,4 +58,21 @@ func versionString(embedded string, bi *debug.BuildInfo, ok bool, goVersion, goo
 		commit = "commit " + rev + ", "
 	}
 	return fmt.Sprintf("sigil %s (%s%s, %s/%s)\n", v, commit, goVersion, goos, goarch)
+}
+
+// isVersionLike は、モジュールの版として表示してよい値か。"(devel)" や空を除き、
+// Makefile の埋め込みと同じく英数字と ._+- だけでできているものに限る（端末の制御文字などを出さないため）。
+func isVersionLike(s string) bool {
+	if s == "" || s == "(devel)" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case 'a' <= r && r <= 'z', 'A' <= r && r <= 'Z', '0' <= r && r <= '9',
+			r == '.', r == '_', r == '+', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }

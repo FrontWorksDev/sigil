@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"sigil/internal/secret"
+	"github.com/FrontWorksDev/sigil/internal/secret"
 )
 
 // maxSecurityStderr は、security の標準エラーとしてためる最大のバイト数。

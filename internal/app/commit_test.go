@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"sigil/internal/gitcommit"
-	"sigil/internal/project"
+	"github.com/FrontWorksDev/sigil/internal/gitcommit"
+	"github.com/FrontWorksDev/sigil/internal/project"
 )
 
 // ---- sigil commit（issue #13）----

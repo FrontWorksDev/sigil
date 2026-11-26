@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"sigil/internal/ui"
+	"github.com/FrontWorksDev/sigil/internal/ui"
 )
 
 // Warning は、確認の画面で「確かめてほしいもの」として出す 1 件。

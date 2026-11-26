@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"sigil/internal/docker"
-	"sigil/internal/secret"
-	"sigil/internal/ui"
+	"github.com/FrontWorksDev/sigil/internal/docker"
+	"github.com/FrontWorksDev/sigil/internal/secret"
+	"github.com/FrontWorksDev/sigil/internal/ui"
 )
 
 // ---- キーチェーンから読んで渡す（issue #25） ----

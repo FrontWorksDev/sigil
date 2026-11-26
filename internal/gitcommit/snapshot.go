@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"sigil/internal/ui"
+	"github.com/FrontWorksDev/sigil/internal/ui"
 )
 
 // ErrNothing は、確定した tree が HEAD と同じとき。

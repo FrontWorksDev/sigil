@@ -13,9 +13,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"sigil/internal/gitcommit"
-	"sigil/internal/project"
-	"sigil/internal/ui"
+	"github.com/FrontWorksDev/sigil/internal/gitcommit"
+	"github.com/FrontWorksDev/sigil/internal/project"
+	"github.com/FrontWorksDev/sigil/internal/ui"
 )
 
 // commitUsage は sigil commit の引数が誤っているときのエラー。

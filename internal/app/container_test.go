@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"sigil/internal/approval"
+	"github.com/FrontWorksDev/sigil/internal/approval"
 )
 
 // ---- Task 9: コンテナの用意と exec ----

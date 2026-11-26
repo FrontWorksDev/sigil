@@ -7,7 +7,7 @@ import (
 	"path"
 	"path/filepath"
 
-	"sigil/internal/ui"
+	"github.com/FrontWorksDev/sigil/internal/ui"
 )
 
 // フックの名前。

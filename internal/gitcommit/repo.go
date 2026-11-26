@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"sigil/internal/ui"
+	"github.com/FrontWorksDev/sigil/internal/ui"
 )
 
 // Repo は点検したリポジトリの情報。パスはすべて絶対パス。

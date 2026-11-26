@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"sigil/internal/docker"
-	"sigil/internal/project"
+	"github.com/FrontWorksDev/sigil/internal/docker"
+	"github.com/FrontWorksDev/sigil/internal/project"
 )
 
 // roEnv は、ro_root（~/src）と、マウントされる側のリポジトリ（~/src/lib、~/src/lib-v2）を用意し、

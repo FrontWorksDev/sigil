@@ -30,11 +30,15 @@ sigil build                   # sigil:latest イメージを作ります
 リポジトリを clone しなくても、Go（1.27 以上）があれば、リリースしたタグから入れられます。
 
 ```sh
-CGO_ENABLED=0 go install github.com/FrontWorksDev/sigil@latest   # 版を決めるなら @v0.6.0 など
+CGO_ENABLED=0 go install -trimpath github.com/FrontWorksDev/sigil@latest   # 版を決めるなら @v0.6.0 など
+which sigil                            # どこに置かれたか
 sigil build
 ```
 
-- `$(go env GOPATH)/bin`（ふつうは `~/go/bin`）に置かれます。PATH に入っていなければ足してください。`make install` の置き場所（`~/.local/bin`）とは違うので、両方に置くと PATH の先にある方が使われます。
+- `CGO_ENABLED=0` と `-trimpath` は、`make build` と同じ作り方にそろえるためです。`-trimpath` がないと、ビルドした場所のパス（ホームのパスを含む）がバイナリに埋め込まれます。
+- 置き場所は `go env GOBIN` が設定されていればそこ、なければ `$(go env GOPATH)/bin`（ふつうは `~/go/bin`）です。PATH に入っていなければ足してください。`make install` の置き場所（`~/.local/bin`）とは違うので、両方に置くと PATH の先にある方が使われます。
+- 手元の Go が 1.27 より古くても、Go が必要な版（`go.mod` の `go 1.27` 以上）を自動で取ってきてビルドします。
+- 自分でビルドした版（`make install`）との違いは、`--version` にコミットが出ないことと、手元の作業ツリーではなくタグの中身から作られることです。機能は同じです。
 - ソースは Go のモジュールプロキシ（proxy.golang.org）から取り、チェックサムデータベース（sum.golang.org）で照合されます。一度公開されたタグの中身は、あとから差し替えられません。
 
 `sigil` は標準ライブラリだけで書かれた 1 つのバイナリです。`image/`（Dockerfile と sigil-check）はバイナリに埋め込まれているので、インストール後はこのリポジトリがなくても `sigil build` できます。

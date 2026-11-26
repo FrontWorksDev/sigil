@@ -88,7 +88,7 @@ jobs:
       - name: 外部モジュールがないこと
         run: |
           mods="$(go list -m all)"
-          if [ "$mods" != "sigil" ]; then
+          if [ "$mods" != "github.com/FrontWorksDev/sigil" ]; then
             echo "外部モジュールが入っています:"
             echo "$mods"
             exit 1

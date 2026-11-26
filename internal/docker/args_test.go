@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"sigil/internal/config"
-	"sigil/internal/project"
+	"github.com/FrontWorksDev/sigil/internal/config"
+	"github.com/FrontWorksDev/sigil/internal/project"
 )
 
 func sampleSpec() RunSpec {

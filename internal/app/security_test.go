@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"sigil/internal/secret"
+	"github.com/FrontWorksDev/sigil/internal/secret"
 )
 
 // fakeSecurity は、本物の security の代わりに動かすシェルスクリプトを一時フォルダに作る。

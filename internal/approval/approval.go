@@ -13,10 +13,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"sigil/internal/config"
-	"sigil/internal/project"
-	"sigil/internal/secret"
-	"sigil/internal/ui"
+	"github.com/FrontWorksDev/sigil/internal/config"
+	"github.com/FrontWorksDev/sigil/internal/project"
+	"github.com/FrontWorksDev/sigil/internal/secret"
+	"github.com/FrontWorksDev/sigil/internal/ui"
 )
 
 // Sum は content の SHA-256 を 16 進で返す。

@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os/exec"
 
-	"sigil/internal/config"
-	"sigil/internal/secret"
-	"sigil/internal/ui"
+	"github.com/FrontWorksDev/sigil/internal/config"
+	"github.com/FrontWorksDev/sigil/internal/secret"
+	"github.com/FrontWorksDev/sigil/internal/ui"
 )
 
 // readKeychain は、plan でキーチェーンから読むと決めた名前の値を、専用のキーチェーンから読む。

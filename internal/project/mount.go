@@ -12,7 +12,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"sigil/internal/config"
+	"github.com/FrontWorksDev/sigil/internal/config"
 )
 
 // Mount は、読み取り専用でマウントするフォルダ（設計書 20 章）。

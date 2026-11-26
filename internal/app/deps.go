@@ -10,10 +10,10 @@ import (
 	"time"
 	"unsafe"
 
-	sigilimage "sigil/image"
-	"sigil/internal/docker"
-	"sigil/internal/gitcommit"
-	"sigil/internal/secret"
+	sigilimage "github.com/FrontWorksDev/sigil/image"
+	"github.com/FrontWorksDev/sigil/internal/docker"
+	"github.com/FrontWorksDev/sigil/internal/gitcommit"
+	"github.com/FrontWorksDev/sigil/internal/secret"
 )
 
 // Deps は、外部とのやりとりをまとめたもの。

@@ -5,7 +5,7 @@ package main
 import (
 	"os"
 
-	"sigil/internal/app"
+	"github.com/FrontWorksDev/sigil/internal/app"
 )
 
 func main() {

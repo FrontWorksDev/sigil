@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"sigil/internal/ui"
+	"github.com/FrontWorksDev/sigil/internal/ui"
 )
 
 // fancy は、標準エラーを広い端末にする（演出あり）。

@@ -25,6 +25,18 @@ make install                  # ~/.local/bin/sigil に置きます
 sigil build                   # sigil:latest イメージを作ります
 ```
 
+### go install で入れる（別の端末など）
+
+リポジトリを clone しなくても、Go（1.27 以上）があれば、リリースしたタグから入れられます。
+
+```sh
+CGO_ENABLED=0 go install github.com/FrontWorksDev/sigil@latest   # 版を決めるなら @v0.6.0 など
+sigil build
+```
+
+- `$(go env GOPATH)/bin`（ふつうは `~/go/bin`）に置かれます。PATH に入っていなければ足してください。`make install` の置き場所（`~/.local/bin`）とは違うので、両方に置くと PATH の先にある方が使われます。
+- ソースは Go のモジュールプロキシ（proxy.golang.org）から取り、チェックサムデータベース（sum.golang.org）で照合されます。一度公開されたタグの中身は、あとから差し替えられません。
+
 `sigil` は標準ライブラリだけで書かれた 1 つのバイナリです。`image/`（Dockerfile と sigil-check）はバイナリに埋め込まれているので、インストール後はこのリポジトリがなくても `sigil build` できます。
 
 インストールした版は `sigil --version`（`-V` でも）で確かめられます。不具合を報告するときは、この 1 行を添えてください。
@@ -34,7 +46,7 @@ $ sigil --version
 sigil v0.4.0 (commit 57a801c, go1.27.4, darwin/arm64)
 ```
 
-- 版は `make build` / `make install` のときに `git describe --tags --always` で埋め込みます。`make` を通さずに `go build` したときは `dev` になります。
+- 版は `make build` / `make install` のときに `git describe --tags --always` で埋め込みます。`go install ...@v0.6.0` で入れたときは、そのタグ名になります。`make` を通さずに `go build` したときは、Go がタグとコミットから作る版（`v0.6.1-0.20261126...+dirty` など）になり、それもなければ `dev` になります。
 - コミットは、Go がビルドのときに埋め込む git の情報から取ります。手元に変更があるときは `-dirty` が付きます。`make install` し忘れていないかは、このコミットと `git log -1` を比べると分かります。
 
 ## dev（devbox）からの移行

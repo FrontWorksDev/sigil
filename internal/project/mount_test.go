@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"sigil/internal/config"
+	"github.com/FrontWorksDev/sigil/internal/config"
 )
 
 // mountEnv は、ResolveMounts のテスト用の一時フォルダ一式。

@@ -14,12 +14,12 @@ import (
 	"strings"
 	"time"
 
-	"sigil/internal/approval"
-	"sigil/internal/config"
-	"sigil/internal/docker"
-	"sigil/internal/project"
-	"sigil/internal/secret"
-	"sigil/internal/ui"
+	"github.com/FrontWorksDev/sigil/internal/approval"
+	"github.com/FrontWorksDev/sigil/internal/config"
+	"github.com/FrontWorksDev/sigil/internal/docker"
+	"github.com/FrontWorksDev/sigil/internal/project"
+	"github.com/FrontWorksDev/sigil/internal/secret"
+	"github.com/FrontWorksDev/sigil/internal/ui"
 )
 
 // usage は普通の説明を主にし、メッセージに出てくる用語は〔〕で添える程度にする（issue #3）。

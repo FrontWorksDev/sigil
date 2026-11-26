@@ -3,8 +3,8 @@ package app
 import (
 	"strings"
 
-	"sigil/internal/gitcommit"
-	"sigil/internal/ui"
+	"github.com/FrontWorksDev/sigil/internal/gitcommit"
+	"github.com/FrontWorksDev/sigil/internal/ui"
 )
 
 // commitView は、確認の画面に出す内容を作る。パスや銘は生のまま渡す（ui が描くときに Escape する）。

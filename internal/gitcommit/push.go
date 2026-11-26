@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"sigil/internal/ui"
+	"github.com/FrontWorksDev/sigil/internal/ui"
 )
 
 // Upstream は、現在のブランチの push 先。

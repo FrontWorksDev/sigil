@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"sigil/internal/config"
-	"sigil/internal/project"
-	"sigil/internal/secret"
-	"sigil/internal/ui"
+	"github.com/FrontWorksDev/sigil/internal/config"
+	"github.com/FrontWorksDev/sigil/internal/project"
+	"github.com/FrontWorksDev/sigil/internal/secret"
+	"github.com/FrontWorksDev/sigil/internal/ui"
 )
 
 func TestSumMatchesShasum(t *testing.T) {

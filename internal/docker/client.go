@@ -10,7 +10,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"sigil/internal/project"
+	"github.com/FrontWorksDev/sigil/internal/project"
 )
 
 // Runner は外部コマンドを実行する。終了コードが 0 以外ならエラーを返す。

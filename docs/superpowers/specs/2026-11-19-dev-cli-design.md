@@ -72,7 +72,7 @@ examples/             設定ファイルのひな形
 
 - `build`、`ls`、`help`、`--version` はプロジェクトの外でも動く。それ以外はプロジェクトを特定してから動く。
 - `help` と `--version` は docker も `op` も使わない（op run への置き換えより前に答える）。
-- `--version` の版は、`make build` が `-ldflags "-X sigil/internal/app.version=$(git describe --tags --always)"` で埋め込む。英数字と `._+-` 以外を含むときは埋め込まない。埋め込まれていなければ `dev`。コミットは `runtime/debug.ReadBuildInfo()` の `vcs.revision`（先頭 7 文字）と `vcs.modified`（真なら `-dirty`）から取り、なければ省く。
+- `--version` の版は、`make build` が `-ldflags "-X github.com/FrontWorksDev/sigil/internal/app.version=$(git describe --tags --always)"` で埋め込む。英数字と `._+-` 以外を含むときは埋め込まない。埋め込まれていなければ、`runtime/debug.ReadBuildInfo()` の `Main.Version`（`go install ...@v0.6.0` ならタグ名）を使う。これも `(devel)`・空・英数字と `._+-` 以外を含むときは `dev`。コミットは `runtime/debug.ReadBuildInfo()` の `vcs.revision`（先頭 7 文字）と `vcs.modified`（真なら `-dirty`）から取り、なければ省く。
 - `--version` / `-V` の後ろに引数があれば、エラーにする（終了コード 1）。
 - `commit` はホストで動くコマンドで、コンテナの中では実行しない。docker は、コンテナでフックを実行するときだけ使う。
 - `sigil stop` で対象のコンテナがないときは「<名前> はありません」と出して終了コード 0（シェル版と同じ）。
@@ -322,7 +322,7 @@ docker build --pull --build-arg USER_UID=<os.Getuid()> --build-arg USER_GID=<os.
 
 ```
 .tool-versions              golang 1.27.4
-go.mod                      module sigil / go 1.27
+go.mod                      module github.com/FrontWorksDev/sigil / go 1.27
 main.go                     app.Run の結果で終了コードを決めるだけ
 image/
   Dockerfile, sigil-check
@@ -623,7 +623,7 @@ issue #5。sigil はホストで動く唯一の信頼された道具なので、
   - `go test -race -coverprofile=coverage.out ./...`、`go vet ./...`、`gofmt -l .` の出力が空であること。
   - `-race` は cgo を使うが、テストのときだけ。sigil 本体のビルドは `CGO_ENABLED=0` のまま（3 章）。
 - **ci.yml の build**: Linux のランナーから `CGO_ENABLED=0 GOOS=darwin GOARCH=arm64` と `amd64` で `go build -trimpath` する。
-- **外部モジュールがないこと**: `go list -m all` の出力が `sigil` だけであることを確かめる。`go.mod` を grep するより、Go 自身の解釈で見るほうが確実なため。
+- **外部モジュールがないこと**: `go list -m all` の出力が `github.com/FrontWorksDev/sigil`（このモジュール自身）だけであることを確かめる。`go.mod` を grep するより、Go 自身の解釈で見るほうが確実なため。
 - **Codecov**: ubuntu の `coverage.out` だけを送る。`CODECOV_TOKEN` は Secrets に入れる。フォークからの PR には Secrets が渡らないので、トークンなしでの送信（公開リポジトリで使える tokenless upload）に任せる。`pull_request_target` は使わない（フォークのコードに Secrets を渡すため）。Dependabot の PR も `CODECOV_TOKEN` が空になるが、フォークではないのでトークンなしの送信に切り替わらず、Codecov に断られる。Actions の更新だけなので、カバレッジは要らないものとし、`fail_ci_if_error: false` で CI は通す。codecov-action は実行時に Codecov の CLI を別にダウンロードし、これはロックファイルで固定されないので、action の入力で CLI の版も固定する。この版は Dependabot では上がらないので、手で上げる（四半期に 1 回を目安にする）。README にバッジを付ける（公開リポジトリなので、表示用のトークンは付けない）。
 - **govulncheck**: `go install golang.org/x/vuln/cmd/govulncheck@<版>` で版を固定して入れ（`@latest` にしない）、`govulncheck ./...` が脆弱性を見つけたら失敗させる。darwin/arm64・darwin/amd64・linux を対象に調べる（アーキテクチャごとのコードにだけある脆弱性を取りこぼさないため）。ランナーの中だけで使い、ホストにも `go.mod` にも入れない（外部モジュールを入れない方針は sigil 本体のコードの話で、CI の道具は当たらない）。対処は `.tool-versions` と `go.mod` の Go の版を上げること。脆弱性はコードを変えなくても後から公表されるので、定期実行でも動かす。govulncheck の版は Dependabot では拾えないので、手で上げる（四半期に 1 回を目安にする）。
 - **Go の版**: `actions/setup-go` に `go-version-file: .tool-versions` を渡し、手元と同じ版にする。`GOTOOLCHAIN=local` にして、`go.mod` を理由に別の版のツールチェーンをダウンロードさせない。
@@ -1130,3 +1130,4 @@ docker には、書かれたパスではなく**解決したパス**を渡す。
 | 2026-11-25 | `-X` の変数名が実在するかは、CI で確かめない。変数のコメントで、名前を変えたら Makefile も変えるよう書く | コードレビューの指摘（リンカーは存在しない名前の `-X` を黙って無視する）。CI の build ジョブは darwin 向けのクロスビルドで、Linux のランナーでは実行して確かめられない。Linux 向けのビルドを足すほどの重みはないと利用者が判断した |
 | 2026-11-25 | `sigil build` は既定で `--pull` を付け、毎回違うビルド引数 `SIGIL_REFRESH` を渡す。Dockerfile では PHP 拡張・言語ランタイムのコピー・ユーザーの作成の後ろ、ツールを取ってくる手順の前で宣言する。`--no-cache` は既定にしない。速くビルドするための sigil 独自の指定は作らない | issue #16。`stable` / `latest` / `install.sh` は手順の文字列が変わらないので、docker のキャッシュで古い版が使い回され、「ツールは最新」の方針と README の説明（`sigil build` で更新）に合っていなかった。`--no-cache` を既定にすると、apt と PHP 拡張のコンパイルまで毎回やり直して遅くなる。apt の版は Debian の安定版で、変わるのはおもに修正版なので、土台のイメージが更新されたとき（`--pull` で検出される）に作り直されれば足りる。速くしたいときは、利用者の引数が後ろに来るので、`--pull=false --build-arg SIGIL_REFRESH=<固定の値>` で今までどおりキャッシュを使える。独自の指定を作ると「追加の引数は docker build へ」の決まりに例外ができるので作らない |
 | 2026-11-26 | 言語ランタイムの `COPY --from` とユーザーの作成を `ARG SIGIL_REFRESH` より前に移す。古いイメージは sigil では消さず、README で `docker image prune` と `--pull=false` を案内する | コードレビューの指摘。ARG より後ろにあると、毎回 Go・Rust・Node の toolchain（数 GB）を書き直し、rustup の `chown -R` で複製のレイヤーも作っていた。どれも土台のイメージ（`--pull` で追う）と UID / GID だけで決まる。毎回 ID の違うイメージができるので、古いものが `<none>` として溜まるが、CLAUDE.md の「利用者の Docker 資源を消さない」に合わせ、消すのは利用者に任せる。Dockerfile の「ARG はイメージに残らない」というコメントは誤り（BuildKit は履歴に残す）なので直した |
+| 2026-11-26 | モジュールのパスを `sigil` から `github.com/FrontWorksDev/sigil` に変える。`--version` は、`-X` の埋め込みがなければ `ReadBuildInfo()` の `Main.Version` を使う | 別の端末から `go install github.com/FrontWorksDev/sigil@<タグ>` で入れられるようにするため。`go install` はモジュールのパスと取得先の URL が一致しないと失敗する（`module declares its path as: sigil`）。`go install` では `-ldflags` が付かず、プロキシから取るので VCS の情報も入らないため、そのままでは `sigil dev (go1.27.4, ...)` となり、どの版か分からない。`Main.Version` には Go がタグ名を入れる。表示する値は `-X` と同じく英数字と `._+-` に限る。v0.5.0 までのタグはモジュールのパスが `sigil` のままで `go install` できないので、パスを変えたあとのコミットに新しいタグ（v0.6.0）を付けてリリースする |

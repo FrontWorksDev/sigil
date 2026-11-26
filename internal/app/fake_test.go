@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"sigil/internal/gitcommit"
-	"sigil/internal/project"
+	"github.com/FrontWorksDev/sigil/internal/gitcommit"
+	"github.com/FrontWorksDev/sigil/internal/project"
 )
 
 // noCmd は、sigil commit 以外のテストの Deps.Cmd。呼ばれたら失敗させ、git や docker を本当に動かさない。

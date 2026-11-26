@@ -623,7 +623,7 @@ issue #5。sigil はホストで動く唯一の信頼された道具なので、
   - `go test -race -coverprofile=coverage.out ./...`、`go vet ./...`、`gofmt -l .` の出力が空であること。
   - `-race` は cgo を使うが、テストのときだけ。sigil 本体のビルドは `CGO_ENABLED=0` のまま（3 章）。
 - **ci.yml の build**: Linux のランナーから `CGO_ENABLED=0 GOOS=darwin GOARCH=arm64` と `amd64` で `go build -trimpath` する。
-- **外部モジュールがないこと**: `go list -m all` の出力が `sigil` だけであることを確かめる。`go.mod` を grep するより、Go 自身の解釈で見るほうが確実なため。
+- **外部モジュールがないこと**: `go list -m all` の出力が `github.com/FrontWorksDev/sigil`（このモジュール自身）だけであることを確かめる。`go.mod` を grep するより、Go 自身の解釈で見るほうが確実なため。
 - **Codecov**: ubuntu の `coverage.out` だけを送る。`CODECOV_TOKEN` は Secrets に入れる。フォークからの PR には Secrets が渡らないので、トークンなしでの送信（公開リポジトリで使える tokenless upload）に任せる。`pull_request_target` は使わない（フォークのコードに Secrets を渡すため）。Dependabot の PR も `CODECOV_TOKEN` が空になるが、フォークではないのでトークンなしの送信に切り替わらず、Codecov に断られる。Actions の更新だけなので、カバレッジは要らないものとし、`fail_ci_if_error: false` で CI は通す。codecov-action は実行時に Codecov の CLI を別にダウンロードし、これはロックファイルで固定されないので、action の入力で CLI の版も固定する。この版は Dependabot では上がらないので、手で上げる（四半期に 1 回を目安にする）。README にバッジを付ける（公開リポジトリなので、表示用のトークンは付けない）。
 - **govulncheck**: `go install golang.org/x/vuln/cmd/govulncheck@<版>` で版を固定して入れ（`@latest` にしない）、`govulncheck ./...` が脆弱性を見つけたら失敗させる。darwin/arm64・darwin/amd64・linux を対象に調べる（アーキテクチャごとのコードにだけある脆弱性を取りこぼさないため）。ランナーの中だけで使い、ホストにも `go.mod` にも入れない（外部モジュールを入れない方針は sigil 本体のコードの話で、CI の道具は当たらない）。対処は `.tool-versions` と `go.mod` の Go の版を上げること。脆弱性はコードを変えなくても後から公表されるので、定期実行でも動かす。govulncheck の版は Dependabot では拾えないので、手で上げる（四半期に 1 回を目安にする）。
 - **Go の版**: `actions/setup-go` に `go-version-file: .tool-versions` を渡し、手元と同じ版にする。`GOTOOLCHAIN=local` にして、`go.mod` を理由に別の版のツールチェーンをダウンロードさせない。

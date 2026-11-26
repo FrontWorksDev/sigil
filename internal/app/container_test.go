@@ -76,7 +76,7 @@ func TestCommandSelection(t *testing.T) {
 		{[]string{"nvim", "."}, []string{"nvim", "."}},
 		{[]string{"--", "stop"}, []string{"stop"}},
 		{[]string{"--", "build", "x"}, []string{"build", "x"}},
-		{[]string{"check"}, []string{"sigil-check"}},
+		{[]string{"check"}, []string{"/usr/local/bin/sigil-check"}},
 		{[]string{"--"}, []string{"bash", "-l"}},
 	}
 	for _, tc := range cases {

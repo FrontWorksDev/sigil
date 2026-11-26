@@ -41,17 +41,17 @@ npm / PyPI などのサプライチェーン攻撃や、悪意あるリポジト
 
 ```
 image/Dockerfile      ベースイメージ（Neovim / Claude Code / Node / Go / Rust / PHP / Python）
-image/sigil-check    コンテナ内で隔離を点検するスクリプト（イメージに組み込まれる）
+image/sigilcheck/    コンテナ内で隔離を点検する sigil-check の Go のソース（イメージのビルドでコンパイルされる。issue #23）
 examples/             設定ファイルのひな形
 ```
 
-`image/` の 2 ファイルはまだ実際の docker でビルドしたことがない。検証の中で問題があれば直してよいが、変更点と理由は報告すること。
+（当初）`image/` の 2 ファイル（Dockerfile と bash の sigil-check）はまだ実際の docker でビルドしたことがない。検証の中で問題があれば直してよいが、変更点と理由は報告すること。
 
 ## 3. 技術的な制約
 
 - **Go 1.27.4**（2026-11 時点の最新）。リポジトリ直下の `.tool-versions` に `golang 1.27.4` と書いて asdf で固定する。`go.mod` は `go 1.27`。
 - Go の標準ライブラリのみ。cgo なし（`CGO_ENABLED=0`）。macOS（arm64 / amd64）で動く 1 つのバイナリ。
-- `image/` は `//go:embed` でバイナリに埋め込み、`sigil build` のときに一時フォルダへ書き出してビルドコンテキストにする（`sigil-check` は実行権限 0755）。
+- `image/` は `//go:embed` でバイナリに埋め込み、`sigil build` のときに一時フォルダへ書き出してビルドコンテキストにする。書き出すのは `Dockerfile` と、`sigilcheck/` の Go のソース（`_test.go` を除く）と、そのときに作る `sigilcheck/go.mod`（11 章の「sigil-check」）。
 - ユーザー向けのメッセージとエラーは日本語。先頭に `sigil: ` を付けて標準エラーに出し、終了コード 1。
 - コードのコメントは日本語で、「なぜそうしているか」を書く。
 
@@ -314,9 +314,54 @@ docker build --pull --build-arg USER_UID=<os.Getuid()> --build-arg USER_GID=<os.
 - `sigil-check` の「ツール」の一覧に、`python3` / `uv` / `gh` / `wakatime-cli` / `lua5.1` / `luarocks` / `lazygit` / `bat` / `delta` を含める。
 - **`sigil-check` の GitHub のトークンの点検**（issue #12）: `GH_TOKEN` か `GITHUB_TOKEN` があるときだけ、「外界の鍵 ── GitHub のトークン」の欄を出す。値は表示しない。
   - 種類を先頭の文字列で判定する。`github_pat_`（fine-grained PAT）は ✓、`ghp_`（classic PAT）と `gho_`（OAuth のトークン）はリポジトリを絞れないので ✗、それ以外は注意。
-  - 期限は、`gh api -i /rate_limit`（回数の制限に数えられない）の応答ヘッダー `github-authentication-token-expiration` から読み、あと何日かを出す。8〜90 日なら ✓、期限がない・90 日を超える・7 日以内なら注意、切れていれば ✗。401 なら ✗。問い合わせられないときは注意にとどめる。トークンは環境変数で `gh` に渡し、コマンドラインに載せない。
+  - 期限は、`https://api.github.com/rate_limit`（回数の制限に数えられない）の応答ヘッダー `github-authentication-token-expiration` から読み、あと何日かを出す。8〜90 日なら ✓、期限がない・90 日を超える・7 日以内なら注意、切れていれば ✗。401 なら ✗。問い合わせられないときは注意にとどめる。問い合わせは sigil-check が Go の `net/http` で直接行う（issue #23 で `gh api` から変えた。下の「sigil-check」）。
   - 注意（`!`）は失敗に数えず、最後の 1 行に件数を添える。
   - 権限そのもの（Contents の書き込みなど）は確かめない（決定事項を参照）。
+
+### sigil-check（issue #23）
+
+コンテナの中で隔離を点検するプログラム。以前は bash のスクリプトだったが、判定が増えてテストできないまま壊れやすくなったので、Go で書き直した。点検の項目・表示・終了コードは bash 版を引き継ぎ、設計段階のセキュリティレビューを受けて次の点だけを変える（決定事項を参照）。
+
+- **絶対パスで実行する**: `sigil check` は `docker exec … /usr/local/bin/sigil-check` を実行する。`ENV PATH` では共有ボリュームの `~/go/bin`・`~/.cargo/bin` が `/usr/local/bin` より前にあり、名前だけで実行すると、別のプロジェクトが置いた偽の `sigil-check` が、このプロジェクトの環境変数（トークンなど）付きで動き、偽の「結界は完全です」を出せたため（共有ボリュームの問題そのものは #7）。
+- **分からないときは ✗（fail-closed）**:
+  - 秘密情報: `os.Lstat` で調べ、「見えない」とするのは無いと分かったとき（`ENOENT` / `ENOTDIR`）だけ。リンク先のないシンボリックリンクは「見えている」、権限のエラーなどは「確かめられない」として ✗。
+  - 書き込みの試し: `os.CreateTemp` で毎回違う名前のファイルを作る（決まった名前だと、同じ名前のものが先にあるだけで失敗し、書き込めるのに ✓ になる）。読み取り専用とみなすのは `EROFS` / `EACCES` / `EPERM` のときだけで、作れたら ✗、ほかのエラーは「確かめられない」として ✗。`.git` がフォルダでなければ（シンボリックリンクを含む）「点検できない」として ✗。
+  - `/proc/self/status`: `CapEff` は 16 進数として読んで 0 なら ✓。`CapEff` / `NoNewPrivs` の行がない・読めないときは「確かめられない」として ✗。
+  - `hosts.yml`: 読めないとき（無いときを除く）は「確かめられない」として ✗。`GH_CONFIG_DIR` があれば、その中の `hosts.yml` も見る。
+- **トークンの期限は `net/http` で直接問い合わせる**（`gh` を使わない）。PATH の偽の `gh`、`gh` の設定や環境変数（`GH_HOST`、`GH_DEBUG` など）に左右されないため。「gh が見つからない」の注意はなくなる。
+
+- **置き場所**: `image/sigilcheck/`（`package main`）。Go の標準ライブラリだけを使い、cgo を使わない。sigil 本体のパッケージ（`internal/`）は import しない（ビルドコンテキストにモジュールごと持ち込むことになるため）。標準ライブラリしか import していないことはテストで確かめる。sigil 本体からも import しない。
+- **ホストで動くものは増えない**: ホストの sigil は、`sigil build` でソースをビルドコンテキストに書き出すだけ。`sigil check` は今までどおり `docker exec … sigil-check` の出力をそのまま流す（整形はコンテナの側。16 章）。
+- **ビルド**: Dockerfile の多段ビルドでコンパイルする。土台は既にある `go` ステージ（`golang:trixie`。`--pull` で毎回最新）。
+
+  ```dockerfile
+  FROM go AS sigil-check-build
+  WORKDIR /src
+  COPY sigilcheck/ ./
+  RUN CGO_ENABLED=0 GOTOOLCHAIN=local GOPROXY=off go build -trimpath -buildvcs=false -o /out/sigil-check .
+  ...
+  COPY --chmod=755 --from=sigil-check-build /out/sigil-check /usr/local/bin/sigil-check
+  ```
+
+  - `GOTOOLCHAIN=local` と `GOPROXY=off` で、ビルドの途中に別の toolchain やモジュールを取りに行かせない。
+  - `--platform` は付けない。docker の既定の arch（arm64 / amd64）でコンパイルされ、最後のイメージと同じになる。
+  - ビルドのステージには `ARG SIGIL_REFRESH` がないので、キャッシュはソース（`COPY` の中身）と土台のイメージだけで決まる。ソースを変えれば必ずコンパイルし直され、変えなければ毎回コンパイルしない。
+- **限界**: `sigil check` は設定の誤りを見つけるためのもので、悪意のあるコードがいないことの保証ではない。同じユーザーで動くプロセスは、ptrace などで sigil-check の結果を偽れる。
+- **`SIGIL_CONTEXT`**: 別の Dockerfile を使うときは、`sigilcheck/` もそのビルドコンテキストに置く必要がある（README）。
+- **`go.mod`**: リポジトリには置かず、`WriteContext` が `module sigilcheck` と `go <版>` の 2 行で書き出す（`toolchain` の行は書かない）。版は `embed.go` の定数から取り、書式（`1.N` / `1.N.M`）を確かめてから書く。リポジトリに置くと入れ子のモジュールになり、ホストの `go test ./...`・`go vet`・`gofmt`・govulncheck の対象から外れるため。go の行がルートの `go.mod` と同じことはテストで確かめる。
+- **Go の版**: パッチの版までは `.tool-versions` とそろえない。`go` の行で下限（1.27）だけをそろえ、`GOTOOLCHAIN=local` なので、土台の Go が古ければビルドが失敗して気づける。
+- **分け方**: 判定（何も表示せず、項目の一覧を返す純粋な関数）、表示（見出し・✓ ✗ !・色・まとめの行）、外とのやりとり（環境変数、ファイルの有無と書き込みの試し、`/proc/self/status`、`gh api`、ツールの版、時刻）を分ける。外とのやりとりは関数フィールドにまとめ、テストでは偽物を差し込む。
+- **GitHub のトークン**: `GET https://api.github.com/rate_limit` に `Authorization: Bearer <トークン>` を付けて問い合わせる。
+  - URL は固定。リダイレクトはたどらない（`Authorization` を別の場所へ送らないため）。10 秒で打ち切る。本文は読まない。
+  - ルート証明書はイメージの `/etc/ssl/certs/ca-certificates.crt` を明示して読む（Go は Linux で `SSL_CERT_FILE` / `SSL_CERT_DIR` を読むので、プロジェクトが渡した証明書で TLS を偽れないようにする）。プロキシは `HTTPS_PROXY` などに従う（証明書を固定しているので、プロキシは中身を偽れない）。
+  - HTTP/1.1 に固定する（`TLSNextProto` を空にする）。`GODEBUG=http2debug=2` で、リクエストのヘッダー（トークン）が標準エラーに出るのを防ぐため。
+  - エラーは種類（「問い合わせられない」）だけを出し、`err.Error()` は出さない。状態コードは数で判定する。
+  - 期限のヘッダーは、`2006-01-02 15:04:05 UTC`（`GMT` も）と、時差を数字で書く形（`-0700`）だけを読む。`time.Parse` の `MST` は知らない略称（`JST` など）を時差 0 として受け入れてしまうので使わない。読めなければ注意にする。残りの日数は秒の差を 86400 で割って切り捨てる（bash 版と同じ）。日付は読み取った結果から作り直して出し、ヘッダーの値をそのまま出さない。
+- **「ツール」の欄**: コマンドは PATH で探すが、実行するのは、見つかった場所（シンボリックリンクを解決した先も）がイメージの場所（`/usr/`、`/bin/`、`/sbin/`、`/opt/`、`~/.local/bin/`、`~/.npm-global/bin/`、`~/.local/share/claude/`（Claude Code の本体。`~/.local/bin/claude` のリンク先））にあるときだけ。`~/.local` は永続化しておらず（共有ボリュームは `~/.local/share/nvim` と `~/.local/state/nvim` だけ）、コンテナごとに作り直される。それ以外（共有ボリュームの `~/go/bin` など）にあれば、場所を添えて「実行しない」と出す（数えない）。実行するときは、作業フォルダを `/` にし（プロジェクトの `go.mod` の `toolchain` や `.npmrc` を読ませない）、環境変数は最小限（固定の `PATH`、`HOME`、`LANG`、`GOTOOLCHAIN=local`、`RUSTUP_HOME`、`CARGO_HOME`）だけを渡し、トークンなどは渡さない。10 秒で打ち切り、出力は 64 KiB までの最初の 1 行だけを使う（200 文字で切る）。
+- **外から来る文字列の消毒**: 表示の層で、パス・環境変数の名前・ユーザー名・ツールの版などをすべて通す。不正な UTF-8 を置き換え、制御文字（C0 / C1 / DEL）と双方向の書式文字を取り除き、長さを切る。sigil-check 自身が付ける色のエスケープだけが端末に届く。
+- **想定外の panic**: `main` で recover し、値を含みうるスタックトレースを出さずに ✗ と終了コード 1 にする。
+- **色**: 標準出力が端末（`os.ModeCharDevice`）で、`NO_COLOR` がないときだけ付ける。
+- **環境変数の除外リスト**: イメージの `ENV` で設定する名前は「持ち込むもの」に出さない。リストが Dockerfile の `ENV` の名前をすべて含むことは、テストで Dockerfile を読んで確かめる（`ENV` を足してリストに足し忘れると、テストが失敗する）。土台のイメージが設定する名前（`PHP_*` など）は手で並べる。
 
 ## 12. 構成（builder の裁量で変えてよいが、テストしやすい分け方を保つこと）
 
@@ -325,8 +370,9 @@ docker build --pull --build-arg USER_UID=<os.Getuid()> --build-arg USER_GID=<os.
 go.mod                      module github.com/FrontWorksDev/sigil / go 1.27
 main.go                     app.Run の結果で終了コードを決めるだけ
 image/
-  Dockerfile, sigil-check
-  embed.go                  package sigilimage。//go:embed で 2 ファイルを持ち、WriteContext(dir) で書き出す
+  Dockerfile
+  embed.go                  package sigilimage。//go:embed で Dockerfile と sigilcheck/ のソースを持ち、WriteContext(dir) で書き出す
+  sigilcheck/               sigil-check（package main。コンテナの中で動く。11 章）
 internal/
   config/    .sigil / sigil の解析と統合（純粋関数）
   project/   プロジェクトの特定、危険なパスの拒否、コンテナ名、コンテナ内パス、作業フォルダ
@@ -340,7 +386,7 @@ Makefile    build / install（~/.local/bin/sigil）/ test / vet
 README.md
 ```
 
-- `go:embed` は親フォルダを参照できないので、`image/` 自体を小さなパッケージにする。書き出すのは埋め込んだ 2 ファイルだけなので、`embed.go` はビルドコンテキストに入らない。
+- `go:embed` は親フォルダを参照できないので、`image/` 自体を小さなパッケージにする。書き出すのは埋め込んだファイル（と `sigilcheck/go.mod`）だけなので、`embed.go` やテストはビルドコンテキストに入らない。
 - 外部とのやりとりは `app.Deps` にまとめて差し替えられるようにする: コマンドの実行（docker / git。標準出力と終了コードを返す）、`Exec`、`LookPath`、`Getenv` / `Environ`、`Getwd`、`UserHomeDir`、`/dev/tty` を開く関数、端末かどうかの判定（`os.ModeCharDevice` で、標準ライブラリだけで判定）、`Executable`。
 - 本物の `Exec` が成功すると戻ってこない。偽物の `Exec` は nil を返すので、呼んだ直後に必ず `return` する。
 
@@ -361,7 +407,15 @@ Docker・git・op・端末がなくても `go test ./...` が通ること。少�
 - 読み取り専用のマウント: 20 章の「テスト」
 - 既存のコンテナ: 実行中は再利用、停止中は start、古い layout はエラー
 - `stop`、`-- stop`、`check`、`build` の引数
-- 埋め込んだビルドコンテキストが書き出され、`sigil-check` に実行権限がある
+- 埋め込んだビルドコンテキストが書き出される（`Dockerfile`、`sigilcheck/` の `_test.go` 以外のソース、`go.mod`。`go.mod` の go の行がルートと同じ）
+- `sigil-check`（11 章）:
+  - 判定: 秘密情報のフォルダの見え方（リンク先のないシンボリックリンク、権限のエラーを含む）、`.git` と Neovim の設定への書き込み（作れた・`EROFS` / `EACCES` / `EPERM`・そのほかのエラー・`.git` がフォルダでない）、root かどうか、`CapEff`、`NoNewPrivs`（行がない場合を含む）、除外リストを除いた環境変数の名前
+  - GitHub のトークン: 種類（`github_pat_` / `ghp_` / `gho_` / `ghu_` / `ghs_` / その他）、`*ENTERPRISE*` は種類だけ、応答の状態（200 / 401 / 問い合わせられない / その他）、期限（ない・読めない・知らない略称・切れている・7 日以内・8〜90 日・90 日を超える）、`GITHUB_TOKEN` が `GH_TOKEN` と同じ値、`hosts.yml` の `oauth_token`（`GH_CONFIG_DIR` を含む）
+  - 問い合わせ（手元の TLS のテスト用サーバーで）: `Authorization` にトークンが入る、リダイレクトをたどらない。表示にトークンの値と期限のヘッダーの生の値が出ない
+  - ツールの欄: イメージの外の場所にあるコマンドは実行しない
+  - 消毒: ESC・OSC・双方向の書式文字・不正な UTF-8 が表示に残らない
+  - 表示: 色あり・`NO_COLOR` の出力を固定する（ゴールデンテスト）。失敗があれば終了コード 1
+  - 除外リストが Dockerfile の `ENV` の名前をすべて含む。標準ライブラリしか import していない
 - `sigil commit`（17 章）:
   - メッセージのファイル: シンボリックリンク・特殊なファイル・大きすぎるファイル・不正な UTF-8・双方向の書式文字を拒否し、リンク先を読まない。制御文字は取り除かれ、画面にもコミットにも残らない
   - 作業ツリーの中を指す `core.hooksPath` があっても、その hook はホストで実行されない（一時フォルダに作った本物の git リポジトリで、hook が印のファイルを作らないことを確かめる）
@@ -1131,3 +1185,10 @@ docker には、書かれたパスではなく**解決したパス**を渡す。
 | 2026-11-25 | `sigil build` は既定で `--pull` を付け、毎回違うビルド引数 `SIGIL_REFRESH` を渡す。Dockerfile では PHP 拡張・言語ランタイムのコピー・ユーザーの作成の後ろ、ツールを取ってくる手順の前で宣言する。`--no-cache` は既定にしない。速くビルドするための sigil 独自の指定は作らない | issue #16。`stable` / `latest` / `install.sh` は手順の文字列が変わらないので、docker のキャッシュで古い版が使い回され、「ツールは最新」の方針と README の説明（`sigil build` で更新）に合っていなかった。`--no-cache` を既定にすると、apt と PHP 拡張のコンパイルまで毎回やり直して遅くなる。apt の版は Debian の安定版で、変わるのはおもに修正版なので、土台のイメージが更新されたとき（`--pull` で検出される）に作り直されれば足りる。速くしたいときは、利用者の引数が後ろに来るので、`--pull=false --build-arg SIGIL_REFRESH=<固定の値>` で今までどおりキャッシュを使える。独自の指定を作ると「追加の引数は docker build へ」の決まりに例外ができるので作らない |
 | 2026-11-26 | 言語ランタイムの `COPY --from` とユーザーの作成を `ARG SIGIL_REFRESH` より前に移す。古いイメージは sigil では消さず、README で `docker image prune` と `--pull=false` を案内する | コードレビューの指摘。ARG より後ろにあると、毎回 Go・Rust・Node の toolchain（数 GB）を書き直し、rustup の `chown -R` で複製のレイヤーも作っていた。どれも土台のイメージ（`--pull` で追う）と UID / GID だけで決まる。毎回 ID の違うイメージができるので、古いものが `<none>` として溜まるが、CLAUDE.md の「利用者の Docker 資源を消さない」に合わせ、消すのは利用者に任せる。Dockerfile の「ARG はイメージに残らない」というコメントは誤り（BuildKit は履歴に残す）なので直した |
 | 2026-11-26 | モジュールのパスを `sigil` から `github.com/FrontWorksDev/sigil` に変える。`--version` は、`-X` の埋め込みがなければ `ReadBuildInfo()` の `Main.Version` を使う | 別の端末から `go install github.com/FrontWorksDev/sigil@<タグ>` で入れられるようにするため。`go install` はモジュールのパスと取得先の URL が一致しないと失敗する（`module declares its path as: sigil`）。`go install` では `-ldflags` が付かず、プロキシから取るので VCS の情報も入らないため、そのままでは `sigil dev (go1.27.4, ...)` となり、どの版か分からない。`Main.Version` には Go がタグ名を入れる。表示する値は `-X` と同じく英数字と `._+-` に限る。v0.5.0 までのタグはモジュールのパスが `sigil` のままで `go install` できないので、パスを変えたあとのコミットに新しいタグ（v0.6.0）を付けてリリースする |
+| 2026-11-27 | `sigil-check` を bash から Go（`image/sigilcheck/`、標準ライブラリだけ）に書き直し、Dockerfile の多段ビルドでコンパイルする。点検の項目・表示・終了コードは変えない | issue #23。トークンの点検（#12）などで判定が増え、bash のままではテストできず、手で直すたびに壊れる恐れがあった。ホストの sigil はソースをビルドコンテキストに書き出すだけで、`sigil check` は `docker exec` の出力を流すままなので、ホストで新しく動くものは増えない |
+| 2026-11-27 | コンパイルには既にある `go` ステージ（`golang:trixie`、毎回最新）を使い、パッチの版は `.tool-versions` とそろえない。`GOTOOLCHAIN=local` と `GOPROXY=off` を付ける | 別に版を固定したイメージを使うと、取ってくるイメージが増え、版を上げる手間も二重になる。go の行で下限はそろい、`GOTOOLCHAIN=local` なので土台が古ければビルドが失敗して気づける。ビルドの途中で外から toolchain やモジュールを取らせない |
+| 2026-11-27 | `sigilcheck/go.mod` はリポジトリに置かず、`WriteContext` が書き出す | リポジトリに置くと入れ子のモジュールになり、ホストの `go test ./...`・`go vet`・`gofmt`・govulncheck と CI の対象から外れ、`//go:embed` でも埋め込めない |
+| 2026-11-27 | 設計段階のセキュリティレビュー（issue #23）を受け、`sigil check` は `/usr/local/bin/sigil-check` を絶対パスで実行する。sigil-check の中でも、イメージの外の場所にあるコマンドは実行せず、実行するコマンドには秘密を渡さない。共有ボリュームの偽物を見つける点検の項目は、ここでは足さず #7 に残す | レビュー H1。共有ボリュームの `~/go/bin`・`~/.cargo/bin` が PATH の前にあり、別のプロジェクトが置いた偽の `sigil-check` や `gh` が、このプロジェクトのトークン付きで動いて偽の ✓ を出せた（bash 版からある穴）。ホストの変更は exec する名前の 1 行だけ。点検の項目を足すのは #7 の扱いと合わせて決める（利用者の判断） |
+| 2026-11-27 | トークンの期限は `gh api` ではなく `net/http` で直接問い合わせる。URL 固定、リダイレクトしない、HTTP/1.1、ルート証明書はイメージのものを明示して読む | レビュー M1・M2。`gh` は PATH で差し替えられ、`GH_HOST`・`GH_DEBUG`・`SSL_CERT_FILE`・`HTTPS_PROXY` などプロジェクトが決められる環境変数で、偽の判定や値の表示につながる。標準ライブラリだけで済み、「gh が見つからない」の分岐もなくなる（利用者の判断） |
+| 2026-11-27 | 判定は、分からないときは ✗ にする（fail-closed）。秘密情報は無いと分かったときだけ「見えない」、書き込みは読み取り専用のエラーのときだけ ✓、`CapEff` は 16 進数で 0 | レビュー H2・L4。bash 版の `-e` と `touch` は、リンク先のないシンボリックリンク、権限のエラー、同じ名前のファイルが先にある場合、`.git` がファイルの場合に、問題があっても ✓ を出しうる。bash 版より厳しくなる（利用者の判断） |
+| 2026-11-27 | 環境変数の除外リストが Dockerfile の `ENV` の名前をすべて含むことを、テストで確かめる | CLAUDE.md の「`ENV` を足したら除外リストにも足す」は手で守る約束で、忘れるとイメージの変数がホストから渡されたように見える。テストにして、守らなければ止まるようにする |

@@ -22,6 +22,15 @@ FROM ${RUST_IMAGE} AS rust
 FROM ${COMPOSER_IMAGE} AS composer
 FROM ${UV_IMAGE} AS uv
 
+# sigil-check（コンテナの中で隔離を点検するプログラム。issue #23）をコンパイルする。
+# ソースは sigil build がビルドコンテキストの sigilcheck/ に書き出す（go.mod も）。
+# GOTOOLCHAIN=local と GOPROXY=off で、ビルドの途中に別の toolchain やモジュールを取りに行かせない。
+# このステージには ARG SIGIL_REFRESH がないので、ソースと土台のイメージが変わったときだけ作り直される。
+FROM go AS sigil-check-build
+WORKDIR /src
+COPY sigilcheck/ ./
+RUN CGO_ENABLED=0 GOTOOLCHAIN=local GOPROXY=off go build -trimpath -buildvcs=false -o /out/sigil-check .
+
 FROM ${PHP_IMAGE}
 
 ARG TARGETARCH
@@ -235,13 +244,12 @@ RUN mkdir -p \
       /workspace \
  && chown -R "${USER_UID}:${USER_GID}" /home/${USERNAME} /workspace
 
-COPY sigil-check /usr/local/bin/sigil-check
-RUN chmod 755 /usr/local/bin/sigil-check
+COPY --chmod=755 --from=sigil-check-build /out/sigil-check /usr/local/bin/sigil-check
 
 USER ${USERNAME}
 
 # GH_NO_UPDATE_NOTIFIER: gh の更新はイメージの作り直しで行うので、新しい版の知らせを出さない
-# （ここに ENV を足したら、sigil-check の環境変数の除外リストにも足すこと）
+# （ここに ENV を足したら、sigilcheck/check.go の imageEnv にも足すこと。テストで照らし合わせている）
 ENV PATH=/home/${USERNAME}/.local/bin:/home/${USERNAME}/.npm-global/bin:/home/${USERNAME}/.cargo/bin:/home/${USERNAME}/go/bin:/usr/local/go/bin:/usr/local/cargo/bin:${PATH} \
     GOPATH=/home/${USERNAME}/go \
     CARGO_HOME=/home/${USERNAME}/.cargo \

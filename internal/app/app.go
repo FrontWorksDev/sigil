@@ -152,7 +152,10 @@ func run(args []string, d Deps) error {
 	cmd := args
 	switch first(args) {
 	case "check":
-		cmd = []string{"sigil-check"}
+		// 名前ではなく絶対パスで実行する。コンテナの PATH では、共有ボリュームの ~/go/bin や ~/.cargo/bin が
+		// /usr/local/bin より前にあり、ほかのプロジェクトが置いた偽の sigil-check が、このプロジェクトの
+		// 環境変数（トークンなど）付きで動いてしまうため（設計書 11 章、issue #23）。
+		cmd = []string{"/usr/local/bin/sigil-check"}
 	case "--":
 		cmd = args[1:]
 	}

@@ -345,7 +345,7 @@ func TestCheckPassesNoColorWhenHostDisablesColor(t *testing.T) {
 			if got := strings.Contains(argv, "-e NO_COLOR=1"); got != tc.expect {
 				t.Errorf("NO_COLOR=1 を渡す = %v, want %v: %s", got, tc.expect, argv)
 			}
-			if !strings.HasSuffix(argv, e.name()+" sigil-check") {
+			if !strings.HasSuffix(argv, e.name()+" /usr/local/bin/sigil-check") {
 				t.Errorf("argv = %s", argv)
 			}
 		})

@@ -45,7 +45,8 @@
 - コードのコメントも日本語で、「なぜそうしているか」を書く。特にセキュリティ上の理由がある箇所。
 - `gofmt` と `go vet` が通ること。
 - sigil が新しい環境変数を読むようにしたら、`config.deniedEnvs` にも足す（`.sigil` / `.env` で渡されないように）。
-- `image/Dockerfile` に `ENV` を足したら、`image/sigil-check` の環境変数の除外リストにも足す（ホストから渡されたものだけを表示するため）。
+- `image/Dockerfile` に `ENV` を足したら、`image/sigilcheck/check.go` の `imageEnv` にも足す（ホストから渡されたものだけを表示するため。足し忘れるとテストが失敗する）。
+- `image/sigilcheck/` はコンテナの中で動く sigil-check（`package main`）。ホストの sigil からは import せず、標準ライブラリだけを使う。外から来る文字列は表示の前に `clean` を通し、判定は分からないときは ✗ にする（設計書 11 章）。
 
 ## よく使うコマンド
 

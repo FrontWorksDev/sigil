@@ -164,3 +164,73 @@ func TestContainerProject(t *testing.T) {
 		t.Errorf("args = %v", f.calls[0].args)
 	}
 }
+
+func TestEnsureVolumesCreatesMissing(t *testing.T) {
+	const c = "sigil-p-1"
+	var rs []response
+	for range 3 {
+		rs = append(rs, response{stdout: ""}, response{}, response{stdout: `{"sigil.project":"/p"}`})
+	}
+	f := &fakeRunner{responses: rs}
+	if err := (Client{R: f}).EnsureVolumes(c, "/p"); err != nil {
+		t.Fatal(err)
+	}
+	var creates [][]string
+	for _, cl := range f.calls {
+		if cl.args[1] == "create" {
+			creates = append(creates, cl.args)
+		}
+	}
+	want := [][]string{
+		{"volume", "create", "--label", "sigil.project=/p", c + "-cache"},
+		{"volume", "create", "--label", "sigil.project=/p", c + "-go"},
+		{"volume", "create", "--label", "sigil.project=/p", c + "-cargo"},
+	}
+	if !reflect.DeepEqual(creates, want) {
+		t.Errorf("create = %v", creates)
+	}
+}
+
+func TestEnsureVolumesReusesMatching(t *testing.T) {
+	const c = "sigil-p-1"
+	var rs []response
+	for _, v := range ProjectVolumes(c) {
+		rs = append(rs, response{stdout: v.Name + "\n"}, response{stdout: `{"sigil.project":"/p"}`})
+	}
+	f := &fakeRunner{responses: rs}
+	if err := (Client{R: f}).EnsureVolumes(c, "/p"); err != nil {
+		t.Fatal(err)
+	}
+	for _, cl := range f.calls {
+		if cl.args[1] == "create" {
+			t.Errorf("作り直した: %v", cl.args)
+		}
+	}
+}
+
+// ラベルが違う・ない・余白だけ違うボリュームは、このプロジェクトのコンテナに渡さない。
+func TestEnsureVolumesForeign(t *testing.T) {
+	const c = "sigil-p-1"
+	for _, labels := range []string{`{"sigil.project":"/other"}`, "null", `{}`, `{"sigil.project":"/p "}`} {
+		f := &fakeRunner{responses: []response{{stdout: c + "-cache\n"}, {stdout: labels}}}
+		err := (Client{R: f}).EnsureVolumes(c, "/p")
+		var fe *ForeignVolumeError
+		if !errors.As(err, &fe) || fe.Name != c+"-cache" {
+			t.Errorf("ラベル %s: err = %v", labels, err)
+		}
+		if len(f.calls) != 2 {
+			t.Errorf("ラベル %s: 次のボリュームに進んだ: %v", labels, f.calls)
+		}
+	}
+}
+
+func TestEnsureVolumesDockerDown(t *testing.T) {
+	f := &fakeRunner{responses: []response{{err: errors.New("exit status 1")}}}
+	err := (Client{R: f}).EnsureVolumes("sigil-p-1", "/p")
+	if err == nil || !strings.Contains(err.Error(), "docker に接続できません") {
+		t.Errorf("err = %v", err)
+	}
+	if len(f.calls) != 1 {
+		t.Errorf("calls = %v", f.calls)
+	}
+}

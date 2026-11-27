@@ -167,7 +167,9 @@ func Resolve(cwd, home string, extra []string, gitTop func(dir string) (string, 
 	root := cwd
 	isRepo := false
 	if top, err := gitTop(cwd); err == nil {
-		if top = strings.TrimSpace(top); top != "" {
+		// 取り除くのは git が付ける末尾の改行 1 つだけ。TrimSpace だと "foo " の中で実行したのに
+		// 隣の "foo" がプロジェクトになり、sigil purge でそのコンテナとボリュームを消してしまう
+		if top = strings.TrimSuffix(top, "\n"); top != "" {
 			root, isRepo = top, true
 		}
 	}

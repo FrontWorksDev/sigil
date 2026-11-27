@@ -262,3 +262,27 @@ func TestResolveRejectsHome(t *testing.T) {
 		t.Error("ホームを含むフォルダが通ってしまう")
 	}
 }
+
+// 回帰テスト: git の出力の末尾の空白まで取り除くと、"foo " の中で実行したのに、隣の "foo" が
+// プロジェクトになる（sigil purge では "foo" のコンテナとボリュームを消してしまう）。
+// 取り除くのは git が付ける改行だけにする。
+func TestResolveKeepsTrailingSpaceInGitTop(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	spaced := filepath.Join(base, "foo ")
+	for _, d := range []string{filepath.Join(base, "foo"), spaced} {
+		if err := os.MkdirAll(filepath.Join(d, ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git := func(string) (string, error) { return spaced + "\n", nil }
+	p, err := Resolve(spaced, "/nonexistent-home", nil, git)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Root != spaced {
+		t.Errorf("Root = %q, want %q", p.Root, spaced)
+	}
+}

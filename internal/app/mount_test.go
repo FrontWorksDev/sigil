@@ -179,7 +179,7 @@ func stoppedWithMount(t *testing.T, e *testEnv) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.container("exited", "2")
+	e.container("exited", docker.LayoutVersion)
 	label := docker.EncodeReadOnly([]project.Mount{{Host: lib, Container: "/workspace/lib"}})
 	labels, _ := json.Marshal(map[string]string{docker.LayoutLabel: "2", docker.ReadOnlyLabel: label})
 	e.runner.on("docker container inspect", string(labels)+"\n", nil)
@@ -239,7 +239,7 @@ func TestStoppedContainerWithMissingMountIsNotStarted(t *testing.T) {
 
 func TestStoppedContainerLabelUnreadableIsNotStarted(t *testing.T) {
 	e := newEnv(t)
-	e.container("exited", "2")
+	e.container("exited", docker.LayoutVersion)
 	e.runner.on("docker container inspect", "", errors.New("daemon error"))
 	if code := e.run(); code != 1 {
 		t.Fatalf("code = %d", code)
@@ -252,7 +252,7 @@ func TestStoppedContainerLabelUnreadableIsNotStarted(t *testing.T) {
 func TestRunningContainerDoesNotReadMounts(t *testing.T) {
 	// 実行中のコンテナは、マウントがすでに済んでいるので確かめない（待ち時間を足さない）
 	e := newEnv(t)
-	e.container("running", "2")
+	e.container("running", docker.LayoutVersion)
 	if code := e.run(); code != 0 {
 		t.Fatal(e.stderr.String())
 	}

@@ -27,6 +27,44 @@ func ProjectVolumes(container string) []Volume {
 	}
 }
 
+// ForeignVolumeError は、プロジェクトごとのボリュームの名前のものがあるのに、ラベルがこのプロジェクトのものではないこと。
+// 名前は外から来うる文字列なので、表示する側でエスケープすること。
+type ForeignVolumeError struct {
+	Name string
+}
+
+func (e *ForeignVolumeError) Error() string {
+	return "ボリューム " + e.Name + " は、このプロジェクトのために sigil が作ったものではありません。中身を確かめてから docker volume rm で消してください"
+}
+
+// EnsureVolumes は、プロジェクトごとのボリュームを用意する。なければラベル付きで作り、
+// あればラベルがこのプロジェクトのものかを確かめる。docker run の前に呼ぶこと。
+//
+// ラベルが違う・ないボリュームは使わずに *ForeignVolumeError を返す。sigil が作っていないものや、
+// 別のプロジェクトのもの（コンテナ名の衝突など）を、このプロジェクトのコンテナに渡さないため。
+// 2 つのペインが同時に作っても、docker volume create は既にあれば成功するので、作ったあとにもラベルを読む。
+func (c Client) EnsureVolumes(container, projectRoot string) error {
+	for _, v := range ProjectVolumes(container) {
+		exists, err := c.VolumeExists(v.Name)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			if err := c.CreateVolume(v.Name, projectRoot); err != nil {
+				return fmt.Errorf("ボリューム %s を作れません（%w）", v.Name, err)
+			}
+		}
+		got, ok, err := c.VolumeProject(v.Name)
+		if err != nil {
+			return err
+		}
+		if !ok || got != projectRoot {
+			return &ForeignVolumeError{Name: v.Name}
+		}
+	}
+	return nil
+}
+
 // VolumeExists は、名前が完全に一致するボリュームがあるかを返す。
 //
 // docker volume inspect は、ボリュームがないときも docker が使えないときも失敗するので、

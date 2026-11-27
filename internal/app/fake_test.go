@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -190,6 +191,9 @@ func newEnv(t *testing.T) *testEnv {
 	e.runner.on("git -C", e.proj+"\n", nil)
 	e.runner.on("docker ps -a --filter name=", "", nil)
 	e.runner.on("docker image inspect", "", nil)
+	// 既定: プロジェクトごとのボリュームはまだなく、作るとこのプロジェクトのラベルが付く
+	e.runner.on("docker volume ls", "", nil)
+	e.runner.on("docker volume inspect", labelsJSON(e.proj), nil)
 
 	e.d = Deps{
 		Runner:   e.runner,
@@ -265,7 +269,20 @@ func (e *testEnv) run(args ...string) int {
 func (e *testEnv) container(state, layout string) {
 	e.runner.on("docker ps -a --filter name=", e.name()+"\t"+state+"\t"+layout+"\n", nil)
 	// 停止中のコンテナを起動する前に読むラベル（ro はなし）
-	e.runner.on("docker container inspect", `{"sigil.layout":"`+layout+`"}`+"\n", nil)
+	e.runner.on("docker container inspect", `{"sigil.layout":"`+layout+`","sigil.project":`+jsonString(e.proj)+`}`+"\n", nil)
+}
+
+// labelsJSON は、docker volume inspect --format '{{json .Labels}}' の、sigil.project=root の出力を作る。
+func labelsJSON(root string) string {
+	return `{"sigil.project":` + jsonString(root) + `}` + "\n"
+}
+
+func jsonString(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
 }
 
 func (e *testEnv) name() string { return project.New(e.proj).ContainerName }

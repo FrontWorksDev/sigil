@@ -110,7 +110,7 @@ func TestEnterExistingIsOneLineWithoutWaiting(t *testing.T) {
 	e := newEnv(t)
 	e.fancy()
 	e.vars["NO_COLOR"] = "1"
-	e.container("running", "2")
+	e.container("running", "3")
 	// 待ち時間を足していないことを、After が呼ばれないことで確かめる
 	e.d.After = func(time.Duration) <-chan time.Time {
 		t.Error("既存のコンテナに入るときに待っている")
@@ -127,7 +127,7 @@ func TestEnterExistingIsOneLineWithoutWaiting(t *testing.T) {
 func TestEnterStoppedSpinsWhileStarting(t *testing.T) {
 	e := newEnv(t)
 	e.fancy()
-	e.container("exited", "2")
+	e.container("exited", "3")
 	if code := e.run(); code != 0 {
 		t.Fatal(e.stderr.String())
 	}
@@ -335,7 +335,7 @@ func TestCheckPassesNoColorWhenHostDisablesColor(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
-			e.container("running", "2")
+			e.container("running", "3")
 			e.stdoutTTY = tc.tty
 			maps.Copy(e.vars, tc.vars)
 			if code := e.run("check"); code != 0 {
@@ -352,7 +352,7 @@ func TestCheckPassesNoColorWhenHostDisablesColor(t *testing.T) {
 	}
 	// check 以外のコマンドには渡さない
 	e := newEnv(t)
-	e.container("running", "2")
+	e.container("running", "3")
 	e.vars["NO_COLOR"] = "1"
 	e.run("nvim", ".")
 	if strings.Contains(strings.Join(e.lastExec().argv, " "), "NO_COLOR") {

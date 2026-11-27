@@ -22,18 +22,19 @@ import (
 )
 
 func main() {
-	code := 1
-	func() {
-		// 想定外の panic で、値を含みうるスタックトレースを出さない。失敗として終える
-		defer func() {
-			if recover() != nil {
-				fmt.Fprintln(os.Stdout, "  ✗ 点検の途中で想定外のエラーが起きた")
-				code = 1
-			}
-		}()
-		code = run(os.Stdout, realSys(), colorEnabled())
+	os.Exit(runSafe(os.Stdout, realSys(), colorEnabled()))
+}
+
+// runSafe は run を実行し、想定外の panic を失敗として扱う。
+// panic の値やスタックトレース（値を含みうる）は出さない。
+func runSafe(w io.Writer, s *sys, color bool) (code int) {
+	defer func() {
+		if recover() != nil {
+			fmt.Fprintln(w, "  ✗ 点検の途中で想定外のエラーが起きた")
+			code = 1
+		}
 	}()
-	os.Exit(code)
+	return run(w, s, color)
 }
 
 func run(w io.Writer, s *sys, color bool) int {
@@ -52,10 +53,10 @@ func colorEnabled() bool {
 
 var errNotRegular = errors.New("普通のファイルではない")
 
-const (
-	cmdTimeout = 10 * time.Second
-	outLimit   = 64 << 10
-)
+// cmdTimeout は、外への問い合わせとツールの版の問い合わせを打ち切る時間（テストでは短くする）。
+var cmdTimeout = 10 * time.Second
+
+const outLimit = 64 << 10
 
 func realSys() *sys {
 	return &sys{

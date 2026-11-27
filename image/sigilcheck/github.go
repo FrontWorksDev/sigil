@@ -160,13 +160,16 @@ func parseExpiry(v string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-const (
+// 問い合わせ先とルート証明書の場所。変数なのは、テストで手元の TLS のサーバーに向けるためだけで、
+// 本番では書き換えない（環境変数などからは読まない）。
+var (
 	rateLimitURL = "https://api.github.com/rate_limit"
 	// イメージ（Debian の ca-certificates）のルート証明書。Go は Linux で SSL_CERT_FILE / SSL_CERT_DIR を
 	// 読むので、明示して読み、プロジェクトが渡した証明書で TLS を偽れないようにする。
-	caFile    = "/etc/ssl/certs/ca-certificates.crt"
-	caMaxSize = 4 << 20
+	caFile = "/etc/ssl/certs/ca-certificates.crt"
 )
+
+const caMaxSize = 4 << 20
 
 var errNoCerts = errors.New("ルート証明書を読めない")
 

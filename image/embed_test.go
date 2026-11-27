@@ -95,6 +95,21 @@ func TestWriteContext(t *testing.T) {
 	}
 }
 
+func TestWriteContextErrors(t *testing.T) {
+	// 書き出し先がない
+	if err := WriteContext(filepath.Join(t.TempDir(), "none")); err == nil {
+		t.Error("ないフォルダに書き出せた")
+	}
+	// sigilcheck/ が先にある（同じ場所に 2 回書き出すと、古いものに混ざらないよう失敗する）
+	dir := t.TempDir()
+	if err := WriteContext(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteContext(dir); err == nil {
+		t.Error("sigilcheck/ があるのに書き出せた")
+	}
+}
+
 // sigilcheck/go.mod の go の行は、ルートの go.mod と同じ版にする（設計書 11 章）。
 func TestSigilcheckGoVersionMatchesRoot(t *testing.T) {
 	b, err := os.ReadFile("../go.mod")

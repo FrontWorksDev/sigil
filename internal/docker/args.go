@@ -15,7 +15,7 @@ const (
 	// LayoutLabel は、コンテナのマウント配置の版を示すラベル。
 	// 配置を変えたら LayoutVersion を上げ、古いコンテナを作り直してもらう。
 	LayoutLabel   = "sigil.layout"
-	LayoutVersion = "2"
+	LayoutVersion = "3"
 	// ProjectLabel は、コンテナがどのプロジェクトのものかを示すラベル。sigil ls で使う。
 	ProjectLabel = "sigil.project"
 	// ReadOnlyLabel は、承認した ro のマウント（解決したパスとマウント先の JSON）を残すラベル。
@@ -110,13 +110,17 @@ func RunArgs(s RunSpec) []string {
 		"-e", "GIT_CONFIG_COUNT=1",
 		"-e", "GIT_CONFIG_KEY_0=safe.directory",
 		"-e", "GIT_CONFIG_VALUE_0="+s.ContainerPath,
-		// プロジェクトをまたいで共有するキャッシュ類（ホストのフォルダではなく名前付きボリューム）
+		// プロジェクトをまたいで共有するもの（ホストのフォルダではなく名前付きボリューム）。
+		// ほかのプロジェクトのコンテナでコードを実行できる経路が残っている（issue #7 のフェーズ 2・3 で分ける）
 		"-v", "sigil-nvim-data:"+containerHome+"/.local/share/nvim",
 		"-v", "sigil-nvim-state:"+containerHome+"/.local/state/nvim",
 		"-v", "sigil-claude:"+containerHome+"/.claude",
-		"-v", "sigil-cache:"+containerHome+"/.cache",
-		"-v", "sigil-go:"+containerHome+"/go",
-		"-v", "sigil-cargo:"+containerHome+"/.cargo",
+	)
+	for _, v := range ProjectVolumes(s.Name) {
+		// プロジェクトごとのキャッシュ類（設計書 21 章）。docker run の前に EnsureVolumes でラベルを確かめておくこと
+		args = append(args, "-v", v.Name+":"+v.Target)
+	}
+	args = append(args,
 		// gh のキャッシュ（gh run view --log が保存する Actions のログなど）は、そのリポジトリの
 		// 非公開のデータで、CI に出た秘密を含むこともある。共有の ~/.cache に置くと、ほかの
 		// プロジェクトのコードから読めてしまうので、このコンテナだけのメモリ上に置く（issue #12）。

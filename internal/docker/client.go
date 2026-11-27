@@ -2,7 +2,6 @@ package docker
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -99,14 +98,9 @@ func (c Client) Inspect(name string) (State, string, error) {
 // 読めないときはエラーにする。確かめられないまま docker start すると、差し替えられたパスを
 // マウントしかねないため（呼ぶ側は起動しない）。
 func (c Client) ReadOnlyMounts(name string) ([]project.Mount, error) {
-	var out bytes.Buffer
-	args := []string{"container", "inspect", "--format", "{{json .Config.Labels}}", name}
-	if err := c.R.Run("docker", args, &out, nil); err != nil {
-		return nil, fmt.Errorf("%s のラベルを読めません（%w）", name, err)
-	}
-	var labels map[string]string
-	if err := json.Unmarshal(bytes.TrimSpace(out.Bytes()), &labels); err != nil {
-		return nil, fmt.Errorf("%s のラベルを読めません（%w）", name, err)
+	labels, err := c.containerLabels(name)
+	if err != nil {
+		return nil, err
 	}
 	return DecodeReadOnly(labels[ReadOnlyLabel])
 }

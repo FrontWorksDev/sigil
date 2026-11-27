@@ -207,3 +207,15 @@ func TestStopForeignVolumeNoHint(t *testing.T) {
 		t.Errorf("stderr = %s", e.stderr.String())
 	}
 }
+
+func TestStopRemoveFailure(t *testing.T) {
+	e := newEnv(t)
+	e.container("running", "3")
+	e.runner.on("docker rm -f", "", errors.New("exit status 1"))
+	if code := e.run("stop"); code != 1 {
+		t.Fatalf("code = %d", code)
+	}
+	if !strings.Contains(e.stderr.String(), "領域を解除できませんでした") {
+		t.Errorf("stderr = %s", e.stderr.String())
+	}
+}

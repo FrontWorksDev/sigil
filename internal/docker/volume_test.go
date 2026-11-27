@@ -234,3 +234,39 @@ func TestEnsureVolumesDockerDown(t *testing.T) {
 		t.Errorf("calls = %v", f.calls)
 	}
 }
+
+func TestForeignVolumeErrorMessage(t *testing.T) {
+	msg := (&ForeignVolumeError{Name: "sigil-p-1-cache"}).Error()
+	if !strings.Contains(msg, "sigil-p-1-cache") || !strings.Contains(msg, "docker volume rm") {
+		t.Errorf("Error() = %q", msg)
+	}
+}
+
+// 作れなければ、ラベルを読みに行かずにエラーにする（コンテナを作らない）。
+func TestEnsureVolumesCreateFailure(t *testing.T) {
+	f := &fakeRunner{responses: []response{{stdout: ""}, {err: errors.New("exit status 1")}}}
+	err := (Client{R: f}).EnsureVolumes("sigil-p-1", "/p")
+	if err == nil || !strings.Contains(err.Error(), "作れません") {
+		t.Errorf("err = %v", err)
+	}
+	if len(f.calls) != 2 {
+		t.Errorf("calls = %v", f.calls)
+	}
+}
+
+// ラベルを読めないときは、別のプロジェクトのものとは決めつけず、docker の失敗として返す。
+func TestEnsureVolumesInspectFailure(t *testing.T) {
+	f := &fakeRunner{responses: []response{{stdout: "sigil-p-1-cache\n"}, {err: errors.New("exit status 1")}}}
+	err := (Client{R: f}).EnsureVolumes("sigil-p-1", "/p")
+	var fe *ForeignVolumeError
+	if err == nil || errors.As(err, &fe) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestContainerProjectError(t *testing.T) {
+	f := &fakeRunner{responses: []response{{err: errors.New("exit status 1")}}}
+	if _, err := (Client{R: f}).ContainerProject("c"); err == nil {
+		t.Error("エラーにならない")
+	}
+}

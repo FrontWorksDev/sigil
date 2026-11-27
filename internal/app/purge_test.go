@@ -245,3 +245,68 @@ func TestPurgeWarnsRunningContainer(t *testing.T) {
 		}
 	}
 }
+
+// failOnCall は、prefix の呼び出しの n 回目（1 から数える）だけを失敗させ、それ以外は out を返す。
+func (e *testEnv) failOnCall(prefix string, n int, out string) {
+	calls := 0
+	e.runner.onFunc(prefix, func() (string, error) {
+		calls++
+		if calls == n {
+			return "", errors.New("exit status 1")
+		}
+		return out, nil
+	})
+}
+
+// docker がどこで失敗しても、確かめられないまま消さない。確認の前の失敗なら、何も消さない。
+func TestPurgeDockerFailures(t *testing.T) {
+	containerLabels := func(e *testEnv) string { return `{"sigil.project":` + jsonString(e.proj) + `}` + "\n" }
+	for _, tc := range []struct {
+		name  string
+		setup func(e *testEnv)
+		// 消してよいもの（確認のあとの失敗で、それより前に消したもの）
+		allowRm, allowVolRm bool
+	}{
+		{"コンテナの状態", func(e *testEnv) {
+			e.runner.on("docker ps -a --filter name=", "", errors.New("exit status 1"))
+		}, false, false},
+		{"コンテナのラベル", func(e *testEnv) {
+			e.runner.on("docker container inspect", "", errors.New("exit status 1"))
+		}, false, false},
+		{"ボリュームの有無", func(e *testEnv) {
+			e.runner.on("docker volume ls", "", errors.New("exit status 1"))
+		}, false, false},
+		{"ボリュームのラベル", func(e *testEnv) {
+			e.runner.on("docker volume inspect", "", errors.New("exit status 1"))
+		}, false, false},
+		{"確かめ直すときのコンテナの状態", func(e *testEnv) {
+			e.failOnCall("docker ps -a --filter name=", 2, e.name()+"\trunning\t3\n")
+		}, false, false},
+		{"確かめ直すときのコンテナのラベル", func(e *testEnv) {
+			e.failOnCall("docker container inspect", 2, containerLabels(e))
+		}, false, false},
+		{"コンテナの削除", func(e *testEnv) {
+			e.runner.on("docker rm -f", "", errors.New("exit status 1"))
+		}, true, false},
+		{"確かめ直すときのボリュームのラベル", func(e *testEnv) {
+			e.failOnCall("docker volume inspect --format {{json .Labels}} "+e.name()+"-cache", 2, labelsJSON(e.proj))
+		}, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.container("running", "3")
+			e.allVolumes()
+			tc.setup(e)
+			e.tty = "y\n"
+			if code := e.run("purge"); code != 1 {
+				t.Fatalf("code = %d, stderr = %s", code, e.stderr.String())
+			}
+			if !tc.allowRm && len(e.runner.find("docker rm -f")) != 0 {
+				t.Error("確かめられないままコンテナを消した")
+			}
+			if !tc.allowVolRm && len(e.runner.find("docker volume rm")) != 0 {
+				t.Error("確かめられないままボリュームを消した")
+			}
+		})
+	}
+}

@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -16,6 +17,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"syscall"
 	"time"
 )
 
@@ -48,6 +50,8 @@ func colorEnabled() bool {
 	return err == nil && fi.Mode()&os.ModeCharDevice != 0 && os.Getenv("NO_COLOR") == ""
 }
 
+var errNotRegular = errors.New("普通のファイルではない")
+
 const (
 	cmdTimeout = 10 * time.Second
 	outLimit   = 64 << 10
@@ -79,12 +83,30 @@ func realSys() *sys {
 			os.Remove(f.Name())
 			return nil
 		},
+		tryOpenWrite: func(p string) error {
+			// O_CREATE も O_TRUNC も付けないので、作らず、中身も変えない。O_NONBLOCK は、FIFO に
+			// 差し替えられていても止まらないため。O_NOFOLLOW でシンボリックリンクはたどらない
+			f, err := os.OpenFile(p, os.O_WRONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+			if err != nil {
+				return err
+			}
+			return f.Close()
+		},
 		readFile: func(p string) ([]byte, error) {
-			f, err := os.Open(p)
+			// O_NONBLOCK で開き、普通のファイルだけを読む。プロジェクトのコードが hosts.yml を FIFO にすると、
+			// ふつうに開くだけで止まり、点検が終わらなくなるため
+			f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 			if err != nil {
 				return nil, err
 			}
 			defer f.Close()
+			fi, err := f.Stat()
+			if err != nil {
+				return nil, err
+			}
+			if !fi.Mode().IsRegular() {
+				return nil, errNotRegular
+			}
 			return io.ReadAll(io.LimitReader(f, 1<<20))
 		},
 		lookPath: exec.LookPath,
@@ -123,6 +145,8 @@ func toolEnv() []string {
 		"HOME=" + home,
 		"LANG=C.UTF-8",
 		"GOTOOLCHAIN=local",
+		// 更新はイメージの作り直しで行う（イメージの ENV と同じ）。claude --version で自分を更新させない
+		"DISABLE_AUTOUPDATER=1",
 		"RUSTUP_HOME=/usr/local/rustup",
 		"CARGO_HOME=/usr/local/cargo",
 	}
@@ -153,7 +177,10 @@ func toolVersion(path, name string) string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
 	defer cancel()
+	// path は確かめたあとの解決済みのパス。argv[0] は、シェルで実行したときと同じく名前にする
+	// （bat → batcat のように、argv[0] で動きを変えるものがあるため）
 	cmd := exec.CommandContext(ctx, path, args...)
+	cmd.Args[0] = name
 	// 作業フォルダはプロジェクトではなく / にする（go.mod の toolchain や .npmrc を読ませない）
 	cmd.Dir = "/"
 	cmd.Env = toolEnv()

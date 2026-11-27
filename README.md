@@ -98,7 +98,8 @@ sigil             # シェル（開発サーバーなど）
 - git リポジトリではないフォルダで、中に別のリポジトリがある場所（`~/src` など）では動きません。リポジトリのフォルダで実行してください。
 - モノレポでは、どのサブフォルダから実行しても、リポジトリ全体が 1 つのコンテナになります。git submodule や git worktree の中では、コンテナ内の git は使えません（ホストの git は使えます）。
 - 環境変数 `SIGIL_IMAGE` でイメージ名（既定 `sigil:latest`）、`SIGIL_CONTEXT` で `sigil build` のビルドコンテキストを変えられます。
-  - `SIGIL_CONTEXT` で別の Dockerfile を使うときは、`sigil check` のために、`image/sigilcheck/` の `_test.go` 以外のファイルをそのビルドコンテキストの `sigilcheck/` に置き、`go.mod`（`module sigilcheck` と `go 1.27` の 2 行）を足して、`image/Dockerfile` と同じように `sigil-check-build` のステージでコンパイルしてください。
+  - `SIGIL_CONTEXT` で別の Dockerfile を使うときは、`sigil check` のために、`image/sigilcheck/` の `_test.go` 以外のファイルをそのビルドコンテキストの `sigilcheck/` に置き、`go.mod`（`module sigilcheck` と、リポジトリ直下の `go.mod` と同じ `go` の行の 2 行）を足して、`image/Dockerfile` と同じように `sigil-check-build` のステージでコンパイルしてください。
+  - リポジトリの `image/` をそのまま `SIGIL_CONTEXT` に指定しても、ビルドできません（`image/sigilcheck/` に `go.mod` がないため。`go.mod` は `sigil build` が書き出すときに作ります）。
 - `sigil build` は、毎回ツールを最新版に取り直します（土台のイメージは `--pull` で取り直し、Neovim・Claude Code・gh などのダウンロードはキャッシュを使いません）。apt で入れるものと PHP 拡張は、土台のイメージが更新されたときに作り直されます。すべてを作り直すときは `sigil build --no-cache` です。
   - 手元にしかない土台のイメージを使うとき（`--build-arg NODE_IMAGE=...` など）や、オフラインのときは `sigil build --pull=false` としてください。
   - ビルドのたびに前のイメージが名前のないイメージ（`<none>`）として残ります。ときどき `docker image prune` で片付けてください（ビルドのキャッシュは `docker builder prune`）。

@@ -128,6 +128,11 @@ func TestHostsYml(t *testing.T) {
 			f.lstat[p] = 0
 			f.contents[p] = ""
 		}, []string{"✓ gh auth login のトークンはない"}},
+		{"GH_CONFIG_DIR が書き方の違う既定の場所でも 1 回", func(f *fake) {
+			f.env["GH_CONFIG_DIR"] = "/home/dev//.config/gh/."
+			f.lstat[p] = 0
+			f.contents[p] = ""
+		}, []string{"✓ gh auth login のトークンはない"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

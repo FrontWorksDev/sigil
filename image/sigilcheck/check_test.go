@@ -110,10 +110,20 @@ func TestBarrier(t *testing.T) {
 		}, []string{"✗ .git に書き込めるか確かめられない"}},
 		{".git がない", func(f *fake) { delete(f.lstat, "/work/app/.git") },
 			[]string{"✗ .git がない（ホスト側で git init / clone してから sigil を起動してください）"}},
-		{".git がファイル", func(f *fake) { f.lstat["/work/app/.git"] = 0 },
-			[]string{"✗ .git がフォルダではない（点検できない）"}},
+		{".git がファイル（worktree）で読み取り専用", func(f *fake) { f.lstat["/work/app/.git"] = 0 },
+			[]string{"✓ .git（worktree / submodule のファイル）は読み取り専用"}},
+		{".git がファイルで書き込める", func(f *fake) {
+			f.lstat["/work/app/.git"] = 0
+			f.writeErr["/work/app/.git"] = nil
+		}, []string{"✗ .git に書き込める（hooks を仕込まれる恐れ）"}},
+		{".git がファイルで確かめられない", func(f *fake) {
+			f.lstat["/work/app/.git"] = 0
+			f.writeErr["/work/app/.git"] = &fs.PathError{Op: "open", Err: syscall.ENXIO}
+		}, []string{"✗ .git に書き込めるか確かめられない"}},
 		{".git がシンボリックリンク", func(f *fake) { f.lstat["/work/app/.git"] = fs.ModeSymlink },
-			[]string{"✗ .git がフォルダではない（点検できない）"}},
+			[]string{"✗ .git がフォルダでもファイルでもない（点検できない）"}},
+		{".git が FIFO", func(f *fake) { f.lstat["/work/app/.git"] = fs.ModeNamedPipe },
+			[]string{"✗ .git がフォルダでもファイルでもない（点検できない）"}},
 		{".git を調べられない", func(f *fake) {
 			f.lstatErr["/work/app/.git"] = &fs.PathError{Op: "lstat", Err: syscall.EACCES}
 		}, []string{"✗ .git を確かめられない"}},
@@ -266,6 +276,13 @@ func TestTools(t *testing.T) {
 		if !hasLine(got, want) {
 			t.Errorf("%q がない:\n%s", want, joinLines(got))
 		}
+	}
+	// 確かめた解決後のパスで実行する
+	if !hasLine(f.versions, "/usr/bin/batcat") || hasLine(f.versions, "/usr/local/bin/bat") {
+		t.Errorf("bat を解決後のパスで実行していない: %v", f.versions)
+	}
+	if !hasLine(f.versions, "/home/dev/.local/share/claude/versions/2.1.0") {
+		t.Errorf("claude を解決後のパスで実行していない: %v", f.versions)
 	}
 	for _, p := range f.versions {
 		if strings.Contains(p, "/go/") && p != "/usr/local/go/bin/go" || strings.Contains(p, ".cargo") || strings.Contains(p, "relative") {

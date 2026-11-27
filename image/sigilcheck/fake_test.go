@@ -84,6 +84,13 @@ func (f *fake) sys() *sys {
 			return 0, &fs.PathError{Op: "lstat", Path: p, Err: syscall.ENOENT}
 		},
 		isDir: func(p string) bool { return f.statDirs[p] },
+		tryOpenWrite: func(p string) error {
+			// ファイルも、書き込みの試しと同じ表を使う（ないものは EROFS）
+			if err, ok := f.writeErr[p]; ok {
+				return err
+			}
+			return &fs.PathError{Op: "open", Path: p, Err: syscall.EROFS}
+		},
 		tryWrite: func(dir string) error {
 			if err, ok := f.writeErr[dir]; ok {
 				return err

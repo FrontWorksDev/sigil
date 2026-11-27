@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -29,8 +30,9 @@ func githubSection(s *sys) (section, bool) {
 	type hostsFile struct{ path, label string }
 	files := []hostsFile{{home + "/.config/gh/hosts.yml", "~/.config/gh/hosts.yml"}}
 	// gh は GH_CONFIG_DIR があればそこを使うので、そちらも見る
-	if d := s.env("GH_CONFIG_DIR"); d != "" && strings.TrimRight(d, "/") != home+"/.config/gh" {
-		p := strings.TrimRight(d, "/") + "/hosts.yml"
+	// （相対パスは、gh と同じく作業フォルダから見た場所になる）
+	if d := s.env("GH_CONFIG_DIR"); d != "" && filepath.Clean(d) != filepath.Clean(home+"/.config/gh") {
+		p := filepath.Join(d, "hosts.yml")
 		files = append(files, hostsFile{p, ext(p)})
 	}
 

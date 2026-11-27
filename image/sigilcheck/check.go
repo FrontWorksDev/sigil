@@ -69,13 +69,15 @@ type sys struct {
 	lstat     func(path string) (fs.FileMode, error) // シンボリックリンクをたどらない
 	isDir     func(path string) bool                 // シンボリックリンクをたどる
 	tryWrite  func(dir string) error                 // dir に一時ファイルを作って消す
-	readFile  func(path string) ([]byte, error)
-	lookPath  func(name string) (string, error) // コンテナの PATH で探す（実行はしない）
-	resolve   func(path string) string          // シンボリックリンクを解決する（失敗ならそのまま）
-	user      func() (uid int, name string)
-	rateLimit func(token string) (status int, header http.Header, err error)
-	version   func(path, name string) string // path のコマンドの版（最初の 1 行）
-	now       func() time.Time
+	// tryOpenWrite は、ファイルを書き込み用に開いて、何も書かずに閉じる（作らない・切り詰めない）
+	tryOpenWrite func(path string) error
+	readFile     func(path string) ([]byte, error)
+	lookPath     func(name string) (string, error) // コンテナの PATH で探す（実行はしない）
+	resolve      func(path string) string          // シンボリックリンクを解決する（失敗ならそのまま）
+	user         func() (uid int, name string)
+	rateLimit    func(token string) (status int, header http.Header, err error)
+	version      func(path, name string) string // path のコマンドの版（最初の 1 行）
+	now          func() time.Time
 }
 
 func (s *sys) env(name string) string {
@@ -154,9 +156,15 @@ func barrier(s *sys) section {
 		sec.items = append(sec.items, ng(".git がない（ホスト側で git init / clone してから sigil を起動してください）"))
 	case err != nil:
 		sec.items = append(sec.items, ng(".git を確かめられない"))
+	case mode.IsRegular():
+		// git worktree / submodule では .git が「gitdir: <場所>」を書いたファイルで、読み取り専用で
+		// マウントされる。書き換えられると、ホストの git を別の gitdir（偽の hooks）に向けられるので、
+		// 書き込み用に開けるかを試す（中身は変えない）。
+		sec.items = append(sec.items, writeItem(s.tryOpenWrite(git),
+			".git（worktree / submodule のファイル）は読み取り専用", ".git に書き込める（hooks を仕込まれる恐れ）", ".git に書き込めるか確かめられない"))
 	case !mode.IsDir():
-		// worktree の .git ファイルやシンボリックリンクでは、書き込みの試しが正しく効かない
-		sec.items = append(sec.items, ng(".git がフォルダではない（点検できない）"))
+		// シンボリックリンクなどでは、書き込みの試しが正しく効かない
+		sec.items = append(sec.items, ng(".git がフォルダでもファイルでもない（点検できない）"))
 	default:
 		sec.items = append(sec.items, writeItem(s.tryWrite(git),
 			".git は読み取り専用", ".git に書き込める（hooks を仕込まれる恐れ）", ".git に書き込めるか確かめられない"))
@@ -311,13 +319,18 @@ func tools(s *sys) section {
 	for _, c := range toolNames {
 		it := item{kind: kindTool, tool: c}
 		path, err := s.lookPath(c)
-		switch {
-		case err != nil:
+		if err != nil {
 			it.text, it.warn = "見つからない", true
-		case !trustedTool(path, home) || !trustedTool(s.resolve(path), home):
+			sec.items = append(sec.items, it)
+			continue
+		}
+		// 確かめた解決後のパスをそのまま実行する。元のパスを実行すると、確かめたあとに途中のリンクを
+		// 差し替えられたとき、別のものが動く
+		resolved := s.resolve(path)
+		if !trustedTool(path, home) || !trustedTool(resolved, home) {
 			it.text, it.warn = ext(path)+"（イメージの外なので実行しない）", true
-		default:
-			it.text = clean(s.version(path, c), 200)
+		} else {
+			it.text = clean(s.version(resolved, c), 200)
 		}
 		sec.items = append(sec.items, it)
 	}

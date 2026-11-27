@@ -96,7 +96,7 @@ func TestCommandSelection(t *testing.T) {
 
 func TestExistingRunningIsReused(t *testing.T) {
 	e := newEnv(t)
-	e.container("running", "2")
+	e.container("running", "3")
 	if code := e.run(); code != 0 {
 		t.Fatal(e.stderr.String())
 	}
@@ -108,7 +108,7 @@ func TestExistingRunningIsReused(t *testing.T) {
 
 func TestExistingStoppedIsStarted(t *testing.T) {
 	e := newEnv(t)
-	e.container("exited", "2")
+	e.container("exited", "3")
 	if code := e.run(); code != 0 {
 		t.Fatal(e.stderr.String())
 	}
@@ -259,6 +259,8 @@ func newEnvSharing(t *testing.T, prev *testEnv) *testEnv {
 	e.home, e.proj, e.cwd = prev.home, prev.proj, prev.cwd
 	e.vars = prev.vars
 	e.runner.on("git -C", e.proj+"\n", nil)
+	// newEnv が登録したラベルは、差し替える前のプロジェクトのもの
+	e.runner.on("docker volume inspect", labelsJSON(e.proj), nil)
 	return e
 }
 
@@ -719,7 +721,7 @@ func TestConcurrentCreateUsesContainerFromOtherPane(t *testing.T) {
 	created := false
 	e.runner.onFunc("docker ps -a --filter name=", func() (string, error) {
 		if created {
-			return e.name() + "\trunning\t2\n", nil
+			return e.name() + "\trunning\t3\n", nil
 		}
 		return "", nil
 	})
@@ -793,7 +795,7 @@ func TestInnerSkipsApprovalAndOp(t *testing.T) {
 
 func TestExistingContainerSkipsConfigAndApproval(t *testing.T) {
 	e := newEnv(t)
-	e.container("running", "2")
+	e.container("running", "3")
 	e.opPath = "/opt/bin/op"
 	e.write(".sigil", "env FOO\n")
 	e.write(".env", "FOO=op://v/i/f\n")
@@ -937,5 +939,66 @@ func TestEnvKeychainRefSelectionWarnings(t *testing.T) {
 	}
 	if strings.Contains(out, "keychain://b") || strings.Contains(out, "keychain://c") {
 		t.Errorf("使わない参照を確認の画面に出した:\n%s", out)
+	}
+}
+
+// ---- プロジェクトごとのボリューム（設計書 21 章） ----
+
+func TestCreatePreparesVolumesBeforeRun(t *testing.T) {
+	e := newEnv(t)
+	if code := e.run(); code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, e.stderr.String())
+	}
+	var creates [][]string
+	sawRun := false
+	for _, c := range e.runner.calls {
+		s := c.String()
+		if strings.HasPrefix(s, "docker run") {
+			sawRun = true
+		}
+		if strings.HasPrefix(s, "docker volume create") {
+			if sawRun {
+				t.Errorf("docker run のあとにボリュームを作った: %s", s)
+			}
+			creates = append(creates, c.args)
+		}
+	}
+	n := e.name()
+	want := [][]string{
+		{"volume", "create", "--label", "sigil.project=" + e.proj, n + "-cache"},
+		{"volume", "create", "--label", "sigil.project=" + e.proj, n + "-go"},
+		{"volume", "create", "--label", "sigil.project=" + e.proj, n + "-cargo"},
+	}
+	if !reflect.DeepEqual(creates, want) {
+		t.Errorf("create =\n%v\nwant\n%v", creates, want)
+	}
+}
+
+func TestForeignVolumeStopsBeforeRun(t *testing.T) {
+	e := newEnv(t)
+	e.runner.on("docker volume inspect", "{}\n", nil)
+	if code := e.run(); code != 1 {
+		t.Fatalf("code = %d", code)
+	}
+	if len(e.runner.find("docker run")) != 0 {
+		t.Error("ラベルの違うボリュームでコンテナを作った")
+	}
+	out := e.stderr.String()
+	if !strings.Contains(out, "領域の残響が別のものと混ざっています") || !strings.Contains(out, e.name()+"-cache") {
+		t.Errorf("stderr = %s", out)
+	}
+}
+
+func TestVolumeCheckDockerDownStopsBeforeRun(t *testing.T) {
+	e := newEnv(t)
+	e.runner.on("docker volume ls", "", errors.New("exit status 1"))
+	if code := e.run(); code != 1 {
+		t.Fatalf("code = %d", code)
+	}
+	if len(e.runner.find("docker run"))+len(e.runner.find("docker volume create")) != 0 {
+		t.Errorf("calls = %v", e.runner.calls)
+	}
+	if !strings.Contains(e.stderr.String(), "docker に接続できません") {
+		t.Errorf("stderr = %s", e.stderr.String())
 	}
 }

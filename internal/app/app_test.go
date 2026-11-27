@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"os"
 	"reflect"
 	"strings"
@@ -94,7 +95,7 @@ func TestLs(t *testing.T) {
 
 func TestStopRemovesContainer(t *testing.T) {
 	e := newEnv(t)
-	e.container("running", "2")
+	e.container("running", "3")
 	if code := e.run("stop"); code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, e.stderr.String())
 	}
@@ -137,5 +138,84 @@ func TestDangerousPathNeverCallsDocker(t *testing.T) {
 		if !strings.HasPrefix(e.stderr.String(), "sigil: ") {
 			t.Errorf("stderr = %q", e.stderr.String())
 		}
+	}
+}
+
+// sigil stop はボリュームを消さず、残っていることと消し方を知らせる（設計書 21 章）。
+func TestStopKeepsVolumes(t *testing.T) {
+	e := newEnv(t)
+	e.container("running", "3")
+	e.runner.on("docker volume ls", e.name()+"-cache\n", nil)
+	if code := e.run("stop"); code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, e.stderr.String())
+	}
+	if len(e.runner.find("docker volume rm")) != 0 {
+		t.Error("sigil stop でボリュームを消した")
+	}
+	if !strings.Contains(e.stderr.String(), "領域の残響は残しています。消すときは sigil purge") {
+		t.Errorf("stderr = %s", e.stderr.String())
+	}
+}
+
+func TestStopNoVolumesNoHint(t *testing.T) {
+	e := newEnv(t)
+	e.container("running", "3")
+	if code := e.run("stop"); code != 0 {
+		t.Fatalf("code = %d", code)
+	}
+	if strings.Contains(e.stderr.String(), "残響") {
+		t.Errorf("stderr = %s", e.stderr.String())
+	}
+}
+
+// コンテナがなくても、ボリュームが残っていれば知らせる。
+func TestStopMissingContainerWithVolumes(t *testing.T) {
+	e := newEnv(t)
+	e.runner.on("docker volume ls", e.name()+"-go\n", nil)
+	if code := e.run("stop"); code != 0 {
+		t.Fatalf("code = %d", code)
+	}
+	out := e.stderr.String()
+	if !strings.Contains(out, "はありません") || !strings.Contains(out, "sigil purge") {
+		t.Errorf("stderr = %s", out)
+	}
+}
+
+// ボリュームを確かめられなくても、コンテナは消せているので成功のまま、案内も出さない。
+func TestStopVolumeCheckFailureIsQuiet(t *testing.T) {
+	e := newEnv(t)
+	e.container("running", "3")
+	e.runner.on("docker volume ls", "", errors.New("exit status 1"))
+	if code := e.run("stop"); code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, e.stderr.String())
+	}
+	if strings.Contains(e.stderr.String(), "残響") {
+		t.Errorf("stderr = %s", e.stderr.String())
+	}
+}
+
+// ラベルの違うボリュームしかなければ、purge で消せないので案内しない。
+func TestStopForeignVolumeNoHint(t *testing.T) {
+	e := newEnv(t)
+	e.container("running", "3")
+	e.runner.on("docker volume ls", e.name()+"-cache\n", nil)
+	e.runner.on("docker volume inspect", labelsJSON("/other"), nil)
+	if code := e.run("stop"); code != 0 {
+		t.Fatalf("code = %d", code)
+	}
+	if strings.Contains(e.stderr.String(), "残響") {
+		t.Errorf("stderr = %s", e.stderr.String())
+	}
+}
+
+func TestStopRemoveFailure(t *testing.T) {
+	e := newEnv(t)
+	e.container("running", "3")
+	e.runner.on("docker rm -f", "", errors.New("exit status 1"))
+	if code := e.run("stop"); code != 1 {
+		t.Fatalf("code = %d", code)
+	}
+	if !strings.Contains(e.stderr.String(), "領域を解除できませんでした") {
+		t.Errorf("stderr = %s", e.stderr.String())
 	}
 }

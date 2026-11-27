@@ -295,8 +295,9 @@ var toolNames = []string{
 	"wakatime-cli", "tree-sitter", "rg", "fd", "lua5.1", "luarocks", "lazygit", "bat", "delta",
 }
 
-// trustedTool は、コマンドの場所がイメージの中か。共有ボリューム（~/go/bin、~/.cargo/bin など）には
-// ほかのプロジェクトのコードが置いたものがありうるので、実行しない（設計書 11 章、issue #7）。
+// trustedTool は、コマンドの場所がイメージの中か。ボリュームの ~/go/bin、~/.cargo/bin などには
+// プロジェクトのコード（共有のまま残る ~/.claude などを通じて動いたものを含む）が置いたものがありうるので、
+// 実行しない（設計書 11 章・21 章、issue #7）。
 // 書き込めるのが root だけの場所と、コンテナごとに作り直される場所だけを信頼する。
 func trustedTool(path, home string) bool {
 	prefixes := []string{"/usr/", "/bin/", "/sbin/", "/opt/"}

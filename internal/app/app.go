@@ -27,7 +27,8 @@ const usage = `使い方:
   sigil                   プロジェクトのコンテナに入る（なければ作る）〔領域に入る／領域展開〕
   sigil <command...>      コンテナ内でコマンドを実行   例: sigil nvim .   sigil claude
   sigil -- <command...>   stop / build などと同名のコマンドをコンテナ内で実行
-  sigil stop              このプロジェクトのコンテナを削除（.sigil を変えたら一度これ）〔領域解除〕
+  sigil stop              このプロジェクトのコンテナを削除（ボリュームは残す。.sigil を変えたら一度これ）〔領域解除〕
+  sigil purge             このプロジェクトのコンテナとボリュームを、確かめてから削除〔領域の浄化〕
   sigil ls                sigil のコンテナの一覧〔展開中の領域〕
   sigil check             隔離が効いているか、コンテナ内で確認〔結界の点検〕
   sigil build [args...]   イメージを作る（追加の引数は docker build へ）〔紋章の鋳造〕
@@ -140,6 +141,8 @@ func run(args []string, d Deps) error {
 	switch first(args) {
 	case "stop":
 		return stop(d, client, p)
+	case "purge":
+		return purge(d, client, p)
 	case "commit":
 		// -- の後ろのパスは今いるフォルダから読むので、Root と同じくリンクを解いた cwd を渡す
 		realCwd, err := filepath.EvalSymlinks(cwd)
@@ -152,9 +155,9 @@ func run(args []string, d Deps) error {
 	cmd := args
 	switch first(args) {
 	case "check":
-		// 名前ではなく絶対パスで実行する。コンテナの PATH では、共有ボリュームの ~/go/bin や ~/.cargo/bin が
-		// /usr/local/bin より前にあり、ほかのプロジェクトが置いた偽の sigil-check が、このプロジェクトの
-		// 環境変数（トークンなど）付きで動いてしまうため（設計書 11 章、issue #23）。
+		// 名前ではなく絶対パスで実行する。コンテナの PATH では、プロジェクトのコードが書き込める ~/go/bin や
+		// ~/.cargo/bin が /usr/local/bin より前にあり、そこに置かれた偽の sigil-check が、このプロジェクトの
+		// 環境変数（トークンなど）付きで動いてしまうため（設計書 11 章・21 章、issue #23）。
 		cmd = []string{"/usr/local/bin/sigil-check"}
 	case "--":
 		cmd = args[1:]
@@ -530,6 +533,20 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 		}
 	}
 
+	// プロジェクトごとのボリュームを用意する（設計書 21 章）。ラベルの違うものは、このコンテナに渡さない。
+	// 承認と op run のあとに行い、承認を断ったプロジェクトのボリュームを残さない。さらにキーチェーンの
+	// ダイアログのあと、docker run の直前に行う。確かめてから docker run までのあいだに、別のペインの
+	// sigil purge がボリュームを消すと、docker run -v がラベルなしで作り直してしまうため（間を短くする）
+	if err := client.EnsureVolumes(p.ContainerName, p.Root); err != nil {
+		var fe *docker.ForeignVolumeError
+		if errors.As(err, &fe) {
+			return false, loref("領域の残響が別のものと混ざっています",
+				"ボリューム %s は、このプロジェクトのために sigil が作ったものではありません。中身を確かめてから docker volume rm で消してください",
+				ui.EscapeLine(fe.Name))
+		}
+		return false, lore("領域の様子を確かめられません", err)
+	}
+
 	spec := docker.RunSpec{
 		Name:          p.ContainerName,
 		ProjectRoot:   p.Root,
@@ -843,11 +860,27 @@ func stop(d Deps, client docker.Client, p project.Project) error {
 	}
 	if st == docker.Missing {
 		info(d, "領域 %s はありません", p.ContainerName)
-		return nil
+	} else {
+		if err := client.Remove(p.ContainerName); err != nil {
+			return loref("領域を解除できませんでした", "%s を削除できませんでした: %w", p.ContainerName, err)
+		}
+		info(d, "領域 %s を解除しました", p.ContainerName)
 	}
-	if err := client.Remove(p.ContainerName); err != nil {
-		return loref("領域を解除できませんでした", "%s を削除できませんでした: %w", p.ContainerName, err)
+	// プロジェクトごとのボリュームは消さない（間違えて stop しても、キャッシュやインストールしたものが消えないように）。
+	// 残っていれば消し方を知らせる。確かめられなくても、stop の目的は果たしているので黙る
+	if hasProjectVolumes(client, p) {
+		info(d, "領域の残響は残しています。消すときは sigil purge")
 	}
-	info(d, "領域 %s を解除しました", p.ContainerName)
 	return nil
+}
+
+// hasProjectVolumes は、sigil purge で消せるボリューム（名前とラベルの両方が合うもの）があるかを返す。
+// 確かめられなければ false。名前だけで判断すると、purge が消さないものでも purge を勧めてしまう。
+func hasProjectVolumes(client docker.Client, p project.Project) bool {
+	for _, v := range docker.ProjectVolumes(p.ContainerName) {
+		if o, err := ownVolume(client, v.Name, p.Root); err == nil && o == volMine {
+			return true
+		}
+	}
+	return false
 }

@@ -260,3 +260,17 @@ func TestRedactURL(t *testing.T) {
 		}
 	}
 }
+
+// 回帰テスト: フォルダ名の末尾が空白のプロジェクトでも、最上位の確かめで弾かない。
+// project.Resolve は git の出力から改行だけを取り除くので、ここでも同じ読み方にする。
+func TestInspectTrailingSpaceRoot(t *testing.T) {
+	_, g := newRepo(t)
+	spaced := g.Root + " "
+	if err := os.Rename(g.Root, spaced); err != nil {
+		t.Fatal(err)
+	}
+	g.Root = spaced
+	if _, err := Inspect(g); err != nil && strings.Contains(err.Error(), "最上位ではありません") {
+		t.Fatalf("末尾が空白のフォルダを最上位と認めない: %v", err)
+	}
+}

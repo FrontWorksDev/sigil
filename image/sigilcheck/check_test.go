@@ -94,12 +94,21 @@ func TestBarrier(t *testing.T) {
 		want  []string
 	}{
 		{"読み取り専用 (EROFS)", func(f *fake) {}, []string{"✓ .git は読み取り専用"}},
-		{"読み取り専用 (EACCES)", func(f *fake) {
+		// 自分で作って chmod しただけの .git は、持ち主が書き換えられるので ✓ にしない
+		{"EACCES は確かめられない", func(f *fake) {
 			f.writeErr["/work/app/.git"] = &fs.PathError{Op: "open", Err: syscall.EACCES}
-		}, []string{"✓ .git は読み取り専用"}},
-		{"読み取り専用 (EPERM)", func(f *fake) {
+		}, []string{"✗ .git に書き込めるか確かめられない"}},
+		{"EPERM は確かめられない", func(f *fake) {
 			f.writeErr["/work/app/.git"] = &fs.PathError{Op: "open", Err: syscall.EPERM}
-		}, []string{"✓ .git は読み取り専用"}},
+		}, []string{"✗ .git に書き込めるか確かめられない"}},
+		{".git ファイルの EACCES も確かめられない", func(f *fake) {
+			f.lstat["/work/app/.git"] = 0
+			f.writeErr["/work/app/.git"] = &fs.PathError{Op: "open", Err: syscall.EACCES}
+		}, []string{"✗ .git に書き込めるか確かめられない"}},
+		{"Neovim 設定の EACCES も確かめられない", func(f *fake) {
+			f.statDirs["/home/dev/.config/nvim"] = true
+			f.writeErr["/home/dev/.config/nvim"] = &fs.PathError{Op: "open", Err: syscall.EACCES}
+		}, []string{"✓ .git は読み取り専用", "✗ Neovim 設定に書き込めるか確かめられない"}},
 		{"書き込める", func(f *fake) { f.writeErr["/work/app/.git"] = nil },
 			[]string{"✗ .git に書き込める（hooks を仕込まれる恐れ）"}},
 		{"ほかのエラーは確かめられない", func(f *fake) {

@@ -60,8 +60,10 @@ func TestRealTryOpenWrite(t *testing.T) {
 		if err := os.Chmod(p, 0o444); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.tryOpenWrite(p); !readOnly(err) {
-			t.Errorf("読み取り専用のファイルで err = %v", err)
+		// chmod しただけのファイルは EACCES で、読み取り専用のマウント（EROFS）とはみなさない
+		err := s.tryOpenWrite(p)
+		if !errors.Is(err, syscall.EACCES) || readOnly(err) {
+			t.Errorf("chmod 444 のファイルで err = %v（EACCES で、readOnly ではないはず）", err)
 		}
 	}
 	// ないファイルは作らない

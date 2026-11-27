@@ -137,10 +137,13 @@ func secrets(s *sys) section {
 	return sec
 }
 
-// readOnly は、書き込みの試しが「読み取り専用だから失敗した」と分かるエラーか。
-// それ以外のエラー（容量不足、同じ名前が先にある、など）では、書き込めないとは言えない。
+// readOnly は、書き込みの試しが「読み取り専用のマウントだから失敗した」と分かるエラーか。
+// sigil は .git も Neovim の設定も :ro でマウントするので、本来のエラーは必ず EROFS になる。
+// EACCES / EPERM は数えない: プロジェクトのコードが自分で作った .git を chmod 555 / 444 にしても
+// EACCES になるが、持ち主は chmod し直して書き換えられるので、読み取り専用とは言えない。
+// それ以外のエラー（容量不足、同じ名前が先にある、など）も、書き込めないとは言えない。
 func readOnly(err error) bool {
-	return errors.Is(err, syscall.EROFS) || errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM)
+	return errors.Is(err, syscall.EROFS)
 }
 
 func barrier(s *sys) section {

@@ -2,7 +2,9 @@ package sigilimage
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -25,30 +27,125 @@ func TestWriteContext(t *testing.T) {
 	if string(df) != string(src) {
 		t.Error("書き出した Dockerfile が埋め込み元と一致しない")
 	}
-	// sigil-check をイメージに組み込む行がある（ベースイメージ名には依存しない）
-	if !strings.Contains(string(df), "COPY sigil-check /usr/local/bin/sigil-check") {
-		t.Error("Dockerfile の中身が想定と違う")
+	// sigil-check をコンパイルしてイメージに組み込む行がある（ベースイメージ名には依存しない）
+	for _, s := range []string{
+		"FROM go AS sigil-check-build",
+		"COPY sigilcheck/ ./",
+		"GOTOOLCHAIN=local GOPROXY=off go build",
+		"COPY --chmod=755 --from=sigil-check-build /out/sigil-check /usr/local/bin/sigil-check",
+	} {
+		if !strings.Contains(string(df), s) {
+			t.Errorf("Dockerfile に %q がない", s)
+		}
 	}
 
-	st, err := os.Stat(filepath.Join(dir, "sigil-check"))
+	// 書き出したファイルの一覧: Dockerfile と、sigilcheck/ の _test.go 以外の .go と go.mod
+	var got []string
+	err = filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			rel, _ := filepath.Rel(dir, p)
+			got = append(got, filepath.ToSlash(rel))
+		}
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Mode().Perm() != 0o755 {
-		t.Errorf("sigil-check のモード = %o, want 755", st.Mode().Perm())
-	}
-
-	entries, err := os.ReadDir(dir)
+	srcs, err := filepath.Glob("sigilcheck/*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var names []string
-	for _, e := range entries {
-		names = append(names, e.Name())
+	want := []string{"Dockerfile", "sigilcheck/go.mod"}
+	for _, s := range srcs {
+		if !strings.HasSuffix(s, "_test.go") {
+			want = append(want, filepath.ToSlash(s))
+		}
 	}
-	sort.Strings(names)
-	if strings.Join(names, ",") != "Dockerfile,sigil-check" {
-		t.Errorf("書き出されたファイル = %v, want [Dockerfile sigil-check]", names)
+	sort.Strings(got)
+	sort.Strings(want)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("書き出されたファイル = %v, want %v", got, want)
+	}
+	for _, name := range want {
+		if name == "Dockerfile" || name == "sigilcheck/go.mod" {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		orig, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(b) != string(orig) {
+			t.Errorf("%s が埋め込み元と一致しない", name)
+		}
+	}
+
+	mod, err := os.ReadFile(filepath.Join(dir, "sigilcheck", "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(mod) != "module sigilcheck\n\ngo "+sigilcheckGoVersion+"\n" {
+		t.Errorf("go.mod = %q", mod)
+	}
+}
+
+func TestWriteContextErrors(t *testing.T) {
+	// 書き出し先がない
+	if err := WriteContext(filepath.Join(t.TempDir(), "none")); err == nil {
+		t.Error("ないフォルダに書き出せた")
+	}
+	// sigilcheck/ が先にある（同じ場所に 2 回書き出すと、古いものに混ざらないよう失敗する）
+	dir := t.TempDir()
+	if err := WriteContext(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteContext(dir); err == nil {
+		t.Error("sigilcheck/ があるのに書き出せた")
+	}
+}
+
+// sigilcheck/go.mod の go の行は、ルートの go.mod と同じ版にする（設計書 11 章）。
+func TestSigilcheckGoVersionMatchesRoot(t *testing.T) {
+	b, err := os.ReadFile("../go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^go (\S+)$`).FindSubmatch(b)
+	if m == nil {
+		t.Fatal("ルートの go.mod に go の行がない")
+	}
+	if string(m[1]) != sigilcheckGoVersion {
+		t.Errorf("sigilcheckGoVersion = %s, ルートの go.mod は %s", sigilcheckGoVersion, m[1])
+	}
+}
+
+// 書き出したビルドコンテキストの sigilcheck/ だけで、イメージと同じ指定（Linux、cgo なし、
+// 外から何も取らない）でコンパイルできる。書き出し忘れたファイルや、Linux で通らないコードを見つける。
+func TestWrittenContextCompiles(t *testing.T) {
+	if testing.Short() {
+		t.Skip("go build を実行する")
+	}
+	gobin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("go がない")
+	}
+	dir := t.TempDir()
+	if err := WriteContext(dir); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(gobin, "build", "-trimpath", "-buildvcs=false", "-o", filepath.Join(t.TempDir(), "sigil-check"), ".")
+	cmd.Dir = filepath.Join(dir, "sigilcheck")
+	cmd.Env = append(os.Environ(),
+		"GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0",
+		"GOTOOLCHAIN=local", "GOPROXY=off", "GOFLAGS=", "GOWORK=off")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("書き出したソースをコンパイルできない: %v\n%s", err, out)
 	}
 }
 

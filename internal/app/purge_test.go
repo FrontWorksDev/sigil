@@ -206,3 +206,42 @@ func TestDashDashPurgeRunsInContainer(t *testing.T) {
 		t.Error("ボリュームを消した")
 	}
 }
+
+// 確認を待つあいだに、別のプロジェクトのラベルのコンテナに替わっていたら消さない。
+func TestPurgeRechecksContainerBeforeRemove(t *testing.T) {
+	e := newEnv(t)
+	e.container("running", "3")
+	reads := 0
+	e.runner.onFunc("docker container inspect", func() (string, error) {
+		reads++
+		if reads == 1 {
+			return `{"sigil.project":` + jsonString(e.proj) + `}` + "\n", nil
+		}
+		return `{"sigil.project":"/other"}` + "\n", nil
+	})
+	e.tty = "y\n"
+	if code := e.run("purge"); code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, e.stderr.String())
+	}
+	if len(e.runner.find("docker rm")) != 0 {
+		t.Error("ラベルの替わったコンテナを消した")
+	}
+}
+
+// 動いているコンテナは、ほかのペインのセッションごと終わらせるので、確認の一覧で知らせる。
+func TestPurgeWarnsRunningContainer(t *testing.T) {
+	for _, tc := range []struct {
+		state string
+		want  bool
+	}{{"running", true}, {"exited", false}} {
+		e := newEnv(t)
+		e.container(tc.state, "3")
+		e.tty = "n\n"
+		if code := e.run("purge"); code != 0 {
+			t.Fatalf("code = %d", code)
+		}
+		if got := strings.Contains(e.stderr.String(), "実行中のコンテナを止めます"); got != tc.want {
+			t.Errorf("%s: 知らせ = %v, stderr = %s", tc.state, got, e.stderr.String())
+		}
+	}
+}

@@ -465,17 +465,6 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 	if !client.ImageExists(image) {
 		return false, loref("紋章がありません", "イメージ %s がありません。先に sigil build を実行してください", image)
 	}
-	// プロジェクトごとのボリュームを用意する（設計書 21 章）。承認と op run のあとに行い、
-	// 承認を断ったプロジェクトのボリュームを残さない。ラベルの違うものは、このコンテナに渡さない
-	if err := client.EnsureVolumes(p.ContainerName, p.Root); err != nil {
-		var fe *docker.ForeignVolumeError
-		if errors.As(err, &fe) {
-			return false, loref("領域の残響が別のものと混ざっています",
-				"ボリューム %s は、このプロジェクトのために sigil が作ったものではありません。中身を確かめてから docker volume rm で消してください",
-				ui.EscapeLine(fe.Name))
-		}
-		return false, lore("領域の様子を確かめられません", err)
-	}
 	_, gitErr := os.Stat(filepath.Join(p.Root, ".git"))
 	if gitErr != nil {
 		info(d, "注意: .git がありません。リポジトリはホスト側で git init / clone してください")
@@ -542,6 +531,20 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 		if v, ok := kcValues[e.Name]; ok {
 			secretEnv = append(secretEnv, e.Name+"="+v)
 		}
+	}
+
+	// プロジェクトごとのボリュームを用意する（設計書 21 章）。ラベルの違うものは、このコンテナに渡さない。
+	// 承認と op run のあとに行い、承認を断ったプロジェクトのボリュームを残さない。さらにキーチェーンの
+	// ダイアログのあと、docker run の直前に行う。確かめてから docker run までのあいだに、別のペインの
+	// sigil purge がボリュームを消すと、docker run -v がラベルなしで作り直してしまうため（間を短くする）
+	if err := client.EnsureVolumes(p.ContainerName, p.Root); err != nil {
+		var fe *docker.ForeignVolumeError
+		if errors.As(err, &fe) {
+			return false, loref("領域の残響が別のものと混ざっています",
+				"ボリューム %s は、このプロジェクトのために sigil が作ったものではありません。中身を確かめてから docker volume rm で消してください",
+				ui.EscapeLine(fe.Name))
+		}
+		return false, lore("領域の様子を確かめられません", err)
 	}
 
 	spec := docker.RunSpec{
@@ -871,10 +874,11 @@ func stop(d Deps, client docker.Client, p project.Project) error {
 	return nil
 }
 
-// hasProjectVolumes は、プロジェクトごとのボリュームのどれかがあるかを返す。確かめられなければ false。
+// hasProjectVolumes は、sigil purge で消せるボリューム（名前とラベルの両方が合うもの）があるかを返す。
+// 確かめられなければ false。名前だけで判断すると、purge が消さないものでも purge を勧めてしまう。
 func hasProjectVolumes(client docker.Client, p project.Project) bool {
 	for _, v := range docker.ProjectVolumes(p.ContainerName) {
-		if ok, err := client.VolumeExists(v.Name); err == nil && ok {
+		if o, err := ownVolume(client, v.Name, p.Root); err == nil && o == volMine {
 			return true
 		}
 	}

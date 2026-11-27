@@ -23,6 +23,7 @@ func purge(d Deps, client docker.Client, p project.Project) error {
 		return lore("領域の様子を確かめられません", err)
 	}
 	container := false
+	running := st == docker.Running
 	if st != docker.Missing {
 		root, err := client.ContainerProject(p.ContainerName)
 		if err != nil {
@@ -57,6 +58,10 @@ func purge(d Deps, client docker.Client, p project.Project) error {
 	info(d, "次のものを消します。消したものは戻せません")
 	if container {
 		fmt.Fprintf(d.Stderr, "  コンテナ      %s\n", name)
+		if running {
+			// docker rm -f は、ほかのペインの Neovim や Claude Code ごと終わらせる（保存していない編集も失われる）
+			fmt.Fprintf(d.Stderr, "                実行中のコンテナを止めます。ほかのペインのセッションも終わります\n")
+		}
 	}
 	for _, v := range vols {
 		fmt.Fprintf(d.Stderr, "  ボリューム    %s\n", ui.EscapeLine(v))
@@ -75,6 +80,17 @@ func purge(d Deps, client docker.Client, p project.Project) error {
 		return nil
 	}
 
+	if container {
+		// 確認を待つあいだに、ほかのペインが作り直した別のコンテナに替わっていないか、消す直前に確かめ直す
+		exists, mine, err := ownContainer(client, p)
+		if err != nil {
+			return lore("領域の様子を確かめられません", err)
+		}
+		container = mine
+		if exists && !mine {
+			info(d, "注意: コンテナ %s は、このプロジェクトのものではないので消しません", name)
+		}
+	}
 	if container {
 		if err := client.Remove(p.ContainerName); err != nil {
 			return loref("領域を浄化できませんでした", "%s を削除できませんでした: %w", name, err)
@@ -102,6 +118,20 @@ func purge(d Deps, client docker.Client, p project.Project) error {
 	}
 	info(d, "領域 %s を浄化しました", name)
 	return nil
+}
+
+// ownContainer は、コンテナがあるか（exists）と、ラベル sigil.project がこのプロジェクトのパスと
+// バイトの完全一致か（mine）を返す。
+func ownContainer(client docker.Client, p project.Project) (exists, mine bool, err error) {
+	st, _, err := client.Inspect(p.ContainerName)
+	if err != nil || st == docker.Missing {
+		return false, false, err
+	}
+	root, err := client.ContainerProject(p.ContainerName)
+	if err != nil {
+		return true, false, err
+	}
+	return true, root == p.Root, nil
 }
 
 type volOwner int

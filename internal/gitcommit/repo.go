@@ -53,7 +53,8 @@ func Inspect(g Git) (Repo, error) {
 	if err != nil {
 		return r, err
 	}
-	if resolve(strings.TrimSpace(top)) != resolve(root) {
+	// 取り除くのは git が付ける改行だけ（project.Resolve と同じ読み方。末尾が空白のフォルダを丸めない）
+	if resolve(strings.TrimSuffix(top, "\n")) != resolve(root) {
 		return r, fmt.Errorf("プロジェクトのフォルダ（%s）が git の最上位ではありません", ui.EscapeLine(root))
 	}
 

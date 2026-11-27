@@ -193,3 +193,17 @@ func TestStopVolumeCheckFailureIsQuiet(t *testing.T) {
 		t.Errorf("stderr = %s", e.stderr.String())
 	}
 }
+
+// ラベルの違うボリュームしかなければ、purge で消せないので案内しない。
+func TestStopForeignVolumeNoHint(t *testing.T) {
+	e := newEnv(t)
+	e.container("running", "3")
+	e.runner.on("docker volume ls", e.name()+"-cache\n", nil)
+	e.runner.on("docker volume inspect", labelsJSON("/other"), nil)
+	if code := e.run("stop"); code != 0 {
+		t.Fatalf("code = %d", code)
+	}
+	if strings.Contains(e.stderr.String(), "残響") {
+		t.Errorf("stderr = %s", e.stderr.String())
+	}
+}

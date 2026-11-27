@@ -435,3 +435,26 @@ func TestOverriddenGlobalLoadedInInner(t *testing.T) {
 		t.Errorf("読み込めたのに注意を出した: %q", e.stderr.String())
 	}
 }
+
+// ボリュームの確認は、キーチェーンを読んだあと、docker run の直前に行う。
+// キーチェーンの解除ダイアログを待つあいだに、別のペインの sigil purge がボリュームを消すと、
+// docker run がラベルなしで作り直してしまうので、確認から docker run までを短くする（コードレビュー）。
+func TestVolumesCheckedAfterKeychain(t *testing.T) {
+	e, kc := keychainEnv(t, true)
+	e.sec.on(secret.SecurityArgs("w", kc), "v4lue\n", "", nil)
+	real := e.d.Security
+	volumeCallsAtRead := -1
+	e.d.Security = func(args []string) ([]byte, []byte, error) {
+		volumeCallsAtRead = len(e.runner.find("docker volume"))
+		return real(args)
+	}
+	if code := e.run(); code != 0 {
+		t.Fatal(e.stderr.String())
+	}
+	if volumeCallsAtRead != 0 {
+		t.Errorf("キーチェーンを読む前にボリュームを確かめた（%d 回）", volumeCallsAtRead)
+	}
+	if len(e.runner.find("docker volume create")) != 3 {
+		t.Errorf("calls = %v", e.runner.calls)
+	}
+}

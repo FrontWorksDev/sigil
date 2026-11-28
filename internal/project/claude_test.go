@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -292,4 +293,173 @@ func TestVerifyClaudeSharedAfterXDGChange(t *testing.T) {
 	if err := VerifyClaudeShared(got, home, other); err != nil {
 		t.Errorf("XDG を変えただけで: %v", err)
 	}
+}
+
+// ---- 確かめの分岐ごとのテスト（どの理由で弾いたかまで確かめる） ----
+
+func expectErr(t *testing.T, err error, reason string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("エラーにならない（%q を期待）", reason)
+	}
+	if !strings.Contains(err.Error(), reason) {
+		t.Errorf("理由が違う: %v（%q を期待）", err, reason)
+	}
+}
+
+func baseDir(t *testing.T) string {
+	t.Helper()
+	b, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// 親が読めず、フォルダを確かめられない。
+func TestClaudeSharedLstatError(t *testing.T) {
+	home, sc, dir := claudeEnv(t)
+	if err := os.Chmod(sc, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(sc, 0o755) })
+	_, _, err := ResolveClaudeShared(dir, home, sc)
+	expectErr(t, err, "確かめられません")
+}
+
+// 上の階層のリンクを解決した先に、表示されない文字がある。
+func TestClaudeSharedResolvedUnprintable(t *testing.T) {
+	home, sc, _ := claudeEnv(t)
+	odd := filepath.Join(filepath.Dir(home), "o\x1bdd")
+	mkdirMode(t, filepath.Join(odd, "claude"), 0o755)
+	link := filepath.Join(sc, "via")
+	if err := os.Symlink(odd, link); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := ResolveClaudeShared(filepath.Join(link, "claude"), home, sc)
+	if err == nil || strings.Contains(err.Error(), "\x1b") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// 中のフォルダが読めない。
+func TestClaudeSharedUnreadableSubdir(t *testing.T) {
+	home, sc, dir := claudeEnv(t)
+	sub := filepath.Join(dir, ".claude")
+	mkdirMode(t, sub, 0o000)
+	t.Cleanup(func() { os.Chmod(sub, 0o755) })
+	_, _, err := ResolveClaudeShared(dir, home, sc)
+	expectErr(t, err, "読めません")
+}
+
+// 中に、ファイルでもフォルダでもないもの（FIFO）がある。
+func TestClaudeSharedSpecialFile(t *testing.T) {
+	home, sc, dir := claudeEnv(t)
+	if err := syscall.Mkfifo(filepath.Join(dir, "fifo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := ResolveClaudeShared(dir, home, sc)
+	expectErr(t, err, "ファイルでもフォルダでもない")
+}
+
+// 解決した先がホームを含む。
+func TestClaudeSharedContainsHome(t *testing.T) {
+	base := baseDir(t)
+	home := filepath.Join(base, "c", "home")
+	mkdirMode(t, home, 0o755)
+	if err := os.Chmod(filepath.Join(base, "c"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sc := filepath.Join(base, "s")
+	if err := os.Symlink(base, sc); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := ResolveClaudeShared(filepath.Join(sc, "c"), home, sc)
+	expectErr(t, err, "ホームディレクトリを含む")
+}
+
+// 守る場所（~/.ssh）がリンクなら、その実体の中も守る。
+func TestClaudeSharedProtectedSymlinkTarget(t *testing.T) {
+	home, sc, _ := claudeEnv(t)
+	real := filepath.Join(filepath.Dir(home), "ssh-real")
+	mkdirMode(t, filepath.Join(real, "claude"), 0o755)
+	if err := os.Symlink(real, filepath.Join(home, ".ssh")); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(sc, "via")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := ResolveClaudeShared(filepath.Join(link, "claude"), home, sc)
+	expectErr(t, err, "守る場所")
+}
+
+// 解決した先が ~/.config の実体を含む。
+func TestClaudeSharedContainsConfig(t *testing.T) {
+	base := baseDir(t)
+	home := filepath.Join(base, "home")
+	mkdirMode(t, home, 0o755)
+	realCfg := filepath.Join(base, "claude", "config")
+	mkdirMode(t, realCfg, 0o755)
+	if err := os.Chmod(filepath.Join(base, "claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realCfg, filepath.Join(home, ".config")); err != nil {
+		t.Fatal(err)
+	}
+	sc := filepath.Join(base, "s")
+	if err := os.Symlink(base, sc); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := ResolveClaudeShared(filepath.Join(sc, "claude"), home, sc)
+	expectErr(t, err, "を含むので")
+}
+
+// XDG_CONFIG_HOME が ~/.config の外なら、その下の sigil/claude を使える。
+func TestClaudeSharedOutsideConfig(t *testing.T) {
+	base := baseDir(t)
+	home := filepath.Join(base, "home")
+	mkdirMode(t, filepath.Join(home, ".config"), 0o755)
+	sc := filepath.Join(base, "xdg", "sigil")
+	dir := filepath.Join(sc, "claude")
+	mkdirMode(t, dir, 0o755)
+	got, _, err := ResolveClaudeShared(dir, home, sc)
+	if err != nil || got != dir {
+		t.Errorf("(%q, %v)", got, err)
+	}
+}
+
+func TestVerifyClaudeSharedRejects(t *testing.T) {
+	t.Run("記録が相対パス", func(t *testing.T) {
+		home, sc, _ := claudeEnv(t)
+		expectErr(t, VerifyClaudeShared("rel/claude", home, sc), "記録が不正")
+	})
+	t.Run("途中をたどれない", func(t *testing.T) {
+		home, sc, dir := claudeEnv(t)
+		if err := os.Chmod(sc, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(sc, 0o755) })
+		expectErr(t, VerifyClaudeShared(dir, home, sc), "たどれません")
+	})
+	t.Run("フォルダではなくなった", func(t *testing.T) {
+		home, sc, dir := claudeEnv(t)
+		os.Remove(dir)
+		writeMode(t, dir, "x", 0o644)
+		err := VerifyClaudeShared(dir, home, sc)
+		if !errors.Is(err, ErrClaudeSharedChanged) {
+			t.Errorf("err = %v", err)
+		}
+	})
+	t.Run("持ち主・権限", func(t *testing.T) {
+		home, sc, dir := claudeEnv(t)
+		mkdirMode(t, dir, 0o757)
+		expectErr(t, VerifyClaudeShared(dir, home, sc), "書き込めます")
+	})
+	t.Run("守る場所", func(t *testing.T) {
+		home, sc, _ := claudeEnv(t)
+		d := filepath.Join(home, ".claude", "x")
+		mkdirMode(t, d, 0o755)
+		expectErr(t, VerifyClaudeShared(d, home, sc), "守る場所")
+	})
 }

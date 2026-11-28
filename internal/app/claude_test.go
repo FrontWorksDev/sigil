@@ -182,3 +182,22 @@ func TestNoHintWhenClaudeSharedHasWritableFile(t *testing.T) {
 		t.Errorf("stderr = %s", e.stderr.String())
 	}
 }
+
+// 神託の中のハードリンクは、エラーにせず知らせる。
+func TestClaudeSharedHardlinkWarned(t *testing.T) {
+	e := newEnv(t)
+	d := e.claudeDir()
+	src := filepath.Join(filepath.Dir(e.home), "orig.md")
+	if err := os.WriteFile(src, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(src, filepath.Join(d, "CLAUDE.md")); err != nil {
+		t.Fatal(err)
+	}
+	if code := e.run(); code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, e.stderr.String())
+	}
+	if !strings.Contains(e.stderr.String(), "CLAUDE.md はハードリンクです") {
+		t.Errorf("stderr = %s", e.stderr.String())
+	}
+}

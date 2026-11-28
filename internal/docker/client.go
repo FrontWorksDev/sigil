@@ -66,31 +66,52 @@ func (c Client) run(stdout io.Writer, args ...string) error {
 	return c.R.Run("docker", args, stdout, c.Stderr)
 }
 
-// Inspect はコンテナの状態と、layout ラベルの値を返す。
+// Info は、コンテナの状態と、入るときに見るラベル。
+type Info struct {
+	State State
+	// Layout は sigil.layout の値。
+	Layout string
+	// ClaudeShared は sigil.claude の値（作成時に渡した神託のパス。なければ空）。
+	// docker ps で一緒に読むのは、入るたびに docker container inspect を増やさないため（22 章）。
+	ClaudeShared string
+}
+
+// Info はコンテナの状態とラベルを返す。
 //
 // docker container inspect は、コンテナがないときも、docker が使えないときも、
 // 空行を出力して失敗する。出力で判定すると「存在する」と誤判定し（シェル版で実際に起きた不具合）、
 // 失敗をすべて「ない」とすると、Docker Desktop が止まっているときに誤った案内になる。
 // そこで docker ps を使う。コンテナがなければ成功して何も出力せず、docker の異常は終了コードで分かる。
-func (c Client) Inspect(name string) (State, string, error) {
+func (c Client) Info(name string) (Info, error) {
 	var out bytes.Buffer
 	args := []string{"ps", "-a", "--filter", "name=" + name,
-		"--format", "{{.Names}}\t{{.State}}\t{{.Label \"" + LayoutLabel + "\"}}"}
+		"--format", "{{.Names}}\t{{.State}}\t{{.Label \"" + LayoutLabel + "\"}}\t{{.Label \"" + ClaudeLabel + "\"}}"}
 	if err := c.R.Run("docker", args, &out, nil); err != nil {
-		return Missing, "", fmt.Errorf("docker に接続できません。Docker Desktop が起動しているか確認してください（%w）", err)
+		return Info{}, fmt.Errorf("docker に接続できません。Docker Desktop が起動しているか確認してください（%w）", err)
 	}
 	for _, line := range strings.Split(out.String(), "\n") {
 		fields := strings.Split(line, "\t")
-		// name フィルタは部分一致なので、名前が完全に一致する行だけを見る
-		if len(fields) != 3 || fields[0] != name {
+		// name フィルタは部分一致なので、名前が完全に一致する行だけを見る。
+		// 神託のパスにタブはない（作成時に checkPrintable で確かめている）ので、列は 4 つ
+		if len(fields) < 3 || len(fields) > 4 || fields[0] != name {
 			continue
 		}
+		info := Info{State: Stopped, Layout: fields[2]}
 		if fields[1] == "running" {
-			return Running, fields[2], nil
+			info.State = Running
 		}
-		return Stopped, fields[2], nil
+		if len(fields) == 4 {
+			info.ClaudeShared = fields[3]
+		}
+		return info, nil
 	}
-	return Missing, "", nil
+	return Info{State: Missing}, nil
+}
+
+// Inspect はコンテナの状態と、layout ラベルの値を返す（Info の一部）。
+func (c Client) Inspect(name string) (State, string, error) {
+	info, err := c.Info(name)
+	return info.State, info.Layout, err
 }
 
 // ReadOnlyMounts は、コンテナの作成時に承認した ro のマウント（ReadOnlyLabel）を返す。ラベルがなければ nil。

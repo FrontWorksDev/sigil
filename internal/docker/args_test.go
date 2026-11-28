@@ -46,7 +46,7 @@ func TestRunArgsIsolation(t *testing.T) {
 		}
 	}
 	labels := flagValues(args, "--label")
-	for _, want := range []string{"sigil.project=/Users/k/src/proj", "sigil.layout=3"} {
+	for _, want := range []string{"sigil.project=/Users/k/src/proj", "sigil.layout=4"} {
 		if !slices.Contains(labels, want) {
 			t.Errorf("ラベル %s がない: %v", want, labels)
 		}
@@ -68,10 +68,10 @@ func TestRunArgsMounts(t *testing.T) {
 		"/Users/k/.config/nvim:/home/dev/.config/nvim:ro",
 		"sigil-nvim-data:/home/dev/.local/share/nvim",
 		"sigil-nvim-state:/home/dev/.local/state/nvim",
-		"sigil-claude:/home/dev/.claude",
 		"sigil-proj-33bf5961-cache:/home/dev/.cache",
 		"sigil-proj-33bf5961-go:/home/dev/go",
 		"sigil-proj-33bf5961-cargo:/home/dev/.cargo",
+		"sigil-proj-33bf5961-claude:/home/dev/.claude",
 	}
 	if !reflect.DeepEqual(vols, want) {
 		t.Errorf("-v =\n%v\nwant\n%v", vols, want)

@@ -3,7 +3,9 @@ package app
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -95,7 +97,7 @@ func TestLs(t *testing.T) {
 
 func TestStopRemovesContainer(t *testing.T) {
 	e := newEnv(t)
-	e.container("running", "3")
+	e.container("running", "4")
 	if code := e.run("stop"); code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, e.stderr.String())
 	}
@@ -144,7 +146,7 @@ func TestDangerousPathNeverCallsDocker(t *testing.T) {
 // sigil stop はボリュームを消さず、残っていることと消し方を知らせる（設計書 21 章）。
 func TestStopKeepsVolumes(t *testing.T) {
 	e := newEnv(t)
-	e.container("running", "3")
+	e.container("running", "4")
 	e.runner.on("docker volume ls", e.name()+"-cache\n", nil)
 	if code := e.run("stop"); code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, e.stderr.String())
@@ -159,7 +161,7 @@ func TestStopKeepsVolumes(t *testing.T) {
 
 func TestStopNoVolumesNoHint(t *testing.T) {
 	e := newEnv(t)
-	e.container("running", "3")
+	e.container("running", "4")
 	if code := e.run("stop"); code != 0 {
 		t.Fatalf("code = %d", code)
 	}
@@ -184,7 +186,7 @@ func TestStopMissingContainerWithVolumes(t *testing.T) {
 // ボリュームを確かめられなくても、コンテナは消せているので成功のまま、案内も出さない。
 func TestStopVolumeCheckFailureIsQuiet(t *testing.T) {
 	e := newEnv(t)
-	e.container("running", "3")
+	e.container("running", "4")
 	e.runner.on("docker volume ls", "", errors.New("exit status 1"))
 	if code := e.run("stop"); code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, e.stderr.String())
@@ -197,7 +199,7 @@ func TestStopVolumeCheckFailureIsQuiet(t *testing.T) {
 // ラベルの違うボリュームしかなければ、purge で消せないので案内しない。
 func TestStopForeignVolumeNoHint(t *testing.T) {
 	e := newEnv(t)
-	e.container("running", "3")
+	e.container("running", "4")
 	e.runner.on("docker volume ls", e.name()+"-cache\n", nil)
 	e.runner.on("docker volume inspect", labelsJSON("/other"), nil)
 	if code := e.run("stop"); code != 0 {
@@ -210,12 +212,34 @@ func TestStopForeignVolumeNoHint(t *testing.T) {
 
 func TestStopRemoveFailure(t *testing.T) {
 	e := newEnv(t)
-	e.container("running", "3")
+	e.container("running", "4")
 	e.runner.on("docker rm -f", "", errors.New("exit status 1"))
 	if code := e.run("stop"); code != 1 {
 		t.Fatalf("code = %d", code)
 	}
 	if !strings.Contains(e.stderr.String(), "領域を解除できませんでした") {
 		t.Errorf("stderr = %s", e.stderr.String())
+	}
+}
+
+// XDG_CONFIG_HOME / XDG_STATE_HOME が相対パスなら、カレントディレクトリ（プロジェクトの中）が基準になり、
+// コンテナが書き込める場所から全体設定を読んでしまう。XDG の仕様どおり、絶対パスでなければ既定を使う。
+func TestRelativeXDGIgnored(t *testing.T) {
+	for _, v := range []string{"rel/config", ""} {
+		e := newEnv(t)
+		e.vars["XDG_CONFIG_HOME"] = v
+		e.vars["XDG_STATE_HOME"] = "rel/state"
+		e.write("rel/config/sigil/config", "env LEAK\n")
+		e.write(filepath.Join(e.home, ".config", "sigil", "config"), "env HOMECFG\n")
+		e.vars["LEAK"] = "x"
+		e.vars["HOMECFG"] = "y"
+		e.cwd = e.proj
+		if code := e.run(); code != 0 {
+			t.Fatalf("XDG_CONFIG_HOME=%q: code = %d, stderr = %s", v, code, e.stderr.String())
+		}
+		args := e.runner.find("docker run")[0].args
+		if slices.Contains(args, "LEAK") || !slices.Contains(args, "HOMECFG") {
+			t.Errorf("XDG_CONFIG_HOME=%q: run = %v", v, args)
+		}
 	}
 }

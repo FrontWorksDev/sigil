@@ -105,6 +105,18 @@ func TestBarrier(t *testing.T) {
 			f.lstat["/work/app/.git"] = 0
 			f.writeErr["/work/app/.git"] = &fs.PathError{Op: "open", Err: syscall.EACCES}
 		}, []string{"✗ .git に書き込めるか確かめられない"}},
+		{"神託は読み取り専用 (EROFS)", func(f *fake) {
+			f.statDirs["/etc/claude-code"] = true
+			f.writeErr["/etc/claude-code"] = erofs("x")
+		}, []string{"✓ .git は読み取り専用", "✓ 神託（Claude Code の共通設定）は読み取り専用"}},
+		{"神託に書き込める", func(f *fake) {
+			f.statDirs["/etc/claude-code"] = true
+			f.writeErr["/etc/claude-code"] = nil
+		}, []string{"✓ .git は読み取り専用", "✗ 神託（Claude Code の共通設定）に書き込める"}},
+		{"神託の EACCES は確かめられない", func(f *fake) {
+			f.statDirs["/etc/claude-code"] = true
+			f.writeErr["/etc/claude-code"] = &fs.PathError{Op: "open", Err: syscall.EACCES}
+		}, []string{"✓ .git は読み取り専用", "✗ 神託（Claude Code の共通設定）に書き込めるか確かめられない"}},
 		{"Neovim 設定の EACCES も確かめられない", func(f *fake) {
 			f.statDirs["/home/dev/.config/nvim"] = true
 			f.writeErr["/home/dev/.config/nvim"] = &fs.PathError{Op: "open", Err: syscall.EACCES}

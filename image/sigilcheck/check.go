@@ -176,6 +176,13 @@ func barrier(s *sys) section {
 		sec.items = append(sec.items, writeItem(s.tryWrite(nvim),
 			"Neovim 設定は読み取り専用", "Neovim 設定に書き込める", "Neovim 設定に書き込めるか確かめられない"))
 	}
+	// 神託（Claude Code の共通の設定。設計書 22 章）は全プロジェクトのコンテナに同じものが渡るので、
+	// 書き換えられると、ほかのプロジェクトの Claude Code の設定を変えられる
+	if s.isDir("/etc/claude-code") {
+		sec.items = append(sec.items, writeItem(s.tryWrite("/etc/claude-code"),
+			"神託（Claude Code の共通設定）は読み取り専用", "神託（Claude Code の共通設定）に書き込める",
+			"神託（Claude Code の共通設定）に書き込めるか確かめられない"))
+	}
 	return sec
 }
 

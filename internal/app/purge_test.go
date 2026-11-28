@@ -12,7 +12,7 @@ import (
 
 func (e *testEnv) volNames() []string {
 	n := e.name()
-	return []string{n + "-cache", n + "-go", n + "-cargo"}
+	return []string{n + "-cache", n + "-go", n + "-cargo", n + "-claude"}
 }
 
 // volume は、名前 name のボリュームがあり、ラベル sigil.project が root であるよう偽の docker に設定する。
@@ -54,7 +54,7 @@ func TestPurgeNoTTY(t *testing.T) {
 
 func TestPurgeAnswerNo(t *testing.T) {
 	e := newEnv(t)
-	e.container("running", "3")
+	e.container("running", "4")
 	e.allVolumes()
 	e.tty = "n\n"
 	if code := e.run("purge"); code != 0 {
@@ -70,7 +70,7 @@ func TestPurgeAnswerNo(t *testing.T) {
 
 func TestPurgeYes(t *testing.T) {
 	e := newEnv(t)
-	e.container("running", "3")
+	e.container("running", "4")
 	e.allVolumes()
 	e.tty = "y\n"
 	if code := e.run("purge"); code != 0 {
@@ -103,7 +103,7 @@ func TestPurgeYes(t *testing.T) {
 // ラベルの合わないコンテナとボリュームは、消さずに知らせる。
 func TestPurgeSkipsForeign(t *testing.T) {
 	e := newEnv(t)
-	e.runner.on("docker ps -a --filter name=", e.name()+"\trunning\t3\n", nil)
+	e.runner.on("docker ps -a --filter name=", e.name()+"\trunning\t4\n", nil)
 	e.runner.on("docker container inspect", `{"sigil.project":"/other"}`+"\n", nil)
 	n := e.volNames()
 	e.volume(n[0], e.proj)
@@ -170,7 +170,7 @@ func TestPurgeRechecksLabelBeforeRemove(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %s", code, e.stderr.String())
 	}
 	rms := e.runner.find("docker volume rm")
-	if len(rms) != 1 || !reflect.DeepEqual(rms[0].args, []string{"volume", "rm", n[0], n[2]}) {
+	if len(rms) != 1 || !reflect.DeepEqual(rms[0].args, []string{"volume", "rm", n[0], n[2], n[3]}) {
 		t.Errorf("volume rm = %v", rms)
 	}
 }
@@ -210,7 +210,7 @@ func TestDashDashPurgeRunsInContainer(t *testing.T) {
 // 確認を待つあいだに、別のプロジェクトのラベルのコンテナに替わっていたら消さない。
 func TestPurgeRechecksContainerBeforeRemove(t *testing.T) {
 	e := newEnv(t)
-	e.container("running", "3")
+	e.container("running", "4")
 	reads := 0
 	e.runner.onFunc("docker container inspect", func() (string, error) {
 		reads++
@@ -235,7 +235,7 @@ func TestPurgeWarnsRunningContainer(t *testing.T) {
 		want  bool
 	}{{"running", true}, {"exited", false}} {
 		e := newEnv(t)
-		e.container(tc.state, "3")
+		e.container(tc.state, "4")
 		e.tty = "n\n"
 		if code := e.run("purge"); code != 0 {
 			t.Fatalf("code = %d", code)
@@ -280,7 +280,7 @@ func TestPurgeDockerFailures(t *testing.T) {
 			e.runner.on("docker volume inspect", "", errors.New("exit status 1"))
 		}, false, false},
 		{"確かめ直すときのコンテナの状態", func(e *testEnv) {
-			e.failOnCall("docker ps -a --filter name=", 2, e.name()+"\trunning\t3\n")
+			e.failOnCall("docker ps -a --filter name=", 2, e.name()+"\trunning\t4\n")
 		}, false, false},
 		{"確かめ直すときのコンテナのラベル", func(e *testEnv) {
 			e.failOnCall("docker container inspect", 2, containerLabels(e))
@@ -294,7 +294,7 @@ func TestPurgeDockerFailures(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
-			e.container("running", "3")
+			e.container("running", "4")
 			e.allVolumes()
 			tc.setup(e)
 			e.tty = "y\n"

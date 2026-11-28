@@ -267,6 +267,15 @@ ENV PATH=/home/${USERNAME}/.local/bin:/home/${USERNAME}/.npm-global/bin:/home/${
 # 更新はイメージの作り直しで行う（DISABLE_AUTOUPDATER=1）
 RUN curl -fsSL https://claude.ai/install.sh | bash
 
+# 初回の画面を省く（設計書 22 章）。~/.claude はプロジェクトごとのボリュームで、空のまま起動すると、
+# Claude Code はトークンを渡していても毎回テーマを選ぶ画面を出す。空の名前付きボリュームは初回のマウントで
+# イメージの中身を写すので、ここに置けば新しいプロジェクトのボリュームに入る。
+# インストーラーより後ろに置き、先に ~/.claude の中を空にする。インストーラーは ~/.claude に
+# .claude.json のバックアップなどを残すので、そのままだと全プロジェクトのボリュームに同じものが写るため。
+RUN find /home/${USERNAME}/.claude -mindepth 1 -delete \
+ && printf '%s' '{"hasCompletedOnboarding":true}' > /home/${USERNAME}/.claude/.claude.json \
+ && chmod 644 /home/${USERNAME}/.claude/.claude.json
+
 # コンテナ内だと一目で分かるプロンプト
 RUN printf '%s\n' \
       'PS1="\[\e[1;35m\][sigil]\[\e[0m\] \w \$ "' \

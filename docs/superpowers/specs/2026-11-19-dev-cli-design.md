@@ -218,12 +218,15 @@ run -d --init
 --name <コンテナ名>
 --hostname sigil
 --label sigil.project=<プロジェクトのホスト側パス>
---label sigil.layout=3
+--label sigil.layout=4
+--label sigil.ro=<承認した ro の JSON。なければ []>      # 20 章
+--label sigil.claude=<神託の解決したパス。なければ空>  # 22 章
 --cap-drop=ALL
 --security-opt=no-new-privileges
 -v <project>:<コンテナ内パス>
 -v <project>/.git:<コンテナ内パス>/.git:ro          # .git がある場合のみ
 -v <home>/.config/nvim:/home/dev/.config/nvim:ro    # ホストにある場合のみ
+-v <神託の解決したパス>:/etc/claude-code:ro          # ~/.config/sigil/claude がある場合のみ（22 章）
 -v <ro のホスト側パス>:/workspace/<名前>:ro          # .sigil の ro ごと（20 章）
 -e SIGIL_PROJECT_DIR=<コンテナ内パス>
 -e GIT_CONFIG_COUNT=1
@@ -231,10 +234,10 @@ run -d --init
 -e GIT_CONFIG_VALUE_0=<コンテナ内パス>
 -v sigil-nvim-data:/home/dev/.local/share/nvim
 -v sigil-nvim-state:/home/dev/.local/state/nvim
--v sigil-claude:/home/dev/.claude
 -v <コンテナ名>-cache:/home/dev/.cache      # プロジェクトごと（21 章）
 -v <コンテナ名>-go:/home/dev/go
 -v <コンテナ名>-cargo:/home/dev/.cargo
+-v <コンテナ名>-claude:/home/dev/.claude    # 22 章
 --tmpfs /home/dev/.cache/gh:rw,noexec,nosuid,nodev
 -e <NAME>                          # 設定で渡す環境変数ごと。値は付けない
 -p 127.0.0.1:<host>:<container>    # ポートごと。必ず 127.0.0.1
@@ -266,7 +269,7 @@ docker exec <name> sh -c 'umask 077; printf "[settings]\napi_key = %s\n" "$WAKAT
 
 - **状態の判定は終了コードで行う**。`docker container inspect` は、コンテナが存在しないときも、docker が使えないときも、**空行を出力して**失敗する。出力で判定すると存在すると誤判定し（シェル版で実際に起きた不具合）、失敗をすべて「ない」とすると Docker Desktop が止まっているときに誤った案内になる。
   - そこで `docker ps -a --filter name=<name> --format '{{.Names}}\t{{.State}}\t{{.Label "sigil.layout"}}'` を使う。名前が完全に一致する行がなければ「ない」。コマンドが失敗したら、「docker に接続できません。Docker Desktop が起動しているか確認してください」で終了する（`sigil stop` も同じ）。回帰テストを書くこと。
-- ラベル `sigil.layout` が `3` でなければ、「このコンテナは古い sigil で作られています。sigil stop してから、もう一度実行してください」で終了する。
+- ラベル `sigil.layout` が `4` でなければ、「このコンテナは古い sigil で作られています。sigil stop してから、もう一度実行してください」で終了する。
 - 停止していれば `docker start`。
 - 既存のコンテナに入るときは、設定の読み込み・承認・`op run` を行わない（作成時に渡したものが使われる）。
 
@@ -327,7 +330,7 @@ docker build --pull --build-arg USER_UID=<os.Getuid()> --build-arg USER_GID=<os.
 
 コンテナの中で隔離を点検するプログラム。以前は bash のスクリプトだったが、判定が増えてテストできないまま壊れやすくなったので、Go で書き直した。点検の項目・表示・終了コードは bash 版を引き継ぎ、設計段階のセキュリティレビューを受けて次の点だけを変える（決定事項を参照）。
 
-- **絶対パスで実行する**: `sigil check` は `docker exec … /usr/local/bin/sigil-check` を実行する。`ENV PATH` では `~/go/bin`・`~/.cargo/bin` が `/usr/local/bin` より前にあり、名前だけで実行すると、そこに置かれた偽の `sigil-check` が、このプロジェクトの環境変数（トークンなど）付きで動き、偽の「結界は完全です」を出せたため。決めた当時は共有ボリュームで、別のプロジェクトが置けた。21 章でプロジェクトごとにしたあとも、同じプロジェクトのコードや、共有のまま残る `sigil-claude`・`sigil-nvim-*` を通じて動いたコードが置けるので、絶対パスのままにする。
+- **絶対パスで実行する**: `sigil check` は `docker exec … /usr/local/bin/sigil-check` を実行する。`ENV PATH` では `~/go/bin`・`~/.cargo/bin` が `/usr/local/bin` より前にあり、名前だけで実行すると、そこに置かれた偽の `sigil-check` が、このプロジェクトの環境変数（トークンなど）付きで動き、偽の「結界は完全です」を出せたため。決めた当時は共有ボリュームで、別のプロジェクトが置けた。21 章でプロジェクトごとにしたあとも、同じプロジェクトのコードや、共有のまま残る `sigil-nvim-*` を通じて動いたコードが置けるので、絶対パスのままにする（`sigil-claude` は 22 章で分けた）。
 - **分からないときは ✗（fail-closed）**:
   - 秘密情報: `os.Lstat` で調べ、「見えない」とするのは無いと分かったとき（`ENOENT` / `ENOTDIR`）だけ。リンク先のないシンボリックリンクは「見えている」、権限のエラーなどは「確かめられない」として ✗。
   - 書き込みの試し: `os.CreateTemp` で毎回違う名前のファイルを作る（決まった名前だと、同じ名前のものが先にあるだけで失敗し、書き込めるのに ✓ になる）。読み取り専用とみなすのは `EROFS`（読み取り専用のマウント）のときだけで、作れたら ✗、ほかのエラー（`EACCES` / `EPERM` を含む）は「確かめられない」として ✗。sigil は `.git` も Neovim の設定も `:ro` でマウントするので、本来のエラーは必ず `EROFS` になる。`EACCES` を数えると、プロジェクトのコードが自分で作った `.git` を `chmod 555` にしただけで ✓ になるが、持ち主は chmod し直して書き換えられる。`.git` が普通のファイル（git worktree / submodule の `gitdir:` のファイル）なら、作らず切り詰めずに書き込み用に開けるかを試す（`O_WRONLY|O_NONBLOCK|O_NOFOLLOW`。書き換えられると、ホストの git を偽の hooks のある gitdir に向けられるため）。フォルダでもファイルでもなければ（シンボリックリンク、FIFO など）「点検できない」として ✗。
@@ -1063,7 +1066,7 @@ docker には、書かれたパスではなく**解決したパス**を渡す。
 
 ### やらないこと（issue #7 のあとのフェーズ）
 
-- `sigil-claude`（`~/.claude`）、`sigil-nvim-data`、`sigil-nvim-state` は共有のまま残す。分けるにはログインやプラグインの扱いを変える必要があるので、フェーズ 2・3 で扱う。それまでは、これらを通じた経路は残る。
+- `sigil-claude`（`~/.claude`）、`sigil-nvim-data`、`sigil-nvim-state` は共有のまま残す。分けるにはログインやプラグインの扱いを変える必要があるので、フェーズ 2・3 で扱う（このあと、`sigil-claude` はフェーズ 2 で分けた。22 章）。それまでは、これらを通じた経路は残る。
 - 信頼できないリポジトリ用の「隔離領域」（フェーズ 4）。
 - フォルダを移したり消したりしたプロジェクトのボリュームを探して消すこと（ラベルを付けておくので、あとから足せる）。
 
@@ -1216,7 +1219,7 @@ sigil: 領域の残響は残しています。消すときは sigil purge
 
 | 方法 | 結果 |
 |---|---|
-| **ホストのフォルダを、Claude Code の管理用ディレクトリ（`/etc/claude-code`）として読み取り専用でマウントする** | 採る（利用者の判断）。`CLAUDE.md`、`managed-settings.json`（`managedMcpServers`、`extraKnownMarketplaces`、`enabledPlugins`）、`.claude/skills/` をすべて置ける。プラグインは「どれを使うか」だけを共通にし、本体は各プロジェクトが自分でダウンロードするので、プラグインのコードを書き換えてもほかに広がらない |
+| **ホストのフォルダを、Claude Code の管理用ディレクトリ（`/etc/claude-code`）として読み取り専用でマウントする** | 採る（利用者の判断）。`CLAUDE.md`、`managed-settings.json`（`extraKnownMarketplaces`、`enabledPlugins`。MCP サーバーはプラグインに入れたものが一緒に入る）、`.claude/skills/` をすべて置ける。プラグインは「どれを使うか」だけを共通にし、本体は各プロジェクトが自分でダウンロードするので、プラグインのコードを書き換えてもほかに広がらない |
 | 個々のファイルを `~/.claude` の中に読み取り専用で重ねる | 採らない。MCP の登録（`~/.claude.json`）とプラグインの有効化（`settings.json`）は Claude Code が実行中に書き込むファイルにあり、読み取り専用にできない |
 | ひな形のボリュームを、新しいプロジェクトのボリュームに一度だけ複製する | 採らない。ひな形を更新する専用のコンテナとコマンドが要り、複製のあとはばらばらになる |
 
@@ -1249,7 +1252,7 @@ sigil: 領域の残響は残しています。消すときは sigil purge
 - 解決したパスを、ラベル `sigil.claude`（なければ空）に残す。停止中のコンテナを `docker start` する前に、20 章と同じく確かめ直す（docker は起動のたびにマウント元を解決し直すので、作成のあとにリンクへ差し替えられていれば、ホストの `~/.claude` が見えてしまう）。確かめ直すのは、上の確かめのうち、フォルダの中を除くものと、解決したパスがラベルと同じであること。違えば起動せず、`sigil stop` してから作り直すよう案内する。作成時にフォルダがなかったコンテナは、あとでフォルダを作ってもマウントされない（作り直しの案内に含める）。
 - 読み取り専用なので、Claude Code の画面の中で `/plugin install` や `/mcp add` をしても、そのプロジェクトの `~/.claude` にしか入らない。全プロジェクトで使うものは、ホストのファイルに書く（README）。
 - `managed-settings.json` は、Claude Code の設定の中で一番優先される。プロジェクトの `.claude/settings.json` で上書きできない。利用者が自分で書くものなので、そのまま受け入れる。README で次を案内する（sigil のコードでは防げない）。
-  - 秘密（`env` や MCP の `env` のトークン）を書かない。全コンテナから読める。トークンは `${GITHUB_TOKEN}` のような展開にして、値はプロジェクトの `.sigil` で渡す。
+  - 秘密（`env` や MCP のヘッダーのトークン）を書かない。全コンテナから読める。トークンの要るもの（GitHub の MCP など）は、使うプロジェクトの中で設定し、値はそのプロジェクトの `.sigil` で渡す。
   - hooks・`apiKeyHelper`・MCP サーバーの `command` は絶対パス（`/usr/local/bin/...`）で書く。PATH の先頭の `~/.local/bin`・`~/go/bin` などは、そのプロジェクトのコードが書き込める。
   - マーケットプレイスや MCP サーバーの場所に、ローカルのパス（`/workspace` の中や、共有の `~/.local/share/nvim`）を書かない。GitHub などの取得元だけにする。
   - `permissions.defaultMode: bypassPermissions` や広い `allow` を書かない。信頼できないリポジトリを含む全プロジェクトに効く。
@@ -1298,7 +1301,7 @@ sigil: 領域の残響は残しています。消すときは sigil purge
 
 ### 実機での検証（14 章に足す）
 
-1. 一時フォルダの `XDG_CONFIG_HOME` に `sigil/claude/CLAUDE.md`・`.claude/skills/x/SKILL.md`・`managed-settings.json`（`managedMcpServers` に 1 つ）を置き、プロジェクト A・B で入る。どちらでも `/etc/claude-code` が読め、`touch` は失敗する。`sigil check` の新しい項目が ✓。
+1. 一時フォルダの `XDG_CONFIG_HOME` に `sigil/claude/CLAUDE.md`・`.claude/skills/x/SKILL.md`・`managed-settings.json`（`extraKnownMarketplaces` と `enabledPlugins` に 1 つ）を置き、プロジェクト A・B で入る。どちらでも `/etc/claude-code` が読め、`touch` は失敗する。`sigil check` の新しい項目が ✓。
 1. Claude Code に実際に効いていることを確かめる（`/memory` に `CLAUDE.md`、skills の一覧に `x`、`/mcp` にサーバー）。知らないキーは黙って無視されるため。`/dev/tty` が要るので、利用者に cmux のペインで確かめてもらう。
 1. イメージの `/home/dev/.claude` に `.claude.json`（`hasCompletedOnboarding` だけ）以外がない。
 2. A で `~/.claude/x` を作る。B では見えない。
@@ -1487,3 +1490,8 @@ sigil: 領域の残響は残しています。消すときは sigil purge
 | 2026-11-27 | 会話の履歴をまとめた集計と、claude.ai のコネクタは扱わない | 集計は、ラベルで `-claude` のボリュームを集めて使い捨てのコンテナで読めば、あとから足せる（利用者の判断）。コネクタは Claude Code ではほぼ使わない（利用者の判断） |
 | 2026-11-27 | 設計段階のセキュリティレビュー（22 章）を受け、共通の設定のフォルダは、上の階層のリンクを解決したパスが守る場所でないこと・`g+w`/`o+w` でないこと・中にシンボリックリンクや書き込めるファイルがないことも確かめ、解決したパスを `-v` で渡してラベル `sigil.claude` に残し、停止中のコンテナを起動する前に確かめ直す。旧 `sigil-claude` のログイン情報は claude.ai 側で取り消すよう案内する | レビュー M1〜M3、L1〜L5、L8。docker は起動のたびにマウント元を解決し直すので、作成のあとにホストの `~/.claude` へのリンクに差し替えられると見えてしまう（20 章と同じ理由）。中のリンクは、コンテナの中では、プロジェクトが書き込める場所を指しうる。旧ボリュームのログイン情報は全プロジェクトのコードが読めたので、ボリュームを消しても無効にならない。`--mount` は CSV の差し込みがあるので使わない（21 章） |
 | 2026-11-27 | `XDG_CONFIG_HOME` / `XDG_STATE_HOME` は絶対パスのときだけ使い、相対パスや空なら既定を使う | 22 章の設計段階のセキュリティレビュー（L6）。相対パスだとプロジェクトの中が基準になり、全体設定・承認記録・共通の設定を、コンテナが書き込める場所から読む。以前からの穴だが、22 章で共通の設定もそこから読むので、この変更に含める（利用者の判断） |
+| 2026-11-27 | 神託のフォルダが `~/.config` の中にあるときは、sigil の設定フォルダ（`$XDG_CONFIG_HOME/sigil` を、最後の段を除いて解決したもの）の中だけを許す。sigil の設定フォルダそのものがリンクなら、その先は許さない | 実装中の判断。22 章の「`$XDG_CONFIG_HOME/sigil` そのものは除く」だけでは、sigil の設定フォルダを `~/.config/gh` などへのリンクにすると、gh のトークンなどを全コンテナに見せてしまう。dotfiles で `~/.config` 全体をリンクにする構成は通す |
+| 2026-11-27 | 起動前の確かめ直しで神託が差し替えられていたときは、ro の `ErrMountChanged` とは別の `ErrClaudeSharedChanged` を使い、見出しを「神託が歪められました」にする | 実装中の判断。`ErrMountChanged` の文言は「ro のフォルダ」で、神託のときに読み違えるため |
+| 2026-11-27 | Dockerfile では、Claude Code のインストーラーのあとに `~/.claude` の中を空にしてから `.claude.json` を置く | 実機の検証で、インストーラーが `~/.claude` に `.claude.json` のバックアップ（`firstStartTime` など）と空のフォルダを残していた。そのままだと全プロジェクトのボリュームに写る |
+| 2026-11-27 | 神託のラベル `sigil.claude` は、コンテナの状態を読む `docker ps` で一緒に読む（`docker.Client.Info`） | 最後のコードレビュー（I1）。入るたびに `docker container inspect` を 1 回増やさないため。停止中のコンテナの確かめ直しも、このラベルを使う |
+| 2026-11-28 | 共通の MCP サーバーは、プラグインに入れたものを神託の `enabledPlugins` で配る。`managedMcpServers` は、トークンの要らないリモートの（`https://` の）サーバーだけに使う。トークンの要る MCP（GitHub の MCP）は、使うプロジェクトの中で登録する | 実機の検証で、`managedMcpServers` に `command` で書いた MCP が出なかった。公式の資料では、`managedMcpServers` は `https://` の URL の http / sse のサーバーだけを受け付け、`command` や `${VAR}` は捨てる。`managed-mcp.json` なら `command` も書けるが、それ以外の MCP（プロジェクトの `.mcp.json` や画面の中での追加）を使えなくする。利用者の MCP はほぼプラグインから入れたもので、GitHub の MCP は 1 つのプロジェクトだけを触る前提（利用者の判断） |

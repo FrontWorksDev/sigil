@@ -267,9 +267,23 @@ func (e *testEnv) run(args ...string) int {
 
 // container は、既存のコンテナの状態（"running" / "exited"）と layout を偽の docker に設定する。
 func (e *testEnv) container(state, layout string) {
-	e.runner.on("docker ps -a --filter name=", e.name()+"\t"+state+"\t"+layout+"\n", nil)
+	e.containerWithLabels(state, layout, nil)
+}
+
+// containerWithLabels は container に加えて、コンテナのラベルを足す（sigil.claude など）。
+func (e *testEnv) containerWithLabels(state, layout string, extra map[string]string) {
+	// docker ps は、名前・状態・layout・神託のパスを返す
+	e.runner.on("docker ps -a --filter name=", e.name()+"\t"+state+"\t"+layout+"\t"+extra["sigil.claude"]+"\n", nil)
 	// 停止中のコンテナを起動する前に読むラベル（ro はなし）
-	e.runner.on("docker container inspect", `{"sigil.layout":"`+layout+`","sigil.project":`+jsonString(e.proj)+`}`+"\n", nil)
+	labels := map[string]string{"sigil.layout": layout, "sigil.project": e.proj}
+	for k, v := range extra {
+		labels[k] = v
+	}
+	b, err := json.Marshal(labels)
+	if err != nil {
+		panic(err)
+	}
+	e.runner.on("docker container inspect", string(b)+"\n", nil)
 }
 
 // labelsJSON は、docker volume inspect --format '{{json .Labels}}' の、sigil.project=root の出力を作る。

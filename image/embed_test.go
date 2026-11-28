@@ -193,3 +193,24 @@ func TestDockerfileRefreshBeforeTools(t *testing.T) {
 		}
 	}
 }
+
+// 空の ~/.claude では Claude Code が毎回テーマの初回画面を出すので、イメージに .claude.json を置く（22 章）。
+// インストーラーが ~/.claude に書いたもの（利用者ごとの ID など）が全プロジェクトに写らないよう、
+// インストーラーより後ろに置く。
+func TestDockerfileSeedsClaudeOnboarding(t *testing.T) {
+	df, err := os.ReadFile("Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(df)
+	seed := strings.Index(s, `{"hasCompletedOnboarding":true}`)
+	install := strings.Index(s, "claude.ai/install.sh")
+	if seed < 0 || install < 0 || seed < install {
+		t.Errorf("seed = %d, install = %d", seed, install)
+	}
+	// インストーラーが ~/.claude に残したもの（.claude.json のバックアップなど）を消してから置く
+	clear := strings.Index(s, "find /home/${USERNAME}/.claude -mindepth 1 -delete")
+	if clear < install || clear > seed {
+		t.Errorf("clear = %d, install = %d, seed = %d", clear, install, seed)
+	}
+}

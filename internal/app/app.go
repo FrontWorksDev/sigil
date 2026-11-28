@@ -641,7 +641,7 @@ func useExisting(d Deps, u *ui.UI, client docker.Client, p project.Project, ci d
 	if ci.Layout != docker.LayoutVersion {
 		return loref("旧き紋章の領域です", "%s は古い sigil で作られています。sigil stop してから、もう一度実行してください", p.ContainerName)
 	}
-	hintNoClaudeShared(d, ci, dd)
+	hintNoClaudeShared(d, ci, home, dd)
 	if ci.State == docker.Stopped {
 		// docker start は ro のマウント元を解決し直すので、作成時から差し替えられていないかを先に確かめる
 		if err := verifyExistingMounts(client, p, home, dd); err != nil {
@@ -666,13 +666,14 @@ func useExisting(d Deps, u *ui.UI, client docker.Client, p project.Project, ci d
 
 // hintNoClaudeShared は、神託のフォルダがあるのに、神託なしで作られたコンテナに入るときに知らせる。
 // 既存のコンテナのマウントは変えられないので、作り直してもらうしかない。ラベルは docker ps で読んだもの
-// （入るたびに docker を呼び足さない）。フォルダがリンクなど、作り直しても渡せない形なら勧めない。
-func hintNoClaudeShared(d Deps, ci docker.Info, dd dirs) {
+// （入るたびに docker を呼び足さない）。作り直しても渡せない（作成時の確かめが通らない）なら勧めない。
+// 神託のフォルダは小さいので、入るたびに確かめても重くない。
+func hintNoClaudeShared(d Deps, ci docker.Info, home string, dd dirs) {
 	if ci.ClaudeShared != "" {
 		return
 	}
-	fi, err := os.Lstat(filepath.Join(dd.config, "claude"))
-	if err != nil || !fi.IsDir() {
+	resolved, _, err := project.ResolveClaudeShared(filepath.Join(dd.config, "claude"), home, dd.config, dd.state)
+	if err != nil || resolved == "" {
 		return
 	}
 	info(d, "注意: この領域は神託なしで展開されています。使うときは sigil stop してから入り直してください")

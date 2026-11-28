@@ -162,3 +162,23 @@ func TestNoHintWhenClaudeSharedInvalid(t *testing.T) {
 		t.Errorf("stderr = %s", e.stderr.String())
 	}
 }
+
+// 神託の中に書き込めるファイルがあるなど、作り直しても渡せないときは、作り直しを勧めない。
+func TestNoHintWhenClaudeSharedHasWritableFile(t *testing.T) {
+	e := newEnv(t)
+	d := e.claudeDir()
+	p := filepath.Join(d, "CLAUDE.md")
+	if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	e.containerWithLabels("running", "4", map[string]string{"sigil.claude": ""})
+	if code := e.run(); code != 0 {
+		t.Fatalf("code = %d", code)
+	}
+	if strings.Contains(e.stderr.String(), "神託なし") {
+		t.Errorf("stderr = %s", e.stderr.String())
+	}
+}

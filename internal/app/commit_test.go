@@ -479,7 +479,7 @@ func TestCommitHooksInContainer(t *testing.T) {
 	c.hook(".husky/_/commit-msg")
 	c.git("config", "core.hooksPath", ".husky/_")
 	c.commitAll("add hooks")
-	c.container("running", "")
+	c.container("running", "4")
 	c.cmd.hooks["commit-msg"] = func(stdin string, extra []string, stdout, stderr io.Writer) error {
 		if stdin != "fix: a\n" {
 			t.Errorf("commit-msg の標準入力 = %q", stdin)
@@ -524,7 +524,7 @@ func TestCommitHooksInContainer(t *testing.T) {
 func TestCommitHookFails(t *testing.T) {
 	c := newCommitEnv(t)
 	c.hook(".git/hooks/pre-commit")
-	c.container("running", "")
+	c.container("running", "4")
 	c.cmd.hooks["pre-commit"] = func(_ string, _ []string, _, stderr io.Writer) error {
 		io.WriteString(stderr, "lint\x1b[31m")
 		return errors.New("exit status 1")
@@ -652,7 +652,7 @@ func TestCommitPushFlow(t *testing.T) {
 	bare := c.withUpstream()
 	old := c.head()
 	c.hook(".git/hooks/pre-push")
-	c.container("running", "")
+	c.container("running", "4")
 	c.write("a.txt", "two\n")
 	c.write(gitcommit.MessageFile, "fix: a\n")
 	c.tty = "y\ny\n"
@@ -689,7 +689,7 @@ func TestCommitPushHookFails(t *testing.T) {
 	bare := c.withUpstream()
 	old := c.head()
 	c.hook(".git/hooks/pre-push")
-	c.container("running", "")
+	c.container("running", "4")
 	c.cmd.hooks["pre-push"] = func(_ string, _ []string, _, stderr io.Writer) error {
 		io.WriteString(stderr, "tests failed")
 		return errors.New("exit status 1")
@@ -790,7 +790,7 @@ func TestCommitHooksFancy(t *testing.T) {
 		c.fancy()
 		c.hook(".git/hooks/pre-commit")
 		c.hook(".git/hooks/commit-msg")
-		c.container("running", "")
+		c.container("running", "4")
 		if fail {
 			c.cmd.hooks["commit-msg"] = func(_ string, _ []string, _, stderr io.Writer) error {
 				io.WriteString(stderr, "bad\x1b[2Jmsg")
@@ -872,7 +872,7 @@ func TestCommitPushURLRedacted(t *testing.T) {
 	c.git("config", "branch.main.remote", "origin")
 	c.git("config", "branch.main.merge", "refs/heads/main")
 	c.hook(".git/hooks/pre-push")
-	c.container("running", "")
+	c.container("running", "4")
 	// pre-push を失敗させ、本物の push には進ませない
 	c.cmd.hooks["pre-push"] = func(_ string, _ []string, _, _ io.Writer) error { return errors.New("exit status 1") }
 	c.write("a.txt", "two\n")
@@ -1012,7 +1012,7 @@ func TestCommitPathLiteral(t *testing.T) {
 func TestCommitHookPathspecLiteral(t *testing.T) {
 	c := newCommitEnv(t)
 	c.hook(".git/hooks/pre-commit")
-	c.container("running", "")
+	c.container("running", "4")
 	c.write("a[b].txt", "lit\n")
 	c.write(gitcommit.MessageFile, "fix: lit\n")
 	c.tty = "y\n"
@@ -1033,7 +1033,7 @@ func TestCommitPushesSealedCommit(t *testing.T) {
 	c := newCommitEnv(t)
 	bare := c.withUpstream()
 	c.hook(".git/hooks/pre-push")
-	c.container("running", "")
+	c.container("running", "4")
 	var sealed string
 	c.cmd.hooks["pre-push"] = func(stdin string, _ []string, _, _ io.Writer) error {
 		sealed = c.head()
@@ -1067,7 +1067,7 @@ func TestCommitMessageFileIgnoredOrNot(t *testing.T) {
 		t.Run(fmt.Sprintf("ignore=%v", ignore), func(t *testing.T) {
 			c := newCommitEnvWith(t, ignore)
 			c.hook(".git/hooks/pre-commit")
-			c.container("running", "")
+			c.container("running", "4")
 			c.write("b.txt", "b\n")
 			c.write(gitcommit.MessageFile, "feat: b\n")
 			c.tty = "y\n"
@@ -1183,5 +1183,27 @@ func TestDeltaOutputSafe(t *testing.T) {
 		if got := deltaOutputSafe(s); got != want {
 			t.Errorf("deltaOutputSafe(%q) = %v, want %v", s, got, want)
 		}
+	}
+}
+
+// 古い layout のコンテナでは、フックを実行しない。sigil と同じく作り直しを求める。
+// 古いコンテナには、共有の sigil-claude などがマウントされたままで、そこからほかのプロジェクトに届くため。
+func TestCommitHooksRefuseOldLayout(t *testing.T) {
+	c := newCommitEnv(t)
+	c.hook(".husky/_/pre-commit")
+	c.git("config", "core.hooksPath", ".husky/_")
+	c.commitAll("add hooks")
+	c.container("running", "3")
+	c.write("a.txt", "two\n")
+	c.write(gitcommit.MessageFile, "fix: a\n")
+	c.tty = "y\n"
+	if code := c.run("commit"); code != 1 {
+		t.Fatalf("code = %d, stderr = %s", code, c.stderr.String())
+	}
+	if len(c.dockerExecs()) != 0 {
+		t.Errorf("古いコンテナでフックを実行した: %v", c.dockerExecs())
+	}
+	if !strings.Contains(c.stderr.String(), "古い sigil で作られています") {
+		t.Errorf("stderr = %s", c.stderr.String())
 	}
 }

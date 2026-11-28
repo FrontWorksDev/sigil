@@ -57,7 +57,7 @@ func ResolveClaudeShared(dir, home, sigilConfig string, extra ...string) (resolv
 		// docker の -v は ":" で区切る（5 章）
 		return "", nil, fmt.Errorf("%s のパスに \":\" があるので、マウントできません", resolved)
 	}
-	if err := checkClaudeProtected(resolved, home, sigilConfig, extra); err != nil {
+	if err := checkClaudeProtected(resolved, home, sigilConfig, extra, true); err != nil {
 		return "", nil, err
 	}
 	warnings, err = walkClaudeShared(resolved, "", 0)
@@ -133,7 +133,9 @@ func checkClaudeOwnerMode(fi fs.FileInfo, p string) error {
 // ~/.config の中なら、sigil の設定フォルダ（$XDG_CONFIG_HOME/sigil を、最後の段を除いて解決したもの）の
 // 中だけを許す。~/.config/gh（gh のトークン）などを見せないため。最後の段を解決しないのは、
 // sigil の設定フォルダそのものを ~/.config/gh へのリンクにした場合も弾くため。
-func checkClaudeProtected(resolved, home, sigilConfig string, extra []string) error {
+//
+// configScope が false なら、~/.config の中の場所の判定を省く（起動の前の確かめ直し用）。
+func checkClaudeProtected(resolved, home, sigilConfig string, extra []string, configScope bool) error {
 	if h, err := filepath.EvalSymlinks(home); err == nil {
 		home = h
 	}
@@ -156,6 +158,9 @@ func checkClaudeProtected(resolved, home, sigilConfig string, extra []string) er
 		if within(resolved, s) || within(s, resolved) {
 			return fmt.Errorf("%s は守る場所（%s）に重なるので、神託として渡せません", resolved, s)
 		}
+	}
+	if !configScope {
+		return nil
 	}
 	cfg := filepath.Join(home, ".config")
 	cfgs := []string{cfg}
@@ -190,7 +195,7 @@ func checkClaudeProtected(resolved, home, sigilConfig string, extra []string) er
 // VerifyClaudeShared は、停止中のコンテナを docker start する前に、作成時に確かめた神託のパス
 // （ラベル sigil.claude）が、今も同じフォルダを指すかを確かめる（20 章の VerifyMounts と同じ考え方）。
 // docker は起動のたびにマウント元を解決し直すので、途中がリンクに差し替えられていれば、
-// ホストの ~/.claude などを見せてしまう。中はたどらない。
+// ホストの ~/.claude などを見せてしまう。中も確かめ直す。
 func VerifyClaudeShared(path, home, sigilConfig string, extra ...string) error {
 	// ラベルはイメージのものを受け継ぐことがあるので、信頼できない値として形を確かめる
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path || checkPrintable(path) != nil {
@@ -225,5 +230,14 @@ func VerifyClaudeShared(path, home, sigilConfig string, extra ...string) error {
 	if err := checkClaudeOwnerMode(fi, path); err != nil {
 		return err
 	}
-	return checkClaudeProtected(path, home, sigilConfig, extra)
+	// ~/.config の中の場所の判定は、作成時の sigil の設定フォルダを基準にしたもの。作ったあとで
+	// XDG_CONFIG_HOME を変えると、フォルダが動いていなくても外と判定されるので、ここでは省く。
+	// 途中がリンクに替わっていないことは上で 1 段ずつ確かめているので、作成時と同じ場所を指している
+	if err := checkClaudeProtected(path, home, sigilConfig, extra, false); err != nil {
+		return err
+	}
+	// 中も確かめ直す。作ったあとで足したリンク（コンテナの中で、プロジェクトが書き込める場所を指すもの）や、
+	// 書き込めるファイルを、起動のたびに渡さないため。ハードリンクの注意は、作成時にだけ出す
+	_, err = walkClaudeShared(path, "", 0)
+	return err
 }

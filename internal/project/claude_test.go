@@ -264,3 +264,32 @@ func TestVerifyClaudeSharedColon(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// 作ったあとで中にリンクを足したら、起動の前の確かめ直しでも弾く。
+func TestVerifyClaudeSharedWalksContents(t *testing.T) {
+	home, sc, dir := claudeEnv(t)
+	got, _, err := ResolveClaudeShared(dir, home, sc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/home/dev/.claude/CLAUDE.md", filepath.Join(dir, "CLAUDE.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyClaudeShared(got, home, sc); err == nil || !strings.Contains(err.Error(), "シンボリックリンク") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// 作ったあとで XDG_CONFIG_HOME を変えても（sigil の設定フォルダが別の場所になっても）、
+// フォルダが動いていなければ起動できる。
+func TestVerifyClaudeSharedAfterXDGChange(t *testing.T) {
+	home, sc, dir := claudeEnv(t)
+	got, _, err := ResolveClaudeShared(dir, home, sc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(filepath.Dir(home), "opt", "cfg", "sigil")
+	if err := VerifyClaudeShared(got, home, other); err != nil {
+		t.Errorf("XDG を変えただけで: %v", err)
+	}
+}

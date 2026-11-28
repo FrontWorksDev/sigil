@@ -454,7 +454,7 @@ func TestVolumesCheckedAfterKeychain(t *testing.T) {
 	if volumeCallsAtRead != 0 {
 		t.Errorf("キーチェーンを読む前にボリュームを確かめた（%d 回）", volumeCallsAtRead)
 	}
-	if len(e.runner.find("docker volume create")) != 3 {
+	if len(e.runner.find("docker volume create")) != 4 {
 		t.Errorf("calls = %v", e.runner.calls)
 	}
 }

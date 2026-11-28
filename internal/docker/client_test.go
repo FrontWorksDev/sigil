@@ -104,7 +104,7 @@ func TestInspectStates(t *testing.T) {
 func TestInspectArgs(t *testing.T) {
 	f := &fakeRunner{}
 	Client{R: f}.Inspect("c")
-	want := []string{"ps", "-a", "--filter", "name=c", "--format", "{{.Names}}\t{{.State}}\t{{.Label \"sigil.layout\"}}"}
+	want := []string{"ps", "-a", "--filter", "name=c", "--format", "{{.Names}}\t{{.State}}\t{{.Label \"sigil.layout\"}}\t{{.Label \"sigil.claude\"}}"}
 	if f.calls[0].name != "docker" || !reflect.DeepEqual(f.calls[0].args, want) {
 		t.Errorf("argv = %v", f.calls[0])
 	}
@@ -286,5 +286,14 @@ func TestCreateSecretEnvNeedsEnvRunner(t *testing.T) {
 	}
 	if len(f.calls) != 0 {
 		t.Errorf("docker を呼んだ: %v", f.calls)
+	}
+}
+
+// 神託のパスも docker ps で一緒に読む（入るたびに container inspect を増やさない）。
+func TestInfoClaudeShared(t *testing.T) {
+	f := &fakeRunner{responses: []response{{stdout: "c\trunning\t4\t/x/claude\n"}}}
+	info, err := Client{R: f}.Info("c")
+	if err != nil || info.State != Running || info.Layout != "4" || info.ClaudeShared != "/x/claude" {
+		t.Errorf("(%+v, %v)", info, err)
 	}
 }

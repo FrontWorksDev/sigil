@@ -214,9 +214,19 @@ type dirs struct {
 
 func newDirs(d Deps, home string) dirs {
 	return dirs{
-		config: filepath.Join(lookup(d, "XDG_CONFIG_HOME", filepath.Join(home, ".config")), "sigil"),
-		state:  filepath.Join(lookup(d, "XDG_STATE_HOME", filepath.Join(home, ".local", "state")), "sigil"),
+		config: filepath.Join(xdgDir(d, "XDG_CONFIG_HOME", filepath.Join(home, ".config")), "sigil"),
+		state:  filepath.Join(xdgDir(d, "XDG_STATE_HOME", filepath.Join(home, ".local", "state")), "sigil"),
 	}
+}
+
+// xdgDir は XDG の環境変数を、絶対パスのときだけ使う（空や相対パスなら def。XDG Base Directory の仕様と同じ）。
+// 相対パスはカレントディレクトリ（プロジェクトの中）が基準になり、全体設定・承認記録・神託（22 章）を、
+// コンテナが書き込めるプロジェクトの中から読んでしまうため（設計書 6 章）。
+func xdgDir(d Deps, key, def string) string {
+	if v := lookup(d, key, def); filepath.IsAbs(v) {
+		return v
+	}
+	return def
 }
 
 // settings は、コンテナを作るときに読む設定一式。
@@ -405,13 +415,13 @@ func removeOpTemp(dir string) {
 
 // ensureContainer はコンテナを用意する。op run に置き換えたときは replaced = true。
 func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, home string, dd dirs, args []string) (replaced bool, err error) {
-	st, layout, err := client.Inspect(p.ContainerName)
+	ci, err := client.Info(p.ContainerName)
 	if err != nil {
 		return false, lore("領域の様子を確かめられません", err)
 	}
-	if st != docker.Missing {
+	if ci.State != docker.Missing {
 		// 既存のコンテナには、作成時に渡したものが使われる。設定の読み込みや承認はしない。
-		return false, useExisting(u, client, p, st, layout, home, dd)
+		return false, useExisting(d, u, client, p, ci, home, dd)
 	}
 
 	s, err := loadSettings(p, home, dd)
@@ -495,6 +505,17 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 		return false, err
 	}
 
+	// 神託（Claude Code の共通の設定）を確かめる（22 章）。ボリュームを作る前に行い、渡せないときは何も作らない。
+	// docker run の直前に確かめるのは、ro と同じく、確かめてから渡すまでの間を短くするため
+	claudeDir := filepath.Join(dd.config, "claude")
+	claudeShared, claudeWarnings, err := project.ResolveClaudeShared(claudeDir, home, dd.config, dd.state)
+	if err != nil {
+		return false, loref("神託が届きません", "%s を Claude Code の共通の設定として渡せません（%w）", ui.EscapeLine(claudeDir), err)
+	}
+	for _, w := range claudeWarnings {
+		info(d, "注意: 神託の %s はハードリンクです。リンク先の中身も全コンテナから読めます", ui.EscapeLine(w))
+	}
+
 	cfg := config.Merge(s.projCfg, s.globalCfg)
 	var envs []string
 	passWaka := false
@@ -559,6 +580,7 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 		Ports:         cfg.Ports,
 		SecretEnv:     secretEnv,
 		ReadOnly:      s.mounts,
+		ClaudeShared:  claudeShared,
 	}
 	if u.Fancy() {
 		u.Banner()
@@ -591,9 +613,9 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 	if err != nil {
 		// cmux でペインを同時に開くと、別のペインが先に同じ名前で作っていることがある。
 		// そのときは失敗とせず、そのコンテナを使う。
-		if st, layout, ierr := client.Inspect(p.ContainerName); ierr == nil && st != docker.Missing {
+		if ci, ierr := client.Info(p.ContainerName); ierr == nil && ci.State != docker.Missing {
 			info(d, "別のペインで展開された領域 %s に入ります", p.ContainerName)
-			return false, useExisting(u, client, p, st, layout, home, dd)
+			return false, useExisting(d, u, client, p, ci, home, dd)
 		}
 		return false, loref("領域を展開できませんでした", "コンテナ %s を作成できませんでした: %w", p.ContainerName, err)
 	}
@@ -615,13 +637,18 @@ func ensureContainer(d Deps, u *ui.UI, client docker.Client, p project.Project, 
 
 // useExisting は既存のコンテナを使えるようにする。古い layout ならエラー、停止中なら起動する。
 // 演出は 1 行だけにし、待ち時間は足さない（停止中なら docker start の間だけスピナーを回す）。
-func useExisting(u *ui.UI, client docker.Client, p project.Project, st docker.State, layout, home string, dd dirs) error {
-	if layout != docker.LayoutVersion {
+func useExisting(d Deps, u *ui.UI, client docker.Client, p project.Project, ci docker.Info, home string, dd dirs) error {
+	if ci.Layout != docker.LayoutVersion {
 		return loref("旧き紋章の領域です", "%s は古い sigil で作られています。sigil stop してから、もう一度実行してください", p.ContainerName)
 	}
-	if st == docker.Stopped {
+	hintNoClaudeShared(d, ci, home, dd)
+	if ci.State == docker.Stopped {
 		// docker start は ro のマウント元を解決し直すので、作成時から差し替えられていないかを先に確かめる
 		if err := verifyExistingMounts(client, p, home, dd); err != nil {
+			return err
+		}
+		// 神託のマウント元も同じく解決し直される（22 章）
+		if err := verifyExistingClaudeShared(p, ci.ClaudeShared, home, dd); err != nil {
 			return err
 		}
 		err := u.Spin("領域を再展開する  "+p.ContainerName, func(stderr io.Writer) error {
@@ -634,6 +661,37 @@ func useExisting(u *ui.UI, client docker.Client, p project.Project, st docker.St
 		}
 	}
 	u.Enter(filepath.Base(p.Root))
+	return nil
+}
+
+// hintNoClaudeShared は、神託のフォルダがあるのに、神託なしで作られたコンテナに入るときに知らせる。
+// 既存のコンテナのマウントは変えられないので、作り直してもらうしかない。ラベルは docker ps で読んだもの
+// （入るたびに docker を呼び足さない）。作り直しても渡せない（作成時の確かめが通らない）なら勧めない。
+// 神託のフォルダは小さいので、入るたびに確かめても重くない。
+func hintNoClaudeShared(d Deps, ci docker.Info, home string, dd dirs) {
+	if ci.ClaudeShared != "" {
+		return
+	}
+	resolved, _, err := project.ResolveClaudeShared(filepath.Join(dd.config, "claude"), home, dd.config, dd.state)
+	if err != nil || resolved == "" {
+		return
+	}
+	info(d, "注意: この領域は神託なしで展開されています。使うときは sigil stop してから入り直してください")
+}
+
+// verifyExistingClaudeShared は、停止中のコンテナを起動する前に、作成時に渡した神託のフォルダ（ラベル sigil.claude）が、
+// リンクに差し替えられたりしていないかを確かめる（22 章）。差し替えられていれば、ホストの ~/.claude などが見えてしまうので起動しない。
+func verifyExistingClaudeShared(p project.Project, path, home string, dd dirs) error {
+	if path == "" {
+		return nil
+	}
+	if err := project.VerifyClaudeShared(path, home, dd.config, dd.state); err != nil {
+		title := "神託を確かめられません"
+		if errors.Is(err, project.ErrClaudeSharedChanged) {
+			title = "神託が歪められました"
+		}
+		return loref(title, "%s を起動しません（%w）。sigil stop してから、もう一度実行してください", p.ContainerName, err)
+	}
 	return nil
 }
 

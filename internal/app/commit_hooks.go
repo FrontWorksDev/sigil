@@ -51,12 +51,18 @@ func (h hookRunner) ready() error {
 	if _, err := h.d.LookPath("docker"); err != nil {
 		return errNoDocker()
 	}
-	st, _, err := docker.Client{R: h.d.Runner, Stderr: h.d.Stderr}.Inspect(h.p.ContainerName)
+	ci, err := docker.Client{R: h.d.Runner, Stderr: h.d.Stderr}.Info(h.p.ContainerName)
 	if err != nil {
 		return lore("領域の様子を確かめられません", err)
 	}
-	if st != docker.Running {
+	if ci.State != docker.Running {
 		return loref("領域が開いていません", "sigil で領域を開いてから、もう一度実行してください")
+	}
+	// 古い layout のコンテナでは実行しない（sigil で入るときと同じ）。古いコンテナには、今は分けた
+	// 共有のボリューム（sigil-claude など）がマウントされたままで、フック（プロジェクトのコード）から
+	// ほかのプロジェクトに届いてしまうため（21・22 章）
+	if ci.Layout != docker.LayoutVersion {
+		return loref("旧き紋章の領域です", "%s は古い sigil で作られています。sigil stop してから、もう一度実行してください", h.p.ContainerName)
 	}
 	return nil
 }

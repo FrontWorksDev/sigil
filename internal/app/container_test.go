@@ -96,7 +96,7 @@ func TestCommandSelection(t *testing.T) {
 
 func TestExistingRunningIsReused(t *testing.T) {
 	e := newEnv(t)
-	e.container("running", "3")
+	e.container("running", "4")
 	if code := e.run(); code != 0 {
 		t.Fatal(e.stderr.String())
 	}
@@ -108,7 +108,7 @@ func TestExistingRunningIsReused(t *testing.T) {
 
 func TestExistingStoppedIsStarted(t *testing.T) {
 	e := newEnv(t)
-	e.container("exited", "3")
+	e.container("exited", "4")
 	if code := e.run(); code != 0 {
 		t.Fatal(e.stderr.String())
 	}
@@ -721,7 +721,7 @@ func TestConcurrentCreateUsesContainerFromOtherPane(t *testing.T) {
 	created := false
 	e.runner.onFunc("docker ps -a --filter name=", func() (string, error) {
 		if created {
-			return e.name() + "\trunning\t3\n", nil
+			return e.name() + "\trunning\t4\n", nil
 		}
 		return "", nil
 	})
@@ -795,7 +795,7 @@ func TestInnerSkipsApprovalAndOp(t *testing.T) {
 
 func TestExistingContainerSkipsConfigAndApproval(t *testing.T) {
 	e := newEnv(t)
-	e.container("running", "3")
+	e.container("running", "4")
 	e.opPath = "/opt/bin/op"
 	e.write(".sigil", "env FOO\n")
 	e.write(".env", "FOO=op://v/i/f\n")
@@ -968,6 +968,7 @@ func TestCreatePreparesVolumesBeforeRun(t *testing.T) {
 		{"volume", "create", "--label", "sigil.project=" + e.proj, n + "-cache"},
 		{"volume", "create", "--label", "sigil.project=" + e.proj, n + "-go"},
 		{"volume", "create", "--label", "sigil.project=" + e.proj, n + "-cargo"},
+		{"volume", "create", "--label", "sigil.project=" + e.proj, n + "-claude"},
 	}
 	if !reflect.DeepEqual(creates, want) {
 		t.Errorf("create =\n%v\nwant\n%v", creates, want)

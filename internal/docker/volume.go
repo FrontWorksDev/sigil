@@ -24,6 +24,9 @@ func ProjectVolumes(container string) []Volume {
 		{container + "-cache", containerHome + "/.cache"},
 		{container + "-go", containerHome + "/go"},
 		{container + "-cargo", containerHome + "/.cargo"},
+		// ~/.claude（CLAUDE_CONFIG_DIR）。共有すると、hooks やプラグインでほかのプロジェクトの Claude Code の中で
+		// コードを実行でき、会話の履歴も読めた（22 章）
+		{container + "-claude", containerHome + "/.claude"},
 	}
 }
 

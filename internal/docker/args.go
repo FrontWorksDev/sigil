@@ -15,13 +15,17 @@ const (
 	// LayoutLabel は、コンテナのマウント配置の版を示すラベル。
 	// 配置を変えたら LayoutVersion を上げ、古いコンテナを作り直してもらう。
 	LayoutLabel   = "sigil.layout"
-	LayoutVersion = "3"
+	LayoutVersion = "4"
 	// ProjectLabel は、コンテナがどのプロジェクトのものかを示すラベル。sigil ls で使う。
 	ProjectLabel = "sigil.project"
 	// ReadOnlyLabel は、承認した ro のマウント（解決したパスとマウント先の JSON）を残すラベル。
 	// docker は docker start のたびにマウント元のパスを解決し直すので、停止中のコンテナを起動する前に、
 	// パスが作成時から差し替えられていないかを、このラベルと比べて確かめる（20 章「既存のコンテナ」）。
 	ReadOnlyLabel = "sigil.ro"
+	// ClaudeLabel は、/etc/claude-code に読み取り専用でマウントした神託（Claude Code の共通の設定）の、
+	// 解決したホスト側のパスを残すラベル。なければ空。停止中のコンテナを起動する前に、
+	// 作成時から差し替えられていないかを確かめる（22 章）。
+	ClaudeLabel = "sigil.claude"
 
 	containerHome = "/home/dev"
 )
@@ -44,6 +48,9 @@ type RunSpec struct {
 	// ReadOnly は、.sigil の ro で読み取り専用にマウントするフォルダ（20 章）。
 	// Host は project.ResolveMounts で確かめ、シンボリックリンクを解決したもの。
 	ReadOnly []project.Mount
+	// ClaudeShared は、神託のフォルダの、project.ResolveClaudeShared で確かめて解決したパス（22 章）。
+	// 空ならマウントしない。
+	ClaudeShared string
 }
 
 // EncodeReadOnly は、ReadOnlyLabel の値を作る。マウントがなければ "[]"。
@@ -85,6 +92,8 @@ func RunArgs(s RunSpec) []string {
 		// ro がなくても必ず付ける。docker run のラベルはイメージのラベルより優先されるので、
 		// イメージ（ベースのイメージを含む）が sigil.ro を持っていても、その値を受け継がない
 		"--label", ReadOnlyLabel + "=" + EncodeReadOnly(s.ReadOnly),
+		// 神託がなくても空で必ず付ける（sigil.ro と同じく、イメージのラベルを受け継がないように）
+		"--label", ClaudeLabel + "=" + s.ClaudeShared,
 		// 権限を最小にし、setuid などで権限を取り戻させない
 		"--cap-drop=ALL",
 		"--security-opt=no-new-privileges",
@@ -104,6 +113,12 @@ func RunArgs(s RunSpec) []string {
 		// Neovim の設定はホストの Neovim も読むので、コンテナから書き換えさせない。
 		args = append(args, "-v", s.Home+"/.config/nvim:"+containerHome+"/.config/nvim:ro")
 	}
+	if s.ClaudeShared != "" {
+		// 神託（全プロジェクト共通の CLAUDE.md・MCP・プラグインの指定・skills）を、Claude Code の管理用ディレクトリに渡す。
+		// コンテナから書き換えられると、ほかのプロジェクトの Claude Code の設定を変えられるので、読み取り専用にする。
+		// --mount は値が CSV として解釈され、パスのカンマからマウントの指定を差し込めるので使わない（21 章）
+		args = append(args, "-v", s.ClaudeShared+":/etc/claude-code:ro")
+	}
 	args = append(args,
 		"-e", "SIGIL_PROJECT_DIR="+s.ContainerPath,
 		// コンテナ内では所有者が違って見えるので、git に安全なフォルダとして教える
@@ -111,10 +126,9 @@ func RunArgs(s RunSpec) []string {
 		"-e", "GIT_CONFIG_KEY_0=safe.directory",
 		"-e", "GIT_CONFIG_VALUE_0="+s.ContainerPath,
 		// プロジェクトをまたいで共有するもの（ホストのフォルダではなく名前付きボリューム）。
-		// ほかのプロジェクトのコンテナでコードを実行できる経路が残っている（issue #7 のフェーズ 2・3 で分ける）
+		// ほかのプロジェクトのコンテナでコードを実行できる経路が残っている（issue #7 のフェーズ 3 で分ける）
 		"-v", "sigil-nvim-data:"+containerHome+"/.local/share/nvim",
 		"-v", "sigil-nvim-state:"+containerHome+"/.local/state/nvim",
-		"-v", "sigil-claude:"+containerHome+"/.claude",
 	)
 	for _, v := range ProjectVolumes(s.Name) {
 		// プロジェクトごとのキャッシュ類（設計書 21 章）。docker run の前に EnsureVolumes でラベルを確かめておくこと

@@ -14,6 +14,7 @@ func TestProjectVolumes(t *testing.T) {
 		{"sigil-proj-33bf5961-cache", "/home/dev/.cache"},
 		{"sigil-proj-33bf5961-go", "/home/dev/go"},
 		{"sigil-proj-33bf5961-cargo", "/home/dev/.cargo"},
+		{"sigil-proj-33bf5961-claude", "/home/dev/.claude"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ProjectVolumes = %v, want %v", got, want)
@@ -26,7 +27,7 @@ func TestRunArgsPerProjectVolumes(t *testing.T) {
 	s := sampleSpec()
 	vols := flagValues(RunArgs(s), "-v")
 	for _, v := range vols {
-		for _, shared := range []string{"sigil-cache:", "sigil-go:", "sigil-cargo:"} {
+		for _, shared := range []string{"sigil-cache:", "sigil-go:", "sigil-cargo:", "sigil-claude:"} {
 			if strings.HasPrefix(v, shared) {
 				t.Errorf("共有のボリュームを渡している: %s", v)
 			}
@@ -36,9 +37,9 @@ func TestRunArgsPerProjectVolumes(t *testing.T) {
 		s.Name + "-cache:/home/dev/.cache",
 		s.Name + "-go:/home/dev/go",
 		s.Name + "-cargo:/home/dev/.cargo",
+		s.Name + "-claude:/home/dev/.claude",
 		"sigil-nvim-data:/home/dev/.local/share/nvim",
 		"sigil-nvim-state:/home/dev/.local/state/nvim",
-		"sigil-claude:/home/dev/.claude",
 	} {
 		if !slices.Contains(vols, want) {
 			t.Errorf("%s がない: %v", want, vols)
@@ -46,9 +47,9 @@ func TestRunArgsPerProjectVolumes(t *testing.T) {
 	}
 }
 
-func TestRunArgsLayout3(t *testing.T) {
-	if !slices.Contains(flagValues(RunArgs(sampleSpec()), "--label"), "sigil.layout=3") {
-		t.Error("sigil.layout=3 がない")
+func TestRunArgsLayout4(t *testing.T) {
+	if !slices.Contains(flagValues(RunArgs(sampleSpec()), "--label"), "sigil.layout=4") {
+		t.Error("sigil.layout=4 がない")
 	}
 }
 
@@ -168,7 +169,7 @@ func TestContainerProject(t *testing.T) {
 func TestEnsureVolumesCreatesMissing(t *testing.T) {
 	const c = "sigil-p-1"
 	var rs []response
-	for range 3 {
+	for range 4 {
 		rs = append(rs, response{stdout: ""}, response{}, response{stdout: `{"sigil.project":"/p"}`})
 	}
 	f := &fakeRunner{responses: rs}
@@ -185,6 +186,7 @@ func TestEnsureVolumesCreatesMissing(t *testing.T) {
 		{"volume", "create", "--label", "sigil.project=/p", c + "-cache"},
 		{"volume", "create", "--label", "sigil.project=/p", c + "-go"},
 		{"volume", "create", "--label", "sigil.project=/p", c + "-cargo"},
+		{"volume", "create", "--label", "sigil.project=/p", c + "-claude"},
 	}
 	if !reflect.DeepEqual(creates, want) {
 		t.Errorf("create = %v", creates)
@@ -268,5 +270,29 @@ func TestContainerProjectError(t *testing.T) {
 	f := &fakeRunner{responses: []response{{err: errors.New("exit status 1")}}}
 	if _, err := (Client{R: f}).ContainerProject("c"); err == nil {
 		t.Error("エラーにならない")
+	}
+}
+
+// 神託は、確かめて解決したパスを読み取り専用で渡す。ラベルは、なくても空で必ず付ける
+// （イメージのラベルを受け継がないように。sigil.ro と同じ）。
+func TestRunArgsClaudeShared(t *testing.T) {
+	s := sampleSpec()
+	s.ClaudeShared = "/x/sigil/claude"
+	args := RunArgs(s)
+	if !slices.Contains(flagValues(args, "-v"), "/x/sigil/claude:/etc/claude-code:ro") {
+		t.Errorf("-v = %v", flagValues(args, "-v"))
+	}
+	if !slices.Contains(flagValues(args, "--label"), "sigil.claude=/x/sigil/claude") {
+		t.Errorf("--label = %v", flagValues(args, "--label"))
+	}
+	s.ClaudeShared = ""
+	args = RunArgs(s)
+	for _, v := range flagValues(args, "-v") {
+		if strings.Contains(v, "/etc/claude-code") {
+			t.Errorf("神託がないのにマウントした: %s", v)
+		}
+	}
+	if !slices.Contains(flagValues(args, "--label"), "sigil.claude=") {
+		t.Errorf("--label = %v", flagValues(args, "--label"))
 	}
 }
